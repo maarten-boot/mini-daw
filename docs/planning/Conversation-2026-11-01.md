@@ -120,7 +120,7 @@
 - Crosscheck #2 (after renderer change and P4) in `Crosscheck-2026-11-01.md`: no contradictions; findings G1 (MSVC build not yet compiled; first CI run will tell), G2 (std::cerr redirect not thread-safe in general), G3 (32 PulseAudio channels in level list).
 - Added project `CLAUDE.md` with build/test commands, verification methods and project rules.
 
-## Handover (state at the end of 2026-11-01)
+## Handover after P4 (superseded by the handover at the end of this file)
 **Done:** P0–P4. The program lists audio/MIDI devices, opens a duplex audio stream on chosen devices (saved by name), shows input peak levels as text, has adjustable contrast (AA/AAA/Max/custom) and text size, and runs on the user's Windows 10 machine (Direct3D 11, hardware path).
 **Location:** moved from `~/share-local/workspace/mini-daw` (kept as backup) to `~/share-local/DEV/github.com/maarten-boot/mini-daw` (origin `git@github.com:maarten-boot/mini-daw.git`). History kept with a merge of the local history into GitHub's initial commit.
 **Waiting for the user:**
@@ -168,3 +168,21 @@
 - Problems found and fixed on the way: a buffer overrun in the new stress test (hung the run), test arithmetic, duration printed as "inf" (sample rate read after close), `u8path` (wrong for Windows argv anyway).
 - RtAudio's own "_NOT_ running realtime scheduling" line (Linux, printed from its audio thread during openStream) is now captured and shown as a readable warning.
 - Next: user tests `--record-test 10 <folder>` on a Windows machine with a working input (T-REC-10); then P6 (tracks, arming, Record button, MIDI recording, SMF writer).
+
+## 26. CI after P5; preparing the switch to the new location
+> pushed it, check the CI run again
+> and lets prepare to switch over to the new location, that will be a new claude session unless we can move all metedata also to the new location.
+
+- Run 41354090755: all jobs pass, 58/58 tests on Windows (MSVC) and Linux, both downloads present. New MSVC warning C4324 ("structure was padded due to alignment specifier") on `SpscRing`: the padding is intended (counters on separate cache lines) → switched off for that class only.
+- The Linux runner's smoke run shows real warnings (no PulseAudio server, no ALSA sequencer on the runner); kept, since they describe the machine correctly.
+- Claude Code keeps per-project metadata in `~/.claude/projects/<path>/` (session transcripts and memory). For the new location (`-net-192-168-122-1-home-mboot-share-local-DEV-github-com-maarten-boot-mini-daw`) the memory was rewritten for the new place (project history, user workflow) and the session transcript copied, so `claude --resume` there can find it. The originals stay in the old folder.
+
+## Handover (state at the end of 2026-11-01)
+**Done:** P0–P5. Device selection, contrast/text-size UI, Direct3D 11 on Windows; recording engine: lock-free ring per take, disk thread, 24-bit WAV with a header refreshed each second, lost frames reported; `--record-test <sec> <folder>`. CI (windows, linux, licence) green; both builds offered as downloads.
+**Location:** this repository (`~/share-local/DEV/github.com/maarten-boot/mini-daw`); `~/share-local/workspace/mini-daw` is a backup only. The user pushes; Claude checks CI.
+**Waiting for the user:**
+- Real-Windows recording test with a working input: `mini-daw.exe --record-test 10 <folder>` (T-REC-10) and the input part of T-DEV-07. The user's Windows VM has no active audio input; output-only already passed.
+- Contrast/config checks T-UI-03/04 on Windows.
+**Suggested first:** crosscheck #3 (Spec v0.9 ↔ Plan ↔ code) after P5.
+**Open questions (Spec §9):** stereo mix export; when ASIO comes; Windows 10 N / MFPlat.dll; SPEC-NF-02 latency (RtAudio WASAPI is shared-mode only).
+**Next step:** P6 — tracks (audio and MIDI), arming, Record button in the GUI, MIDI input recording with sample-accurate timestamps, SMF type 1 writer (T-REC-01, T-REC-03).

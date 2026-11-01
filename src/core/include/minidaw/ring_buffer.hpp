@@ -15,6 +15,13 @@
 
 namespace minidaw {
 
+// The padding between the two counters is intended (separate cache lines),
+// so MSVC's "structure was padded due to alignment specifier" is switched off.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+
 template <typename T>
 class SpscRing {
     static_assert(std::is_trivially_copyable_v<T>, "SpscRing copies elements with memcpy");
@@ -104,5 +111,9 @@ private:
     alignas(64) std::atomic<std::size_t> write_{0};
     alignas(64) std::atomic<std::size_t> read_{0};
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 } // namespace minidaw
