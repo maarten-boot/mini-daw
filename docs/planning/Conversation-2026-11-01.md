@@ -151,3 +151,8 @@
 
 ## 23. CI green again
 - Run 41341970036: all jobs pass, no MSVC warnings, `--version` clean. Smoke run still listed `warning: Audio: RtApiWasapi::probeDevices: No devices found.` — it now came through RtAudio's error callback. Fix: the same "no devices" filter in both error callbacks. Needs a push by the user.
+
+## 24. CI clean; first Windows audio test
+- Run 41349876675 green on all jobs; the Windows smoke run shows no warnings any more.
+- User ran `--audio-test 5` on the Windows VM: the capture client could not be initialised (the VM has no active audio input). mini-daw reported this correctly instead of claiming a running stream. T-DEV-07 logged as blocked.
+- Suggested an output-only run with `input_device = (none)` in a test config.

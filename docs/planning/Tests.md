@@ -134,3 +134,5 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 42 tests, 264 assertions |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41337681818 | pass | windows (Visual Studio 18 2026, MSVC 19.51) 3m14s, 43/43 tests; linux 1m5s; licence. Only 2 MSVC warnings (C4996 `getenv`) → fixed. Smoke run on the runner (no sound card): RtAudio printed "No devices found" to the console → now captured |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41341970036 | pass | No MSVC warnings left; `--version` clean. Remaining: "No devices found" reached the GUI/CLI as a warning via RtAudio's error callback → filtered there too |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41349876675 | pass | windows 3m28s, linux 1m28s, licence; 43/43 tests; smoke run on the runner is now free of warnings |
+| 2026-11-01 | T-DEV-07 | Windows VM, no audio input active | blocked | Error reported correctly: "no audio arrived within 1 second. Driver: RtApiWasapi::wasapiThread: Unable to initialize capture audio client." Next: output-only run (`input_device = (none)`), then a run on a machine with a working input |
