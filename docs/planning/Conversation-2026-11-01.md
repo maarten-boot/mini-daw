@@ -135,3 +135,9 @@
 - `git push origin main` (SSH) failed: `Permission denied (publickey)` — no SSH agent in Claude's shell.
 - Retried over HTTPS with the `gh` login (for that command only, `origin` unchanged): HTTP 403 — the fine-grained token of account maarten-boot has no write access to `maarten-boot/mini-daw`.
 - Nothing pushed. Options given to the user: push from their own terminal, or extend the token (Contents + Workflows: read and write) and let Claude push.
+
+## 21. First CI run
+> pushed it myself, check the CI run
+
+- Run 41337403277: linux ✓ (1m25s), licence ✓, windows ✗ at Configure: `Generator Visual Studio 17 2022 could not find any instance of Visual Studio` on the `windows-2025` runner image.
+- Fix: no explicit generator in the workflow (CMake chooses the installed Visual Studio); README says "Visual Studio 2022 or newer". Needs a push by the user (Claude's token has no write access).

@@ -10,7 +10,7 @@ A small program to record MIDI and audio input on several tracks at once, with m
 
 You need CMake 3.24 or newer, a C++20 compiler and Git. Dependencies are downloaded automatically at configure time (see `THIRD_PARTY.md`).
 
-### Windows (Visual Studio 2022)
+### Windows (Visual Studio 2022 or newer)
 
 ```
 cmake -B build

@@ -106,6 +106,7 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-LIC-05 | Linux | pass (partial) | Product name checked by unit test; About box, installer and logo come later |
 | 2026-11-01 | T-CI-01 | Linux | pass | |
 | 2026-11-01 | T-CI-02 | — | not run | No GitHub remote yet |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41337403277 | **FAIL** (Windows) | Linux and licence jobs pass. Windows configure: "could not find any instance of Visual Studio" for `-G \"Visual Studio 17 2022\"` on `windows-2025` → generator removed |
 | 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | Not run under Wine: root disk 98% full |
 | 2026-11-01 | T-DEV-05 | Linux VM (no sound card) | pass | ALSA sequencer access denied → returned as MIDI warnings |
 | 2026-11-01 | T-UI-01 | Linux (unit test + Xvfb screenshot) | pass | White background, black text |
