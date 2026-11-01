@@ -96,3 +96,8 @@
 - Fix: renderer layer (`src/app/renderer*.cpp`). Windows uses Direct3D 11 with automatic WARP fallback; Linux keeps OpenGL. A fatal start-up error now shows a message box. `MINIDAW_D3D_WARP=1` forces WARP for testing. Spec TECH-05 updated; tests T-UI-10/11 added.
 - Verified: Linux GUI (OpenGL, Xvfb); Windows exe under Wine (Wine prefix on the /dev/shm RAM disk, 1.2 GB, removed afterwards): hardware path and forced WARP path both draw the window; 29 Windows unit tests pass under Wine. The exe no longer needs OPENGL32.dll; it uses d3d11.dll and D3DCOMPILER_47.dll (both part of Windows 10).
 - New exe in `dist/windows/`. Waiting for the user to re-test on the real machine.
+
+## 16. Windows GUI works
+> PS C:\Users\mboot\TMP> .\mini-daw.exe looks good now
+
+- T-UI-01 and T-UI-10 pass on the real Windows 10 machine. Still to report: the renderer named in the status line, and the contrast switch/config file checks (T-UI-03/04 on Windows).

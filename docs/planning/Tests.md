@@ -115,3 +115,5 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-UI-01 | **Windows 10, real machine** (user) | **FAIL** | `GLFW error 65542: WGL: The driver does not appear to support OpenGL`. No window. → Windows renderer switched to Direct3D 11 + WARP |
 | 2026-11-01 | T-UI-10 | Wine 10 on Xvfb (D3D11 hardware path, and WARP forced) | pass | Both paths open the window and show the correct renderer name. Wine is not real Windows; needs re-test by user |
 | 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 29 tests, 227 assertions pass |
+| 2026-11-01 | T-UI-01 | **Windows 10, real machine** (user) | pass | "looks good now" after the switch to Direct3D 11 |
+| 2026-11-01 | T-UI-10 | **Windows 10, real machine** (user) | pass | GUI opens on the machine without OpenGL. Which D3D path (hardware/WARP) not yet reported |
