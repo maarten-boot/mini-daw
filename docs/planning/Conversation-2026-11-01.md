@@ -60,3 +60,10 @@
 - All *(proposed)* defaults confirmed → Spec v0.4. Test framework fixed to Catch2. No metronome for now.
 - Still open: stereo mix export of the whole project; when ASIO support comes.
 - P2 started on branch `p2-skeleton` (branched from `docs/planning`, so the planning docs stay in the working tree). Pinned dependencies: RtAudio 6.0.1, RtMidi 6.0.0, GLFW 3.4, Dear ImGui v1.92.9, Catch2 v3.16.1. MinGW-w64 is available locally, so the Windows build can be cross-compiled and checked here.
+
+## 11. P2 — project skeleton
+- User (mid-task): "When using github actions or other action steps, pin them on the version hash and try to use the latest workable version. Explain when that is not possible." → SPEC-CI-01. All actions pinned: checkout v7.0.1, cache v6.1.0, upload-artifact v7.0.2. No exceptions. Runner images pinned too (`windows-2025`, `ubuntu-24.04`). The licence check script now also fails on unpinned actions.
+- Built: CMake (C++20), FetchContent with pinned versions, RtAudio (WASAPI only on Windows) and RtMidi compiled directly, GLFW + Dear ImGui app (white background, black text), `minidaw_core` with `scanDevices()`, Catch2 tests, `tools/check_licenses.py`, `THIRD_PARTY.md`, `README.md`, MinGW toolchain file, GitHub Actions workflow.
+- Verified: Linux build plus 5/5 tests pass; MinGW cross-build of both .exe files succeeds; ASIO switch gives the intended messages.
+- Not verified: Windows run (Wine skipped because the root disk was 98% full after a Wine prefix filled it; Claude removed only its own scratchpad files); the GUI window was not opened visually; GitHub CI (no remote).
+- Committed on branch `p2-skeleton`.

@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.4 (2026-11-01). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.5 (2026-11-01). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -78,7 +78,13 @@ A small desktop program that records MIDI and audio input on several tracks at o
   
   By default no logo is shown; the driver list may say "ASIO" as plain text.
 
-## 7. Open questions
+## 7. Build and CI
+- **SPEC-CI-01** Every GitHub Actions step (or other CI action) is pinned to a full commit SHA, with the release tag as a comment, using the latest release that works. Any exception is written down here with the reason. Exceptions so far: none.
+- **SPEC-CI-02** CI builds and tests on Windows (primary target) and Linux, and runs the licence and pinning check. Runner images are pinned to a named version (`windows-2025`, `ubuntu-24.04`), not `-latest`.
+- **SPEC-CI-03** The project can be cross-compiled for Windows from Linux with MinGW-w64 (`cmake/toolchains/mingw-w64.cmake`).
+
+## 8. Open questions
 - When should ASIO support come? Its licence is settled in SPEC-LIC-03.
+- Should the whole project be exportable as one stereo mix? (Not answered yet.)
+- Will the repository be pushed to GitHub, and under which account or organisation? CI runs only once it is.
 - Metronome/click track: not for now (user, 2026-11-01).
-- Should a separate stereo mixdown/export of the whole project be possible?

@@ -1,0 +1,8 @@
+#pragma once
+
+namespace minidaw {
+
+inline constexpr const char* kVersion = "@PROJECT_VERSION@";
+inline constexpr const char* kProductName = "mini-daw";
+
+} // namespace minidaw
