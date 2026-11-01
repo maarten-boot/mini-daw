@@ -115,3 +115,16 @@
 - GUI: Settings → Audio devices… window, audio status with per-channel peak levels as text, View → Text size + Ctrl+= / - / 0, wrapping status line, "(not found)" marker.
 - CLI: `--audio-test <seconds>`.
 - Tests: 43 pass on Linux; 42 Windows unit tests pass under Wine. Linux audio stream runs (377 callbacks / 2 s, 0 dropouts). Under Wine, RtAudio's WASAPI client fails to initialise in all directions — this exposed that the program reported "running" anyway; fixed (SPEC-DEV-05). Real-Windows audio test (T-DEV-07) pending.
+
+## 19. Crosscheck #2, handover, relocation
+- Crosscheck #2 (after renderer change and P4) in `Crosscheck-2026-11-01.md`: no contradictions; findings G1 (MSVC build not yet compiled; first CI run will tell), G2 (std::cerr redirect not thread-safe in general), G3 (32 PulseAudio channels in level list).
+- Added project `CLAUDE.md` with build/test commands, verification methods and project rules.
+
+## Handover (state at the end of 2026-11-01)
+**Done:** P0–P4. The program lists audio/MIDI devices, opens a duplex audio stream on chosen devices (saved by name), shows input peak levels as text, has adjustable contrast (AA/AAA/Max/custom) and text size, and runs on the user's Windows 10 machine (Direct3D 11, hardware path).
+**Location:** moved from `~/share-local/workspace/mini-daw` (kept as backup) to `~/share-local/DEV/github.com/maarten-boot/mini-daw` (origin `git@github.com:maarten-boot/mini-daw.git`). History kept with a merge of the local history into GitHub's initial commit.
+**Waiting for the user:**
+- Final go to push `main` to GitHub (then check the first CI run, especially the MSVC build — crosscheck G1).
+- Real-Windows audio test: `mini-daw.exe --audio-test 5` and Settings → Audio devices (T-DEV-07); also contrast/config checks T-UI-03/04 on Windows.
+**Open questions (Spec §9):** stereo mix export of the whole project; when ASIO comes; Windows 10 N / MFPlat.dll; how to reach SPEC-NF-02 latency (RtAudio WASAPI is shared-mode only).
+**Next step:** P5 — audio engine: lock-free ring buffers from the audio callback to a disk-writer thread, WAV writer (24-bit, T-REC-02), ring-buffer stress test (T-REC-06).
