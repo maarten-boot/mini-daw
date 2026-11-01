@@ -112,7 +112,7 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     if (!rtaudio_) {
         detail::ConsoleCapture capture;  // the constructor may print before the callback is attached
         rtaudio_ = std::make_unique<RtAudio>(RtAudio::UNSPECIFIED, [this](RtAudioErrorType type, const std::string& text) {
-            if (type == RTAUDIO_NO_ERROR) return;
+            if (type == RTAUDIO_NO_ERROR || detail::isNoDevicesNotice(text)) return;
             std::lock_guard<std::mutex> lock(messagesMutex_);
             messages_.push_back(text);
         });

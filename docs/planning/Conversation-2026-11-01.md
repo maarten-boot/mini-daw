@@ -148,3 +148,6 @@
 - Run 41337681818: all jobs pass. Windows used Visual Studio 18 2026 (MSVC 19.51): 43/43 tests, only the two expected C4996 `getenv` warnings (crosscheck G1 resolved). Artifact `mini-daw-windows-x64` uploaded.
 - Smoke run on the runner (no audio hardware) showed `RtApiWasapi::probeDevices: No devices found.` on the console, even before `--version`. Cause: RtAudio searches for devices in its constructor, before an error callback is attached. Fix: shared `console_capture.hpp` helper (used for RtMidi and RtAudio), RtAudio created only when a stream is opened, "no devices" notices dropped. `getenv` replaced by `_dupenv_s` / `GetEnvironmentVariableA` on Windows.
 - Needs a push by the user.
+
+## 23. CI green again
+- Run 41341970036: all jobs pass, no MSVC warnings, `--version` clean. Smoke run still listed `warning: Audio: RtApiWasapi::probeDevices: No devices found.` — it now came through RtAudio's error callback. Fix: the same "no devices" filter in both error callbacks. Needs a push by the user.

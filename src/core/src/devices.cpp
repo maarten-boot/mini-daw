@@ -49,7 +49,7 @@ DeviceScan scanDevices()
 
     // RtAudio 6 reports errors through a callback instead of exceptions.
     auto onError = [&scan](RtAudioErrorType type, const std::string& text) {
-        if (type != RTAUDIO_NO_ERROR) {
+        if (type != RTAUDIO_NO_ERROR && !detail::isNoDevicesNotice(text)) {
             scan.warnings.push_back("Audio: " + text);
         }
     };
