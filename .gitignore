@@ -1,3 +1,14 @@
+/build*/
+/out/
+/.vs/
+/.vscode/
+/.idea/
+CMakeUserPresets.json
+imgui.ini
+*.user
+/dist/
+
+# --- GitHub C++ template ---
 # Prerequisites
 *.d
 
