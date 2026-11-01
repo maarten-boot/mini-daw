@@ -30,3 +30,29 @@ Scope: Spec v0.5, Plan, Tests, and the code on branch `p2-skeleton` (commit `203
 | F9 | `imgui_demo.cpp` is compiled but never used | Removed from the build |
 
 No contradictions between Spec and Plan were found beyond F2 and F8.
+
+---
+
+# Crosscheck #2 — 2026-11-01 (after the Windows renderer change and P4)
+
+Scope: Spec v0.8, Plan, Tests, code at commit `747687c`.
+
+| Area | Verdict |
+|------|---------|
+| TECH-05 renderer (D3D11 + WARP / OpenGL) | ✅ code matches Spec; tested on real Windows (hardware path) |
+| DEV-01..06 | ✅ implemented; DEV-02/03/04 tested on Linux and by unit tests; real-Windows audio (T-DEV-07) still open |
+| UI-01..08 | ✅; UI-07 partly (levels as text; real meters in P7) |
+| NF-01 (no locks/allocation in the audio callback) | ✅ callback uses only atomics and `memset` |
+| NF-02 (latency) | ⚠️ cannot be met with RtAudio's shared-mode WASAPI; open issue in Spec §8 |
+| LIC, CI | ✅ licence/pinning check passes |
+| Spec items without tests | TECH-01..06 are design rules (checked by the build and by T-LIC-02); the "a" items (DEV-02a, DEV-03a, UI-02a/03a/04a) are covered by the tests of their parent items. No gap. |
+
+## Findings
+| # | Finding | Action |
+|---|---------|--------|
+| G1 | The Windows build has only been compiled with MinGW. The Visual Studio (MSVC) build used by GitHub CI has never run; `std::getenv` will give MSVC warnings (C4996), and other MSVC-only problems are possible | First push to GitHub runs CI; fix whatever it reports |
+| G2 | `scanDevices()` temporarily redirects `std::cerr` (to capture RtMidi messages). Harmless today (only the GUI thread writes to `std::cerr`), but not thread-safe in general | Noted in the code; revisit if other threads start logging |
+| G3 | PulseAudio on Linux reports 32 input channels, so 32 level lines appear. Not a Windows issue | Revisit with the meters in P7 (e.g. only armed inputs) |
+| G4 | Plan still lists P9b, P11b, P12 correctly; nothing outdated | — |
+
+No contradictions between Spec, Plan and code.

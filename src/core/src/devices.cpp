@@ -15,6 +15,8 @@ namespace {
 // RtMidi prints warnings to std::cerr while its constructor runs, before an
 // error callback can be installed. Capture them so they end up in
 // DeviceScan::warnings instead of on the console.
+// Note: std::cerr is process-wide. This is safe while only the GUI thread
+// writes to it; revisit if other threads start logging to std::cerr.
 class CerrCapture {
 public:
     CerrCapture() : old_(std::cerr.rdbuf(buffer_.rdbuf())) {}

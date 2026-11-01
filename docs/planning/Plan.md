@@ -22,7 +22,7 @@
 | P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |
 | P13 | Note and sound editing | — | later (not in v1) |
-| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 done 2026-11-01 after P2 (`Crosscheck-2026-11-01.md`) |
+| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4 (both in `Crosscheck-2026-11-01.md`) |
 
 ## Notes
 - Every new Spec item gets at least one test case in `Tests.md`.
