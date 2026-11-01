@@ -63,6 +63,10 @@ The default theme is black text on a white background, and every colour combinat
 
 View → Contrast report shows every colour pair and its ratio.
 
+## Graphics
+
+On Windows the GUI uses Direct3D 11. On machines without a usable graphics driver (for example a virtual machine without 3D acceleration) it falls back to WARP, Windows' built-in software renderer. The status line shows which one is in use. Linux uses OpenGL 3.0.
+
 ## Licence
 
 mini-daw is released under the MIT licence (see `LICENSE`): anyone may use and modify it.

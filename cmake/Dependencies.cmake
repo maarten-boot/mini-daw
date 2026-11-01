@@ -93,18 +93,29 @@ if(MINIDAW_BUILD_APP)
     set(GLFW_BUILD_WAYLAND  OFF CACHE BOOL "" FORCE)  # X11 (and XWayland) for now
     FetchContent_MakeAvailable(glfw imgui)
 
-    find_package(OpenGL REQUIRED)
-
+    # Renderer: Direct3D 11 on Windows (works without an OpenGL driver, falls
+    # back to WARP software rendering), OpenGL 3 elsewhere. See SPEC-TECH-05.
     add_library(minidaw_imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp)
     target_include_directories(minidaw_imgui SYSTEM PUBLIC
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-    target_link_libraries(minidaw_imgui PUBLIC glfw OpenGL::GL)
+    target_link_libraries(minidaw_imgui PUBLIC glfw)
+    if(WIN32)
+        target_sources(minidaw_imgui PRIVATE ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+        if(MINGW)
+            target_link_libraries(minidaw_imgui PUBLIC d3d11 dxgi d3dcompiler_47)
+        else()
+            target_link_libraries(minidaw_imgui PUBLIC d3d11 dxgi d3dcompiler)
+        endif()
+    else()
+        find_package(OpenGL REQUIRED)
+        target_sources(minidaw_imgui PRIVATE ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+        target_link_libraries(minidaw_imgui PUBLIC OpenGL::GL)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

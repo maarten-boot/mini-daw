@@ -8,6 +8,7 @@
 //   mini-daw --version           print the version, then exit
 
 #include "imgui_theme.hpp"
+#include "renderer.hpp"
 
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
@@ -15,10 +16,9 @@
 #include "minidaw/version.hpp"
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 
-#include <GLFW/glfw3.h>  // also pulls in the system OpenGL 1.1 header (glClear etc.)
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 
 #include <cstdio>
 #include <cstring>
@@ -49,6 +49,7 @@ struct AppState {
     std::string customError;
 
     minidaw::DeviceScan scan;
+    std::string rendererName;
 };
 
 minidaw::EnforceResult buildPalette(const ContrastSetting& setting)
@@ -276,6 +277,7 @@ void drawStatusLine(const AppState& app)
     ImGui::Text("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change.",
                 describeContrast(app.contrast).c_str(), lowest.ratio);
     ImGui::Text("Config: %s", app.configPath.string().c_str());
+    ImGui::Text("Graphics: %s", app.rendererName.c_str());
     for (const auto& w : app.configWarnings) ImGui::TextWrapped("Config warning: %s", w.c_str());
     if (!app.saveError.empty()) ImGui::TextWrapped("Could not save config: %s", app.saveError.c_str());
     if (!app.unresolved.empty()) {
@@ -283,27 +285,41 @@ void drawStatusLine(const AppState& app)
     }
 }
 
+std::string g_lastGlfwError;
+
 int runGui(AppState& app)
 {
-    glfwSetErrorCallback([](int code, const char* text) { std::fprintf(stderr, "GLFW error %d: %s\n", code, text); });
-    if (!glfwInit()) return 1;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwSetErrorCallback([](int code, const char* text) {
+        std::fprintf(stderr, "GLFW error %d: %s\n", code, text);
+        g_lastGlfwError = text;
+    });
+    if (!glfwInit()) {
+        minidaw::app::showFatalError("The window system could not be initialised: " + g_lastGlfwError);
+        return 1;
+    }
+    minidaw::app::rendererWindowHints();
 
     const std::string title = std::string(minidaw::kProductName) + " " + minidaw::kVersion;
     GLFWwindow* window = glfwCreateWindow(1100, 700, title.c_str(), nullptr, nullptr);
     if (window == nullptr) {
+        minidaw::app::showFatalError("The main window could not be created: " + g_lastGlfwError);
         glfwTerminate();
         return 1;
     }
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;  // window layout is not saved
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 130");
+
+    std::string error;
+    if (!minidaw::app::rendererInit(window, error)) {
+        minidaw::app::showFatalError(error);
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    app.rendererName = minidaw::app::rendererName();
 
     setContrast(app, app.contrast, false);
     app.scan = minidaw::scanDevices();
@@ -311,8 +327,11 @@ int runGui(AppState& app)
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
+        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
+            glfwWaitEvents();  // minimised: don't render
+            continue;
+        }
+        minidaw::app::rendererNewFrame(window);
         ImGui::NewFrame();
 
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_UpArrow)) stepContrast(app, +1);
@@ -325,7 +344,7 @@ int runGui(AppState& app)
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoBringToFrontOnFocus);
         drawMenuBar(app, quit);
-        const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 3.5f;
+        const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 4.5f;
         if (ImGui::BeginChild("content", ImVec2(0, -statusHeight))) {
             drawDevicesPanel(app.scan);
         }
@@ -337,19 +356,12 @@ int runGui(AppState& app)
         drawContrastReportWindow(app);
 
         ImGui::Render();
-        int w = 0;
-        int h = 0;
-        glfwGetFramebufferSize(window, &w, &h);
-        glViewport(0, 0, w, h);
         const auto& bg = app.palette[minidaw::Role::Background];
-        glClearColor(static_cast<float>(bg.r), static_cast<float>(bg.g), static_cast<float>(bg.b), 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
+        const float clear[4] = {static_cast<float>(bg.r), static_cast<float>(bg.g), static_cast<float>(bg.b), 1.0f};
+        minidaw::app::rendererRender(window, clear);
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    minidaw::app::rendererShutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();

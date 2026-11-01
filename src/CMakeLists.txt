@@ -17,6 +17,11 @@ target_link_libraries(minidaw_core
 if(MINIDAW_BUILD_APP)
     # Console subsystem on Windows for now, so --list-devices output is visible.
     add_executable(minidaw app/main.cpp app/imgui_theme.cpp)
+    if(WIN32)
+        target_sources(minidaw PRIVATE app/renderer_d3d11.cpp)
+    else()
+        target_sources(minidaw PRIVATE app/renderer_opengl.cpp)
+    endif()
     set_target_properties(minidaw PROPERTIES OUTPUT_NAME "mini-daw")
     target_link_libraries(minidaw PRIVATE minidaw_core minidaw_imgui minidaw_warnings)
 endif()

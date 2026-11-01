@@ -87,3 +87,12 @@
 - `mini-daw.exe --list-devices` works: WASAPI finds Speakers (48 kHz, default out) and Line In (44.1 kHz, default in); MIDI: no inputs, 1 output (Microsoft GS Wavetable Synth). The exe needs no extra DLLs; the machine is not an N edition.
 - Finding: RtMidi printed "MidiInWinMM::initialize: no MIDI input devices currently available." to the console. Cause: RtMidi writes warnings to std::cerr in its constructor, before a callback can be set. Fix: capture std::cerr during the MIDI scan, move the messages into DeviceScan::warnings, and drop the normal "no devices" notice. New exe in `dist/windows/`.
 - Noted for P4/P5: input and output devices can run at different native sample rates (Spec §8b).
+
+## 15. GUI did not start on Windows
+> PS C:\Users\mboot\TMP> .\mini-daw.exe
+> GLFW error 65542: WGL: The driver does not appear to support OpenGL
+
+- Cause: the machine has no usable OpenGL driver (most likely a VM without 3D acceleration). The program also exited silently apart from that console line.
+- Fix: renderer layer (`src/app/renderer*.cpp`). Windows uses Direct3D 11 with automatic WARP fallback; Linux keeps OpenGL. A fatal start-up error now shows a message box. `MINIDAW_D3D_WARP=1` forces WARP for testing. Spec TECH-05 updated; tests T-UI-10/11 added.
+- Verified: Linux GUI (OpenGL, Xvfb); Windows exe under Wine (Wine prefix on the /dev/shm RAM disk, 1.2 GB, removed afterwards): hardware path and forced WARP path both draw the window; 29 Windows unit tests pass under Wine. The exe no longer needs OPENGL32.dll; it uses d3d11.dll and D3DCOMPILER_47.dll (both part of Windows 10).
+- New exe in `dist/windows/`. Waiting for the user to re-test on the real machine.

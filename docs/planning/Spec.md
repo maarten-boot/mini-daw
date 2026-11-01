@@ -14,7 +14,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-TECH-02** Audio I/O: RtAudio. Windows backend WASAPI first. ASIO as an option later; see SPEC-LIC-03.
 - **SPEC-TECH-03** MIDI I/O: RtMidi.
 - **SPEC-TECH-04** Plugin hosting: Steinberg VST3 SDK, used directly.
-- **SPEC-TECH-05** GUI: Dear ImGui on GLFW. GLFW provides the native window handle that VST3 plugin editors need. On Linux GLFW is built for X11 only for now (works under XWayland); native Wayland comes with P12.
+- **SPEC-TECH-05** GUI: Dear ImGui on GLFW. Rendering: **Direct3D 11 on Windows**, falling back to WARP (Windows' built-in software renderer) when there is no usable GPU driver, as in VMs without 3D acceleration; OpenGL 3.0 on Linux/macOS. The status line shows which renderer is in use; `MINIDAW_D3D_WARP=1` forces WARP for testing. If no renderer can start, the program shows a message box instead of failing silently. GLFW provides the native window handle that VST3 plugin editors need. On Linux GLFW is built for X11 only for now (works under XWayland); native Wayland comes with P12.
 - **SPEC-TECH-06** Only libraries whose licence is compatible with MIT (MIT, BSD, zlib, Boost or similar). See section 6.
 
 ## 3. Functional requirements
@@ -91,7 +91,8 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **Windows 10 N editions** have no `MFPlat.dll` (used by RtAudio's WASAPI code) unless the Media Feature Pack is installed. The program then does not start.
 - The default ImGui font is small (13 px) and there is no font-size setting yet.
 
-## 8b. Observations from the first Windows run (2026-11-01)
+## 8b. Observations from the first Windows runs (2026-11-01)
+- The first GUI start failed on the user's Windows 10 machine: `GLFW error 65542: WGL: The driver does not appear to support OpenGL` (no OpenGL driver, probably a VM). Fixed by switching Windows to Direct3D 11 with WARP fallback (SPEC-TECH-05).
 - Input and output devices can have different native sample rates (Line In 44.1 kHz, Speakers 48 kHz on the user's machine). P4/P5 must handle this: one session sample rate (SPEC-DEV-02, default 48 kHz), with WASAPI shared-mode conversion or a clear message when a device cannot run at that rate.
 
 ## 9. Open questions
