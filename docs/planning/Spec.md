@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.5 (2026-11-01). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.6 (2026-11-01, after crosscheck 1). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -14,13 +14,13 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-TECH-02** Audio I/O: RtAudio. Windows backend WASAPI first. ASIO as an option later; see SPEC-LIC-03.
 - **SPEC-TECH-03** MIDI I/O: RtMidi.
 - **SPEC-TECH-04** Plugin hosting: Steinberg VST3 SDK, used directly.
-- **SPEC-TECH-05** GUI: Dear ImGui on GLFW. GLFW provides the native window handle that VST3 plugin editors need.
+- **SPEC-TECH-05** GUI: Dear ImGui on GLFW. GLFW provides the native window handle that VST3 plugin editors need. On Linux GLFW is built for X11 only for now (works under XWayland); native Wayland comes with P12.
 - **SPEC-TECH-06** Only libraries whose licence is compatible with MIT (MIT, BSD, zlib, Boost or similar). See section 6.
 
 ## 3. Functional requirements
 
 ### 3.1 Devices
-- **SPEC-DEV-01** List the available audio input/output devices and MIDI input ports.
+- **SPEC-DEV-01** List the available audio input/output devices and MIDI input and output ports.
 - **SPEC-DEV-02** The user selects the audio device, sample rate and buffer size. Default 48 kHz.
 - **SPEC-DEV-03** Device settings are saved and restored on the next start.
 

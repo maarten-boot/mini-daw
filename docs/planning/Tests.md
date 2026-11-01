@@ -59,6 +59,11 @@ Status column in the Results section at the end.
 | T-VST-06 | SPEC-VST-06 | M | Change a preset, save the project, reopen it | Plugin state restored |
 | T-VST-07 | SPEC-NF-03 | M | Plugin crashes during recording | Takes already written are intact and playable |
 
+## Non-functional
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-NF-02 | SPEC-NF-02 | M | Loopback cable from output to input; play a click and record it with WASAPI exclusive mode at 256 samples, 48 kHz | Measured round-trip latency ≤ about 20 ms |
+
 ## Project
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
@@ -68,7 +73,7 @@ Status column in the Results section at the end.
 ## Licensing
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
-| T-LIC-01 | SPEC-LIC-01 | A | `LICENSE` file exists at the repository root | MIT text with "Copyright (c) 2026 Maarten Boot" |
+| T-LIC-01 | SPEC-LIC-01 | A | `tools/check_licenses.py` checks the `LICENSE` file at the repository root | MIT text with "Copyright (c) 2026 Maarten Boot" |
 | T-LIC-02 | SPEC-LIC-02 | A | CI script checks that every dependency in the build has an entry in `THIRD_PARTY.md` with an allowed licence (MIT, BSD, zlib, Boost, Apache-2.0) | Passes; fails if an entry is missing or the licence is not allowed |
 | T-LIC-03 | SPEC-LIC-03 | A | Default configure and build (no options set) | Builds; no ASIO symbols or headers involved; repository contains no ASIO SDK files |
 | T-LIC-04 | SPEC-LIC-03 | M | Configure with `-DMINIDAW_WITH_ASIO=ON` and no SDK path set | Configure stops with a clear message explaining where to get the SDK and what its licence means |

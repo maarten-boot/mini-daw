@@ -67,3 +67,10 @@
 - Verified: Linux build plus 5/5 tests pass; MinGW cross-build of both .exe files succeeds; ASIO switch gives the intended messages.
 - Not verified: Windows run (Wine skipped because the root disk was 98% full after a Wine prefix filled it; Claude removed only its own scratchpad files); the GUI window was not opened visually; GitHub CI (no remote).
 - Committed on branch `p2-skeleton`.
+
+## 12. Crosscheck #1, then P3
+> do the crosscheck first, then start P3; note we are not yet in a git rep connected to github, that comes after the first draft i can hava look at.
+
+- Corrections noted: "hava" → "have", "rep" → "repo". Meaning clear, so work went ahead. Interpretation to confirm: "first draft" = the first version the user can run and look at.
+- GitHub: no remote until the user has reviewed a first draft. T-CI-02 stays "not run" until then.
+- Crosscheck #1 written to `Crosscheck-2026-11-01.md`: 9 findings (F1–F9), all fixed except F3 (UI-02), which is what P3 is for. Spec → v0.6.

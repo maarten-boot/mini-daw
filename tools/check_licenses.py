@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Licence checks for mini-daw.
 
+T-LIC-01: LICENSE is the MIT licence for Maarten Boot.
 T-LIC-02: every dependency declared in cmake/Dependencies.cmake has a row in
           THIRD_PARTY.md with the same version and an allowed licence.
 T-LIC-03: the repository contains no ASIO SDK files.
@@ -69,6 +70,15 @@ def main() -> int:
     root: Path = args.root.resolve()
     errors: list[str] = []
 
+    # T-LIC-01 ------------------------------------------------------------
+    lic = root / "LICENSE"
+    if not lic.is_file():
+        errors.append("LICENSE file missing at repository root")
+    else:
+        text = lic.read_text(encoding="utf-8")
+        if not text.startswith("MIT License") or "Copyright (c) 2026 Maarten Boot" not in text:
+            errors.append("LICENSE is not the expected MIT text with 'Copyright (c) 2026 Maarten Boot'")
+
     # T-LIC-02 ------------------------------------------------------------
     deps = parse_dependencies(root / "cmake" / "Dependencies.cmake")
     third = parse_third_party(root / "THIRD_PARTY.md")
@@ -104,7 +114,7 @@ def main() -> int:
         print(f"FAIL: {e}")
     if errors:
         return 1
-    print(f"OK: {len(deps)} dependencies checked, no ASIO SDK files, all actions pinned")
+    print(f"OK: LICENSE is MIT, {len(deps)} dependencies checked, no ASIO SDK files, all actions pinned")
     return 0
 
 
