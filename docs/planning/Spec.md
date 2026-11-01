@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.8 (2026-11-01, P4 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.9 (2026-11-01, P5 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -25,7 +25,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-DEV-03** Device settings are saved and restored on the next start.
 - **SPEC-DEV-02a** Implementation: Settings → Audio devices… chooses input device, output device (each also `(default)` or `(none)`), sample rate (44.1/48/88.2/96 kHz) and buffer size (64–2048 frames). Apply reopens the stream; on failure the previous settings are reopened and the error is shown. All input channels of the input device are opened (up to 32) and stereo output. The window shows the actual rate, buffer size, reported latency, dropouts and a peak level per input channel as text (dBFS).
 - **SPEC-DEV-03a** Devices are stored **by name** in `[audio]` of `config.ini` (RtAudio ids are not stable between runs). A saved device that is missing falls back to the system default with a visible note; the saved choice is kept, so it is used again when the device returns.
-- **SPEC-DEV-05** A stream only counts as running after the first audio callback has arrived (within 1 s). Otherwise the driver's message is shown as an error.
+- **SPEC-DEV-05** A stream only counts as running after the first audio callback has arrived (within 1 s). Otherwise the driver's message is shown as an error. If the audio thread could not get realtime priority (Linux), a warning says so.
 - **SPEC-DEV-06** `mini-daw --audio-test <seconds>` opens the configured devices without the GUI and prints the actual settings, peak levels, callback count and dropouts.
 
 ### 3.2 Tracks and recording
@@ -34,6 +34,10 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-REC-03** Audio takes are saved as WAV files, 24-bit PCM at the session sample rate.
 - **SPEC-REC-04** MIDI takes are saved as Standard MIDI Files (type 1), with timestamps aligned to the audio timeline.
 - **SPEC-REC-05** No data is lost if a recording runs at least 60 minutes. Disk writing happens outside the audio thread.
+  - **SPEC-REC-05a** While a take is being recorded, its WAV header is refreshed about once a second, so after a crash or power loss the file is valid and holds the audio up to that point.
+  - **SPEC-REC-05b** If audio is lost anyway (the disk cannot keep up, the disk is full), the program says so: the number of lost frames per take and the disk error are reported, never hidden. The audio thread buffers about 4 seconds per take.
+  - **SPEC-REC-05c** A plain WAV file can hold at most 4 GiB (about 8 hours of 24-bit mono or 4 hours of stereo at 48 kHz). A take that reaches this limit stops with a clear message; RF64 for longer takes is a later option.
+- **SPEC-REC-06** `mini-daw --record-test <seconds> <folder>` records input channel 1 (and 2, if the device has it) to `take-YYYYMMDD-HHMMSS.wav` in the folder, without the GUI, and prints frames written, lost frames, clipped samples and dropouts.
 
 ### 3.3 Monitoring
 - **SPEC-MON-01** Input monitoring can be switched on or off per armed audio track.

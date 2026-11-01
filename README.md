@@ -46,6 +46,8 @@ mini-daw                     open the GUI
 mini-daw --config <file>     use this config file instead of the default one
 mini-daw --list-devices      print audio devices and MIDI ports, then exit
 mini-daw --audio-test <sec>  open the configured audio devices, print settings and levels
+mini-daw --record-test <sec> <folder>
+                             record input 1 (and 2) to a 24-bit WAV file in <folder>
 mini-daw --contrast-report   print every colour pair and its contrast, then exit
 mini-daw --version           print the version, then exit
 ```
@@ -77,6 +79,14 @@ Settings → Audio devices… selects the input and output device, sample rate a
 ```
 mini-daw --audio-test 5
 ```
+
+To try recording without the GUI (the Record button comes with tracks):
+
+```
+mini-daw --record-test 10 C:\Users\me\Music\mini-daw
+```
+
+This writes `take-YYYYMMDD-HHMMSS.wav` (24-bit) and reports lost frames, clipped samples and dropouts. While a take is being recorded its file is kept valid about once a second, so a crash loses at most the last second.
 
 ## Graphics
 

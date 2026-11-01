@@ -6,6 +6,9 @@
 //   mini-daw --list-devices        print audio devices and MIDI ports, then exit
 //   mini-daw --audio-test <sec>    open the configured audio devices for <sec> seconds,
 //                                  print the actual settings and input levels, then exit
+//   mini-daw --record-test <sec> <folder>
+//                                  record input channel 1 (and 2, if present) for <sec>
+//                                  seconds to a 24-bit WAV file in <folder>, then exit
 //   mini-daw --contrast-report     print every colour pair and its contrast, then exit
 //   mini-daw --version             print the version, then exit
 
@@ -29,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -221,6 +225,74 @@ int runAudioTest(AppState& app, int seconds)
     for (const auto& m : app.audio.takeDriverMessages()) std::printf("driver: %s\n", m.c_str());
     app.audio.close();
     return app.audio.callbacks() > 0 ? 0 : 1;
+}
+
+// "take-20261101-223900.wav" (local time), so takes sort by date.
+std::string takeFileName()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char buf[64];
+    std::strftime(buf, sizeof buf, "take-%Y%m%d-%H%M%S.wav", &local);
+    return buf;
+}
+
+// --record-test: record the first one or two input channels to a WAV file
+// (T-REC-10; exercises the recording engine on a real device before P6).
+int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folder)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    if (ec) {
+        std::printf("error: cannot create folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
+        return 1;
+    }
+    app.scan = minidaw::scanDevices();
+    minidaw::OpenResult r = app.audio.open(app.config.audio, app.scan);
+    for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
+    if (!r.error.empty()) {
+        std::printf("error: %s\n", r.error.c_str());
+        return 1;
+    }
+    const auto& info = app.audio.info();
+    if (info.inputChannels == 0) {
+        std::printf("error: no input device is open, so there is nothing to record.\n");
+        return 1;
+    }
+
+    minidaw::TakeSpec take;
+    take.path = folder / takeFileName();
+    take.channels = info.inputChannels >= 2 ? std::vector<unsigned int>{0, 1} : std::vector<unsigned int>{0};
+    std::string error;
+    if (!app.audio.startRecording({take}, error)) {
+        std::printf("error: %s\n", error.c_str());
+        return 1;
+    }
+    std::printf("Recording %s: %s, %u Hz, %zu ch, %d s\n", take.path.string().c_str(), info.inputName.c_str(),
+                info.sampleRate, take.channels.size(), seconds);
+    for (int t = 0; t < seconds * 10; ++t) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!app.audio.recorder().diskError().empty()) break;
+    }
+    const minidaw::RecordingResult res = app.audio.stopRecording();
+    const std::uint64_t xruns = app.audio.xruns();
+    const double rate = info.sampleRate;  // info is reset by close()
+    app.audio.close();
+
+    for (const auto& t : res.takes) {
+        std::printf("Wrote %s: %llu frames (%.2f s), dropped %llu, clipped samples %llu\n", t.path.string().c_str(),
+                    static_cast<unsigned long long>(t.frames), double(t.frames) / rate,
+                    static_cast<unsigned long long>(t.droppedFrames),
+                    static_cast<unsigned long long>(t.clippedSamples));
+    }
+    std::printf("xruns: %llu\n", static_cast<unsigned long long>(xruns));
+    if (!res.error.empty()) std::printf("error: %s\n", res.error.c_str());
+    return res.lostData() ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,8 +669,8 @@ int runGui(AppState& app)
 
 void printUsage(const char* argv0)
 {
-    std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> | --contrast-report |\n"
-                "        --version | --help]\n",
+    std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> |\n"
+                "        --record-test <seconds> <folder> | --contrast-report | --version | --help]\n",
                 argv0);
 }
 
@@ -608,8 +680,9 @@ int main(int argc, char** argv)
 {
     AppState app;
     app.configPath = minidaw::defaultConfigPath();
-    enum class Action { Gui, ListDevices, AudioTest, ContrastReport } action = Action::Gui;
+    enum class Action { Gui, ListDevices, AudioTest, RecordTest, ContrastReport } action = Action::Gui;
     int audioTestSeconds = 3;
+    std::filesystem::path recordFolder;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -628,6 +701,10 @@ int main(int argc, char** argv)
         } else if (std::strcmp(arg, "--audio-test") == 0 && i + 1 < argc) {
             action = Action::AudioTest;
             audioTestSeconds = std::clamp(std::atoi(argv[++i]), 1, 600);
+        } else if (std::strcmp(arg, "--record-test") == 0 && i + 2 < argc) {
+            action = Action::RecordTest;
+            audioTestSeconds = std::clamp(std::atoi(argv[++i]), 1, 3600);
+            recordFolder = std::filesystem::path(argv[++i]);  // native encoding, as argv is
         } else if (std::strcmp(arg, "--config") == 0 && i + 1 < argc) {
             app.configPath = argv[++i];
         } else {
@@ -647,6 +724,8 @@ int main(int argc, char** argv)
         return 0;
     case Action::AudioTest:
         return runAudioTest(app, audioTestSeconds);
+    case Action::RecordTest:
+        return runRecordTest(app, audioTestSeconds, recordFolder);
     case Action::ContrastReport: {
         auto result = buildPalette(app.config.contrast);
         app.palette = result.palette;

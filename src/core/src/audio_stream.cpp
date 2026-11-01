@@ -99,6 +99,7 @@ void AudioStream::close()
         if (rtaudio_->isStreamRunning()) rtaudio_->stopStream();
         rtaudio_->closeStream();
     }
+    if (recorder_.recording()) recorder_.stop();  // finishes the files
     info_ = {};
     cbInputChannels_ = 0;
     cbOutputChannels_ = 0;
@@ -153,28 +154,52 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     cbOutputChannels_ = out.id ? out.channels : 0;
 
     unsigned int frames = settings.bufferFrames;
-    RtAudioErrorType err = rtaudio_->openStream(out.id ? &outParams : nullptr, in.id ? &inParams : nullptr,
-                                                RTAUDIO_FLOAT32, settings.sampleRate, &frames,
-                                                &AudioStream::audioCallback, this, &options);
-    if (err != RTAUDIO_NO_ERROR) {
-        result.error = "The audio stream could not be opened: " + rtaudio_->getErrorText();
-        close();
-        return result;
-    }
-    err = rtaudio_->startStream();
-    if (err != RTAUDIO_NO_ERROR) {
-        result.error = "The audio stream could not be started: " + rtaudio_->getErrorText();
-        close();
-        return result;
-    }
+    {
+        // RtAudio's audio thread (created by openStream on Linux) prints a line
+        // about realtime scheduling before its first callback. Capture it while
+        // we wait for that callback; the acquire load below orders the thread's
+        // write before our read of the captured text. On failure, close() stops
+        // the thread before the capture ends.
+        detail::ConsoleCapture capture;
+        RtAudioErrorType err = rtaudio_->openStream(out.id ? &outParams : nullptr, in.id ? &inParams : nullptr,
+                                                    RTAUDIO_FLOAT32, settings.sampleRate, &frames,
+                                                    &AudioStream::audioCallback, this, &options);
+        if (err != RTAUDIO_NO_ERROR) {
+            result.error = "The audio stream could not be opened: " + rtaudio_->getErrorText();
+            close();
+            return result;
+        }
+        err = rtaudio_->startStream();
+        if (err != RTAUDIO_NO_ERROR) {
+            result.error = "The audio stream could not be started: " + rtaudio_->getErrorText();
+            close();
+            return result;
+        }
 
-    // Some drivers report success from startStream() and only fail on their
-    // own thread afterwards (seen with WASAPI under Wine). Wait for the first
-    // callback so "running" really means audio is flowing.
-    for (int i = 0; i < 100 && callbacks_.load(std::memory_order_relaxed) == 0; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // Some drivers report success from startStream() and only fail on their
+        // own thread afterwards (seen with WASAPI under Wine). Wait for the first
+        // callback so "running" really means audio is flowing.
+        for (int i = 0; i < 100 && callbacks_.load(std::memory_order_acquire) == 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (callbacks_.load(std::memory_order_acquire) != 0) {
+            for (const std::string& line : capture.lines()) {
+                if (line.find("running realtime scheduling") != std::string::npos) {
+                    if (line.find("_NOT_") != std::string::npos) {
+                        result.warnings.emplace_back(
+                            "The audio thread runs without realtime priority, so dropouts are more likely under "
+                            "load. On Linux, allow it with a realtime priority limit (rtprio), for example via "
+                            "the 'audio' group.");
+                    }
+                } else if (!detail::isNoDevicesNotice(line)) {
+                    result.warnings.push_back("Audio: " + line);
+                }
+            }
+        } else {
+            close();  // stops the audio thread while its output is still captured
+        }
     }
-    if (callbacks_.load(std::memory_order_relaxed) == 0) {
+    if (callbacks_.load(std::memory_order_acquire) == 0) {
         std::vector<std::string> msgs = takeDriverMessages();
         result.error = "The audio stream started but no audio arrived within 1 second.";
         for (const auto& m : msgs) result.error += " Driver: " + m;
@@ -202,6 +227,16 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     return result;
 }
 
+bool AudioStream::startRecording(const std::vector<TakeSpec>& takes, std::string& error,
+                                 const RecorderOptions& options)
+{
+    if (!info_.running) {
+        error = "The audio stream is not running.";
+        return false;
+    }
+    return recorder_.start(takes, info_.sampleRate, info_.inputChannels, error, options);
+}
+
 float AudioStream::takeInputPeak(unsigned int channel)
 {
     if (channel >= kMaxInputChannels) return 0.0f;
@@ -221,7 +256,7 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
                                unsigned int status, void* user)
 {
     auto* self = static_cast<AudioStream*>(user);
-    self->callbacks_.fetch_add(1, std::memory_order_relaxed);
+    self->callbacks_.fetch_add(1, std::memory_order_release);  // see the wait in open()
     if (status != 0) {
         self->xruns_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -243,6 +278,7 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
             while (peak > prev && !slot.compare_exchange_weak(prev, peak, std::memory_order_relaxed)) {
             }
         }
+        self->recorder_.process(samples, frames, channels);
     }
     return 0;
 }

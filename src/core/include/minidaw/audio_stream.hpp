@@ -2,12 +2,12 @@
 
 // Audio device selection and the running audio stream (SPEC-DEV-02, 03, SPEC-NF-01).
 //
-// P4 scope: open a duplex stream on the chosen devices, output silence, and
-// measure input peak levels so the user can see the settings work. Recording
-// and playback are added on top of this in P5/P6/P8.
+// Opens a duplex stream on the chosen devices, outputs silence, measures input
+// peak levels and feeds the input to the Recorder (P5). Playback follows in P8.
 
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/recorder.hpp"
 
 #include <array>
 #include <atomic>
@@ -88,12 +88,19 @@ public:
     // Warnings reported by the driver while running.
     std::vector<std::string> takeDriverMessages();
 
+    // Recording of the input (SPEC-REC-03/05). Start it while the stream runs;
+    // close() stops a running recording and finishes its files.
+    bool startRecording(const std::vector<TakeSpec>& takes, std::string& error, const RecorderOptions& options = {});
+    RecordingResult stopRecording() { return recorder_.stop(); }
+    const Recorder& recorder() const { return recorder_; }
+
 private:
     static int audioCallback(void* output, void* input, unsigned int frames, double streamTime,
                              unsigned int status, void* user);
 
     std::unique_ptr<RtAudio> rtaudio_;
     StreamInfo info_;
+    Recorder recorder_;
 
     // Read by the audio thread; only changed while the stream is closed.
     unsigned int cbInputChannels_ = 0;

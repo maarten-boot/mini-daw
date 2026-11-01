@@ -163,3 +163,8 @@
 ## 25. ALSA messages silenced; P5 started
 - User: "yes silence the ALSA messages, then start P5".
 - `detail::silenceAlsaMessages()` (new `alsa_quiet.cpp`) installs a no-op ALSA error handler once; called from `ConsoleCapture`, which runs before every RtAudio/RtMidi use. Verified with a broken ALSA config: 8 lines before, 0 after.
+- P5 built: `SpscRing` (lock-free ring), `WavWriter`/`readWav` (24-bit PCM, header refreshed each second, padding, 4 GiB limit), `Recorder` (audio thread copies chosen channels into one ring per take; disk thread writes; lost frames counted), hooked into `AudioStream`; `--record-test <sec> <folder>`.
+- New Spec items REC-05a/b/c and REC-06; tests T-REC-07..10. 58/58 on Linux, 57/57 Catch2 cases under Wine.
+- Problems found and fixed on the way: a buffer overrun in the new stress test (hung the run), test arithmetic, duration printed as "inf" (sample rate read after close), `u8path` (wrong for Windows argv anyway).
+- RtAudio's own "_NOT_ running realtime scheduling" line (Linux, printed from its audio thread during openStream) is now captured and shown as a readable warning.
+- Next: user tests `--record-test 10 <folder>` on a Windows machine with a working input (T-REC-10); then P6 (tracks, arming, Record button, MIDI recording, SMF writer).

@@ -10,10 +10,10 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - GUI colours: white background, black text, every foreground/background pair ≥ 4.5:1. New UI colours must use a `minidaw::Role` (see `src/core/include/minidaw/theme.hpp`); add new fg/bg combinations to `colorPairs()` so the tests check them.
 - GitHub Actions: pin every action to a full commit SHA with the tag in a comment; use the latest working release; explain any exception in Spec §7. `tools/check_licenses.py` enforces this.
 - Dependencies must have MIT-compatible licences and be listed in `THIRD_PARTY.md` with the same version as `cmake/Dependencies.cmake`. Never add ASIO SDK files to the repository.
-- Audio callback (`AudioStream::audioCallback`): no locks, no allocation, no I/O.
+- Audio callback (`AudioStream::audioCallback`, and `Recorder::process` which it calls): no locks, no allocation, no I/O.
 
 ## Layout
-- `src/core/` — library without GUI: colours/contrast (`color`, `theme`), config file (`config`), device scan (`devices`), audio stream (`audio_stream`).
+- `src/core/` — library without GUI: colours/contrast (`color`, `theme`), config file (`config`), device scan (`devices`), audio stream (`audio_stream`), recording engine (`ring_buffer.hpp`, `wav`, `recorder`).
 - `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS).
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
@@ -40,4 +40,4 @@ Windows/MSVC is built by GitHub Actions (`.github/workflows/build.yml`).
 - This VM has no sound card (ALSA→PulseAudio only) and no MIDI access (`/dev/snd/seq` permission denied).
 
 ## Useful program options
-`--config <file>`, `--list-devices`, `--audio-test <seconds>`, `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.
+`--config <file>`, `--list-devices`, `--audio-test <seconds>`, `--record-test <seconds> <folder>`, `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.

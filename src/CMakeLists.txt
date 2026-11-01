@@ -8,7 +8,9 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
-    core/src/theme.cpp)
+    core/src/recorder.cpp
+    core/src/theme.cpp
+    core/src/wav.cpp)
 target_include_directories(minidaw_core PUBLIC
     core/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)

@@ -35,6 +35,10 @@ Status column in the Results section at the end.
 | T-REC-04 | SPEC-REC-04 | M | Loop audio out to audio in, send MIDI notes that also trigger a click, record both | MIDI note-on and audio click within 1 buffer of each other |
 | T-REC-05 | SPEC-REC-05, NF-01 | M | Record 4 tracks for 60 minutes | No dropouts or xruns logged; files complete |
 | T-REC-06 | SPEC-REC-05 | A | Ring buffer stress test: producer and consumer threads, 10⁸ samples | No lost or duplicated samples |
+| T-REC-07 | SPEC-REC-05a | A | Write a WAV file, refresh the header, write more, read the file before closing | File is valid and holds the audio up to the header refresh; after closing, all of it |
+| T-REC-08 | SPEC-REC-03, 05, NF-01 | A | Recorder with 4 input channels and 2 takes (mono ch 3; stereo ch 4+1), a test thread plays the audio callback for 5 s, the real disk thread writes | Both files hold every frame, sample-exact, in the right channel order; 0 lost frames |
+| T-REC-09 | SPEC-REC-05b | A | Recorder without a disk thread and a 4096-frame ring; feed 10 000 frames | 6000 frames reported lost; the 4000 buffered frames are still written on stop |
+| T-REC-10 | SPEC-REC-06 | M | `mini-daw --record-test 10 <folder>` on Windows 10 with a working input, while speaking or playing into it | A 10 s, 24-bit WAV in the folder that plays back what was heard; 0 lost frames, 0 xruns |
 
 ## Monitoring
 | ID | Spec | Type | Description | Expected result |
@@ -139,3 +143,10 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-DEV-07 (output only) | Windows VM, `input_device = (none)` | pass | WASAPI, Speakers 48 kHz, 2 ch; 1044 callbacks (expected 938), 0 xruns. The excess was a flaw in the test (count started at open, `sleep_for` overshoot) → now measures real time from a fixed start; Linux: 376 in 2.00 s (expected 375) |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41351279135 | pass | licence 4s, windows 3m15s, linux 1m11s; both downloads present (`mini-daw-windows-x64`, `mini-daw-linux-x64`). Linux smoke run works; ALSA prints its own "cannot find card '0'" lines on the runner (no sound card) — they bypass our `std::cerr` capture |
 | 2026-11-01 | — (console noise, SPEC-DEV-01 output) | Linux, `ALSA_CONFIG_PATH=/nonexistent` | pass | Before: 8 "ALSA lib …" lines on `--list-devices`; after the silent `snd_lib_error_set_handler`: 0 |
+| 2026-11-01 | T-REC-02 | Linux + Wine (MinGW build) | pass | Sine read back within one 24-bit step; header fields; odd-size padding; clipping/NaN; 16-bit and float reading |
+| 2026-11-01 | T-REC-06 | Linux + Wine | pass | 10⁸ values with changing block sizes, 0 errors (≈0.1 s). First run hung: buffer overrun in the test's producer (blocks up to 515 values in a 512 buffer) → fixed |
+| 2026-11-01 | T-REC-07 | Linux + Wine | pass | |
+| 2026-11-01 | T-REC-08 | Linux + Wine | pass | 937 blocks of 256 frames into 2 takes; 0 mismatches, 0 lost |
+| 2026-11-01 | T-REC-09 | Linux + Wine | pass | |
+| 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s → 96 256 frames, 24-bit stereo 48 kHz (checked with Python `wave`); 0 lost, 0 xruns. Windows: to do by the user |
+| 2026-11-01 | all automated | Linux 58/58 ctest; Wine 57/57 Catch2 cases | pass | |
