@@ -128,3 +128,10 @@
 - Real-Windows audio test: `mini-daw.exe --audio-test 5` and Settings → Audio devices (T-DEV-07); also contrast/config checks T-UI-03/04 on Windows.
 **Open questions (Spec §9):** stereo mix export of the whole project; when ASIO comes; Windows 10 N / MFPlat.dll; how to reach SPEC-NF-02 latency (RtAudio WASAPI is shared-mode only).
 **Next step:** P5 — audio engine: lock-free ring buffers from the audio callback to a disk-writer thread, WAV writer (24-bit, T-REC-02), ring-buffer stress test (T-REC-06).
+
+## 20. Push attempt
+> push it
+
+- `git push origin main` (SSH) failed: `Permission denied (publickey)` — no SSH agent in Claude's shell.
+- Retried over HTTPS with the `gh` login (for that command only, `origin` unchanged): HTTP 403 — the fine-grained token of account maarten-boot has no write access to `maarten-boot/mini-daw`.
+- Nothing pushed. Options given to the user: push from their own terminal, or extend the token (Contents + Workflows: read and write) and let Claude push.
