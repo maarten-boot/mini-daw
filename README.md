@@ -2,7 +2,7 @@
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early skeleton (step P2). The program lists the audio devices and MIDI ports it finds. Recording is not implemented yet. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P3). The program lists the audio devices and MIDI ports it finds, and has adjustable screen contrast. Recording is not implemented yet. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -40,10 +40,28 @@ cmake --build build-win
 ### Command line
 
 ```
-mini-daw                 open the GUI
-mini-daw --list-devices  print audio devices and MIDI ports, then exit
-mini-daw --version       print the version, then exit
+mini-daw                     open the GUI
+mini-daw --config <file>     use this config file instead of the default one
+mini-daw --list-devices      print audio devices and MIDI ports, then exit
+mini-daw --contrast-report   print every colour pair and its contrast, then exit
+mini-daw --version           print the version, then exit
 ```
+
+## Screen contrast
+
+The default theme is black text on a white background, and every colour combination on screen has a contrast ratio of at least 4.5:1 (WCAG AA). You can raise it:
+
+- **In the program:** View → Contrast (AA 4.5:1, AAA 7:1, Max 21:1, or a custom value), or Ctrl+Shift+Up / Ctrl+Shift+Down. The choice is saved.
+- **In the config file:**
+
+  ```
+  [ui]
+  min_contrast = AAA   ; AA, AAA, Max, or a number from 4.5 to 21
+  ```
+
+  The file is `%APPDATA%\mini-daw\config.ini` on Windows and `~/.config/mini-daw/config.ini` on Linux.
+
+View → Contrast report shows every colour pair and its ratio.
 
 ## Licence
 

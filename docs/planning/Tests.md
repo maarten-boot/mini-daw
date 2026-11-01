@@ -9,7 +9,7 @@ Status column in the Results section at the end.
 | T-UI-01 | SPEC-UI-01 | M | Start the app with no config file | White background, black text |
 | T-UI-02 | SPEC-UI-02 | A | Compute the contrast ratio of every colour pair in the default theme | All ≥ 4.5:1 |
 | T-UI-03 | SPEC-UI-03 | M | Switch the preset AA → AAA → Max at runtime | Colours update right away; all pairs ≥ 7:1, then 21:1 |
-| T-UI-04 | SPEC-UI-04 | A | Set `min_contrast = 7.0` in the config file, then start the app | All pairs ≥ 7:1 |
+| T-UI-04 | SPEC-UI-04 | A | Set `min_contrast = 7.0` in `[ui]` of the config file, then start the app | All pairs ≥ 7:1 |
 | T-UI-05 | SPEC-UI-05 | A | Set a custom minimum of 3.0 | Rejected with a message; 4.5:1 stays in effect |
 | T-UI-06 | SPEC-UI-05 | A | Set a custom minimum of 10.0 | All pairs ≥ 10:1 |
 | T-UI-07 | SPEC-UI-06 | A | Theme has a pair at 5:1, minimum set to AAA | That pair is adjusted to ≥ 7:1 |
@@ -98,3 +98,12 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-CI-02 | — | not run | No GitHub remote yet |
 | 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | Not run under Wine: root disk 98% full |
 | 2026-11-01 | T-DEV-05 | Linux VM (no sound card) | pass | ALSA sequencer access denied → returned as MIDI warnings |
+| 2026-11-01 | T-UI-01 | Linux (unit test + Xvfb screenshot) | pass | White background, black text |
+| 2026-11-01 | T-UI-02 | Linux (unit test) | pass | 19 pairs; lowest 5.38:1 (accent on pressed control) |
+| 2026-11-01 | T-UI-03 | Linux (Xvfb + xdotool) | pass | Ctrl+Shift+Up twice → Max; screen pure black/white; saved to config. Menu checked by screenshot |
+| 2026-11-01 | T-UI-04 | Linux (unit test + `--contrast-report`) | pass | Also: user comments kept when saving |
+| 2026-11-01 | T-UI-05 | Linux (unit test + `--contrast-report`) | pass | Value 3 → warning, AA used |
+| 2026-11-01 | T-UI-06 | Linux (unit test) | pass | 10:1, 15:1 also checked |
+| 2026-11-01 | T-UI-07 | Linux (unit test) | pass | |
+| 2026-11-01 | T-UI-08 | Linux (unit test) | pass | #777/#FFF = 4.48, #767676 = 4.54, #595959 = 7.00 |
+| 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | P3 build; exe needs only Windows system DLLs (see Spec §8 about MFPlat) |

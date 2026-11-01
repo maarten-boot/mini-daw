@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.6 (2026-11-01, after crosscheck 1). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.7 (2026-11-01, P3 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -60,6 +60,9 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-UI-04** The user can set the minimum contrast in a config file.
 - **SPEC-UI-05** Contrast presets: AA (4.5:1), AAA (7:1), Max (21:1, pure black/white), plus a custom minimum ratio. A custom value below 4.5:1 is rejected.
 - **SPEC-UI-06** When a minimum is active, any colour pair below it is adjusted until it meets that minimum.
+- **SPEC-UI-03a** Implementation of UI-03: menu View → Contrast (AA, AAA, Max, Custom…, Raise, Lower) and the shortcuts Ctrl+Shift+Up / Ctrl+Shift+Down, which step through AA → AAA → Max. An interactive change is saved to the config file immediately.
+- **SPEC-UI-04a** Implementation of UI-04: INI file, key `min_contrast` in section `[ui]`, value `AA`, `AAA`, `Max` or a number from 4.5 to 21. Default location: Windows `%APPDATA%\mini-daw\config.ini`, Linux `~/.config/mini-daw/config.ini`, macOS `~/Library/Application Support/mini-daw/config.ini`; `--config <file>` overrides it. Saving keeps the user's own comments and other lines. An invalid value gives a visible warning and falls back to AA.
+- **SPEC-UI-02a** Contrast is checked on a fixed list of foreground/background pairs between colour roles (`colorPairs()`). Every ImGui colour slot maps to a role, so no toolkit default escapes the check. Borders, separators, check marks and scrollbar thumbs are held to the same minimum as text (stricter than WCAG's 3:1 for non-text). `View → Contrast report` and `mini-daw --contrast-report` list every pair with its ratio.
 - **SPEC-UI-07** Level meters and other status shown by colour also show it another way, such as a text value or pattern.
 
 ## 5. Non-functional requirements
@@ -83,8 +86,15 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-CI-02** CI builds and tests on Windows (primary target) and Linux, and runs the licence and pinning check. Runner images are pinned to a named version (`windows-2025`, `ubuntu-24.04`), not `-latest`.
 - **SPEC-CI-03** The project can be cross-compiled for Windows from Linux with MinGW-w64 (`cmake/toolchains/mingw-w64.cmake`).
 
-## 8. Open questions
+## 8. Known limitations
+- **Max (21:1):** every background becomes white, so hovered, pressed and selected states can no longer be told apart by colour; only borders and the focus cursor remain. To be solved together with SPEC-UI-07 (state shown another way than colour).
+- **Windows 10 N editions** have no `MFPlat.dll` (used by RtAudio's WASAPI code) unless the Media Feature Pack is installed. The program then does not start.
+- The default ImGui font is small (13 px) and there is no font-size setting yet.
+
+## 9. Open questions
 - When should ASIO support come? Its licence is settled in SPEC-LIC-03.
 - Should the whole project be exportable as one stereo mix? (Not answered yet.)
-- Will the repository be pushed to GitHub, and under which account or organisation? CI runs only once it is.
+- GitHub: no remote until the user has reviewed a first draft (user, 2026-11-01). Account/organisation still to decide.
+- Should there be a font-size / UI-scale setting (accessibility)?
+- Should the WASAPI build avoid `MFPlat.dll` so it also starts on Windows 10 N without the Media Feature Pack?
 - Metronome/click track: not for now (user, 2026-11-01).

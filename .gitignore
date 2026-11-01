@@ -6,3 +6,4 @@
 CMakeUserPresets.json
 imgui.ini
 *.user
+/dist/

@@ -74,3 +74,11 @@
 - Corrections noted: "hava" → "have", "rep" → "repo". Meaning clear, so work went ahead. Interpretation to confirm: "first draft" = the first version the user can run and look at.
 - GitHub: no remote until the user has reviewed a first draft. T-CI-02 stays "not run" until then.
 - Crosscheck #1 written to `Crosscheck-2026-11-01.md`: 9 findings (F1–F9), all fixed except F3 (UI-02), which is what P3 is for. Spec → v0.6.
+- User asked where `build\src\Release\mini-daw.exe` is. Answer: that path is for a Visual Studio build on Windows, which hasn't been done; the MinGW build was only in Claude's temporary folder. Agreed to put the P3 Windows build in `dist/windows/` (not committed). User: "ok".
+
+## 13. P3 — contrast system
+- Core (no GUI dependency): `color` (WCAG luminance/contrast, minimal adjustment towards black or white), `theme` (15 colour roles, 19 foreground/background pairs, presets, enforcement), `config` (INI file, saving keeps comments).
+- GUI: every ImGui colour slot mapped to a role; View → Contrast menu, Custom… window, Contrast report window, Ctrl+Shift+Up/Down, status line; `--config` and `--contrast-report` options.
+- Tests: 30 pass on Linux (T-UI-01..08 automated where possible). GUI checked with Xvfb screenshots at AA and Max, the menu and the report window. Two issues found in the screenshots and fixed: Raise/Lower menu items looked disabled; report window too narrow.
+- Windows build copied to `dist/windows/mini-daw.exe` (MinGW, static). It only needs Windows system DLLs; on Windows 10 N, `MFPlat.dll` needs the Media Feature Pack.
+- New known limitations and open questions in Spec §8/§9: Max mode hides hover/selection colours; no font-size setting; MFPlat on N editions.
