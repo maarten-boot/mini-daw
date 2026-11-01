@@ -71,7 +71,12 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-LIC-01** The project is released under the MIT licence (copyright Maarten Boot): free for anyone to use and modify.
 - **SPEC-LIC-02** Every bundled or fetched dependency has an MIT-compatible licence, and `THIRD_PARTY.md` lists each one with its licence. Checked so far: RtAudio and RtMidi (MIT-style), Dear ImGui (MIT), GLFW (zlib), VST3 SDK (MIT, its LICENSE file on GitHub checked 2026-11-01), GoogleTest (BSD-3) or Catch2 (Boost).
 - **SPEC-LIC-03** ASIO support is an optional build setting `MINIDAW_WITH_ASIO`, off by default. The ASIO SDK is never put in the repository; whoever builds with ASIO downloads it. Steinberg offers it under GPLv3 or a proprietary licence (https://www.steinberg.net/developers/asiosdk-open/). A program built with ASIO under GPLv3 is itself GPLv3, and the README says so.
-- **SPEC-LIC-04** The ASIO logo and trademark are only used as Steinberg's guidelines allow. By default the program does not show the logo.
+- **SPEC-LIC-04** The ASIO name and logo are Steinberg trademarks and are not covered by the GPLv3. If we use them:
+  - the logo is only shown unaltered, and only in product-related places (splash screen, About box, website, documentation);
+  - "ASIO" is never part of the product name or any build name (for example, not "mini-daw-ASIO");
+  - the logo is only shown in builds that actually support ASIO.
+  
+  By default no logo is shown; the driver list may say "ASIO" as plain text.
 
 ## 7. Open questions
 - Confirm the defaults marked *(proposed)* above.

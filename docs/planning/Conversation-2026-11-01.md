@@ -52,3 +52,4 @@
 - Decision: the code stays MIT. ASIO is an optional build setting, off by default, and its SDK is never in the repository. ASIO builds under GPLv3 are themselves GPLv3, and the README says so.
 - Spec v0.3: SPEC-LIC-01..04 added. Tests T-LIC-01..04 added. Plan: P1b done, P11b (ASIO) added.
 - `LICENSE` (MIT) committed as the first commit on `main`; `docs/planning` rebased onto it.
+- User pasted the full text of the Steinberg ASIO open-source page. It confirms GPLv3 and adds trademark rules: the logo only unaltered and only in product contexts (splash, About, website, docs); "ASIO" not allowed in product or company names; the logo not on products that don't support ASIO. Added to SPEC-LIC-04 and test T-LIC-05.
