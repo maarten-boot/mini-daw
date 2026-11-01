@@ -35,7 +35,7 @@ Windows/MSVC is built by GitHub Actions (`.github/workflows/build.yml`).
 
 ## How things were verified on this machine (Linux VM)
 - **GUI screenshots:** `Xvfb :77 -screen 0 1150x750x24 &`, then `DISPLAY=:77 LIBGL_ALWAYS_SOFTWARE=1 mini-daw --config <file>`, capture with `import -window root shot.png`, drive with `xdotool` (key presses, menu clicks). Always pass `--config` with a scratch file so the user's real config is not touched.
-- **Windows exe under Wine:** the root disk is nearly full (≈1 GB free) and a Wine prefix needs ≈1.2 GB, so put it in RAM: `mkdir -p /dev/shm/minidaw-wine && WINEPREFIX=/dev/shm/minidaw-wine WINEDEBUG=-all wineboot -i`, run, then `wineserver -k; rm -rf /dev/shm/minidaw-wine`. (Wine refuses to create the prefix unless the folder exists first.)
+- **Windows exe under Wine:** a Wine prefix needs ≈1.2 GB; keep it in RAM (the root disk was once nearly full; 13 GB free on 2026-11-01): `mkdir -p /dev/shm/minidaw-wine && WINEPREFIX=/dev/shm/minidaw-wine WINEDEBUG=-all wineboot -i`, run, then `/usr/lib/x86_64-linux-gnu/wine/wineserver -k; rm -rf /dev/shm/minidaw-wine` (`wineserver` is not on the PATH). (Wine refuses to create the prefix unless the folder exists first.)
 - **Wine limits:** D3D11 works (hardware and `MINIDAW_D3D_WARP=1`), unit tests pass, but RtAudio's WASAPI client fails to initialise under Wine. Audio on Windows must be tested by the user on the real Windows 10 machine.
 - This VM has no sound card (ALSA→PulseAudio only) and no MIDI access (`/dev/snd/seq` permission denied).
 

@@ -8,7 +8,10 @@
 // once a second. If a ring is full (the disk is too slow), the block is
 // dropped and counted: data loss is always reported, never silent.
 //
-// All takes start in the same audio block, so they are sample-aligned.
+// All takes start in the same audio block, so they are sample-aligned. A
+// dropped block is replaced by the same number of frames of silence in the
+// file (the audio thread passes a gap marker to the disk thread), so every
+// take keeps the session timeline even after a loss (SPEC-REC-02, 05b).
 
 #include "minidaw/ring_buffer.hpp"
 #include "minidaw/wav.hpp"
@@ -32,14 +35,16 @@ struct TakeSpec {
 struct RecorderOptions {
     double ringSeconds = 4.0;         // buffered audio per take before blocks are dropped
     double headerUpdateSeconds = 1.0;  // how often the WAV header is refreshed
+    bool syncToDisk = true;           // force the files to disk at each refresh (SPEC-REC-05a)
     bool startDiskThread = true;      // tests can switch this off to force overflows
 };
 
 struct TakeResult {
     std::filesystem::path path;
     unsigned int channels = 0;
-    std::uint64_t frames = 0;         // frames written to the file
-    std::uint64_t droppedFrames = 0;  // frames lost because the ring was full
+    std::uint64_t frames = 0;         // file length in frames (lost audio counts as silence)
+    std::uint64_t droppedFrames = 0;  // frames of audio that did not reach the file: ring
+                                      // full (filled with silence) or disk error
     std::uint64_t clippedSamples = 0;
 };
 
@@ -71,23 +76,49 @@ public:
     // No locks, no allocation, no I/O.
     void process(const float* input, unsigned int frames, unsigned int channels);
 
-    // Progress, safe to call from the GUI thread while recording.
+    // Progress while recording. Safe from the thread that calls start() and
+    // stop() (the GUI thread), not from a third thread: they read takes_.
     std::uint64_t framesCaptured() const { return framesCaptured_.load(std::memory_order_relaxed); }
     std::uint64_t droppedFrames() const;
     std::string diskError() const;
 
+    // Tests only, and only with startDiskThread = false: do one disk pass now.
+    void drainForTest();
+    // Tests only (T-REC-14), before the first disk pass: the next file write fails.
+    void failNextDiskWriteForTest()
+    {
+        for (auto& t : takes_) t->writer.failNextWriteForTest();
+    }
+
 private:
+    // A run of dropped frames, placed after `at` frames that went through the ring.
+    struct Gap {
+        std::uint64_t at = 0;
+        std::uint64_t length = 0;
+    };
+
     struct Take {
         TakeSpec spec;
         unsigned int channels = 0;
         std::unique_ptr<SpscRing<float>> ring;
+        std::unique_ptr<SpscRing<Gap>> gaps;
         WavWriter writer;
-        std::atomic<std::uint64_t> dropped{0};
+        std::atomic<std::uint64_t> dropped{0};      // ring full (audio thread)
+        std::atomic<std::uint64_t> lostOnDisk{0};   // read but not written (disk thread)
+        // Audio thread only:
+        std::uint64_t queued = 0;                   // frames put into the ring
+        std::uint64_t openGap = 0;                  // dropped frames not yet announced
+        // Disk thread only (and stop() after the disk thread has ended):
+        std::uint64_t ringRead = 0;                 // frames taken from the ring
+        Gap pendingGap;
+        bool hasPendingGap = false;
+        std::uint64_t silenceWritten = 0;
     };
 
     void diskLoop();
     // Moves buffered audio of every take to its file; returns frames moved.
     std::size_t drainOnce(std::vector<float>& scratch);
+    bool writeSilence(Take& t, std::uint64_t frames);
     void setDiskError(const std::string& text);
 
     std::vector<std::unique_ptr<Take>> takes_;

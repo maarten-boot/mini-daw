@@ -186,3 +186,22 @@
 **Suggested first:** crosscheck #3 (Spec v0.9 ↔ Plan ↔ code) after P5.
 **Open questions (Spec §9):** stereo mix export; when ASIO comes; Windows 10 N / MFPlat.dll; SPEC-NF-02 latency (RtAudio WASAPI is shared-mode only).
 **Next step:** P6 — tracks (audio and MIDI), arming, Record button in the GUI, MIDI input recording with sample-accurate timestamps, SMF type 1 writer (T-REC-01, T-REC-03).
+
+## 27. New session at the new location; crosscheck #3
+> read the handover and start crosscheck #3
+
+- Read the handover, Spec v0.9, Plan, Tests, crosschecks #1/#2 and the P5 code (ring buffer, WAV writer, recorder, audio stream, `--record-test`).
+- Fresh Linux build of `b010e39`: 58/58 tests pass.
+- Crosscheck #3 recorded in `Crosscheck-2026-11-01.md`: findings H1–H9. Main ones: a dropped block shifts only that take (H1, sample alignment); the once-a-second header refresh does not survive power loss (H2); frames lost on a disk error are not counted (H3); no test for the 4 GiB limit (H4). The rest are wording and outdated text.
+- Plan PX row updated. Other fixes wait for the user's go.
+
+## 28. Crosscheck #3 fixes
+> yes to both, fix H1–H9; H2 a hard sync to disk may be costly on old systems, on ssd or nvme it would make no difference i expect, could it be a configurable option (default on)
+
+- H1: lost audio becomes silence of the same length (gap markers from the audio thread to the disk thread); all takes keep the timeline and the same length.
+- H2: `WavWriter` moved from `std::ofstream` to `FILE*` so it can force data to disk (`_commit`/`fsync`) at each header refresh. New config key `[recording] sync_to_disk`, default `true`. On a hard disk a sync can hold up the disk thread for tens of ms; the ring holds ≥ 4 s, so this should not lose audio.
+- H3: frames lost on a disk error are counted; the file is cut back to the last complete write and keeps a valid header.
+- H4–H9: test for the 4 GiB limit, output wording and exit code, Spec/Plan/README/Tests text.
+- On the way: `/dev/full` could not be used to simulate a full disk (the open already fails), so a test hook makes the next write fail; MSVC would warn about `_wfopen` → `_wfopen_s`.
+- Results: Linux 65/65; MinGW build under Wine 64/64 Catch2 cases; `--record-test` on Linux with sync on and off: 0 lost.
+- Next: user pushes; Claude checks CI. Then P6.

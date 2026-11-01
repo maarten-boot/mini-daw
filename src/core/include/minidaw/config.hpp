@@ -1,6 +1,6 @@
 #pragma once
 
-// Application configuration file (SPEC-UI-04, SPEC-UI-08, SPEC-DEV-03).
+// Application configuration file (SPEC-UI-04, SPEC-UI-08, SPEC-DEV-03, SPEC-REC-05a).
 //
 // Format: a small INI file, for example
 //
@@ -13,6 +13,9 @@
 //   output_device = (default)
 //   sample_rate = 48000
 //   buffer_size = 256
+//
+//   [recording]
+//   sync_to_disk = true       ; force take files to disk each second (true/false)
 //
 // Default location:
 //   Windows: %APPDATA%\mini-daw\config.ini
@@ -48,10 +51,19 @@ struct AudioSettings {
     friend bool operator==(const AudioSettings&, const AudioSettings&) = default;
 };
 
+struct RecordingSettings {
+    // Force take files to the disk (not just the OS cache) at each header
+    // refresh, so a take survives power loss (SPEC-REC-05a). Can be switched
+    // off for slow disks.
+    bool syncToDisk = true;
+    friend bool operator==(const RecordingSettings&, const RecordingSettings&) = default;
+};
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
     AudioSettings audio;
+    RecordingSettings recording;
 };
 
 struct ConfigLoadResult {

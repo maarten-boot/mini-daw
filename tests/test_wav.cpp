@@ -1,4 +1,4 @@
-// WAV writer and reader (SPEC-REC-03, SPEC-REC-05a): T-REC-02, T-REC-07.
+// WAV writer and reader (SPEC-REC-03, SPEC-REC-05a/b/c): T-REC-02, T-REC-07, T-REC-11, T-REC-12.
 
 #include "minidaw/wav.hpp"
 #include "test_support.hpp"
@@ -148,6 +148,88 @@ TEST_CASE("T-REC-07: the header is valid while the file is still being written",
     REQUIRE(w.close(err));
     REQUIRE(readWav(path, d, err));
     CHECK(d.frames() == 9600);
+}
+
+TEST_CASE("T-REC-07: header refresh with a hard sync to disk", "[wav][T-REC-07]")
+{
+    test::TempDir dir;
+    const auto path = dir / "synced.wav";
+    WavWriter w;
+    std::string err;
+    REQUIRE(w.open(path, 48000, 1, err));
+    std::vector<float> block(1000, -0.5f);
+    REQUIRE(w.write(block.data(), 1000, err));
+    REQUIRE(w.updateHeader(err, true));
+    WavData d;
+    REQUIRE(readWav(path, d, err));
+    CHECK(d.frames() == 1000);
+    REQUIRE(w.close(err));
+}
+
+TEST_CASE("T-REC-11: a take stops cleanly at the 4 GiB limit", "[wav][T-REC-11]")
+{
+    test::TempDir dir;
+    const auto path = dir / "big.wav";
+    WavWriter w;
+    std::string err;
+    REQUIRE(w.open(path, 48000, 2, err));
+    const std::uint64_t maxFrames = WavWriter::kMaxDataBytes / 6;  // stereo, 3 bytes per sample
+    w.pretendFramesWrittenForTest(maxFrames - 10);
+
+    std::vector<float> block(2 * 20, 0.1f);
+    REQUIRE(w.write(block.data(), 10, err));       // exactly up to the limit
+    CHECK_FALSE(w.write(block.data(), 1, err));    // one frame more is refused
+    CHECK(err.find("4 GiB limit") != std::string::npos);
+    CHECK(w.isOpen());
+    CHECK(w.framesWritten() == maxFrames);
+    // The size fields still fit in 32 bits, with room for a padding byte.
+    CHECK(36 + maxFrames * 6 + 1 <= 0xFFFFFFFFull);
+
+    w.pretendFramesWrittenForTest(10);  // only 10 frames are really in the file
+    REQUIRE(w.close(err));
+    WavData d;
+    REQUIRE(readWav(path, d, err));
+    CHECK(d.frames() == 10);
+}
+
+TEST_CASE("T-REC-12: after a failed write the file is cut back and stays valid", "[wav][T-REC-12]")
+{
+    test::TempDir dir;
+    const auto path = dir / "broken.wav";
+    WavWriter w;
+    std::string err;
+    REQUIRE(w.open(path, 48000, 1, err));
+    std::vector<float> block(1001, 0.25f);
+    REQUIRE(w.write(block.data(), 1001, err));
+    w.failNextWriteForTest();
+    CHECK_FALSE(w.write(block.data(), 1001, err));  // half a block lands in the file
+    CHECK(err.find("Writing") != std::string::npos);
+    CHECK(w.framesWritten() == 1001);
+    CHECK_FALSE(w.write(block.data(), 10, err));    // nothing more after an error
+
+    REQUIRE(w.close(err));
+    const auto bytes = fileBytes(path);
+    CHECK(bytes.size() == 44 + 3003 + 1);           // cut back, plus the padding byte
+    CHECK(u32(bytes, 40) == 3003);
+    CHECK(u32(bytes, 4) == 36 + 3003 + 1);
+    WavData d;
+    REQUIRE(readWav(path, d, err));
+    CHECK(d.frames() == 1001);
+}
+
+TEST_CASE("WAV writer writes silence for a null block", "[wav][T-REC-13]")
+{
+    test::TempDir dir;
+    const auto path = dir / "silence.wav";
+    WavWriter w;
+    std::string err;
+    REQUIRE(w.open(path, 48000, 2, err));
+    REQUIRE(w.write(nullptr, 100, err));
+    REQUIRE(w.close(err));
+    WavData d;
+    REQUIRE(readWav(path, d, err));
+    REQUIRE(d.frames() == 100);
+    for (float v : d.samples) CHECK(v == 0.0f);
 }
 
 TEST_CASE("WAV writer rejects bad settings and paths", "[wav][T-REC-02]")

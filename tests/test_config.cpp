@@ -81,6 +81,25 @@ TEST_CASE("The default config text parses without warnings", "[config]")
     CHECK(r.config.contrast.preset == ContrastPreset::AA);
 }
 
+TEST_CASE("T-REC-15: sync_to_disk in [recording], default on", "[config][T-REC-15]")
+{
+    CHECK(parseConfig("").config.recording.syncToDisk);
+    CHECK(parseConfig(defaultConfigText()).config.recording.syncToDisk);
+    CHECK_FALSE(parseConfig("[recording]\nsync_to_disk = false\n").config.recording.syncToDisk);
+    CHECK_FALSE(parseConfig("[recording]\nsync_to_disk = Off\n").config.recording.syncToDisk);
+    CHECK(parseConfig("[recording]\nsync_to_disk = yes\n").config.recording.syncToDisk);
+    auto bad = parseConfig("[recording]\nsync_to_disk = maybe\n");
+    CHECK(bad.config.recording.syncToDisk);
+    REQUIRE(bad.warnings.size() == 1);
+    CHECK(bad.warnings[0].find("sync_to_disk") != std::string::npos);
+
+    TempDir dir;
+    AppConfig cfg;
+    cfg.recording.syncToDisk = false;
+    REQUIRE(saveConfigFile(dir.path / "config.ini", cfg).empty());
+    CHECK_FALSE(loadConfigFile(dir.path / "config.ini").config.recording.syncToDisk);
+}
+
 TEST_CASE("setConfigValue keeps comments and other lines", "[config]")
 {
     const std::string before = "; my notes\n[ui]\n; keep me\nmin_contrast = AA\n\n[other]\nx = 1\n";

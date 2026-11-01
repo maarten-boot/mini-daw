@@ -1,7 +1,8 @@
-// Recording engine (SPEC-REC-03, SPEC-REC-05, SPEC-NF-01): T-REC-08, T-REC-09.
+// Recording engine (SPEC-REC-02, 03, 05, SPEC-NF-01): T-REC-08, T-REC-09, T-REC-13, T-REC-14.
 // A test thread plays the audio callback; the real disk thread writes WAV files.
 
 #include "minidaw/recorder.hpp"
+#include "minidaw/wav.hpp"
 #include "test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -97,9 +98,93 @@ TEST_CASE("T-REC-09: when the disk cannot keep up, lost blocks are counted", "[r
 
     const RecordingResult res = rec.stop();  // stop() still writes what was buffered
     REQUIRE(res.takes.size() == 1);
-    CHECK(res.takes[0].frames == 4000);
+    CHECK(res.takes[0].frames == 10000);     // the lost part is silence: the take keeps its length
     CHECK(res.takes[0].droppedFrames == 6000);
     CHECK(res.lostData());
+
+    WavData d;
+    REQUIRE(readWav(dir / "a.wav", d, err));
+    REQUIRE(d.frames() == 10000);
+    CHECK(std::abs(d.samples[3999] - 0.1f) < 1e-6f);
+    CHECK(d.samples[4000] == 0.0f);
+    CHECK(d.samples[9999] == 0.0f);
+}
+
+TEST_CASE("T-REC-13: a lost block becomes silence, so later audio stays in place", "[recorder][T-REC-13]")
+{
+    test::TempDir dir;
+    Recorder rec;
+    std::string err;
+    RecorderOptions opt;
+    opt.ringSeconds = 4.0;          // 4096 frames at 1024 Hz
+    opt.startDiskThread = false;
+    REQUIRE(rec.start({{dir / "mono.wav", {0}}, {dir / "stereo.wav", {1, 0}}}, 1024, 2, err, opt));
+
+    std::vector<float> in(2 * 1000);
+    std::uint64_t frame = 0;
+    auto feed = [&](int blocks) {
+        for (int b = 0; b < blocks; ++b) {
+            for (unsigned int f = 0; f < 1000; ++f) {
+                in[2 * f] = marker(frame + f, 0);
+                in[2 * f + 1] = marker(frame + f, 1);
+            }
+            rec.process(in.data(), 1000, 2);
+            frame += 1000;
+        }
+    };
+    feed(5);              // frames 0..3999 fit, 4000..4999 are lost
+    rec.drainForTest();   // the disk catches up
+    feed(2);              // frames 5000..6999 must stay at their place
+    const RecordingResult res = rec.stop();
+
+    REQUIRE(res.takes.size() == 2);
+    for (const auto& t : res.takes) {
+        CHECK(t.frames == 7000);
+        CHECK(t.droppedFrames == 1000);
+    }
+    WavData mono, stereo;
+    REQUIRE(readWav(dir / "mono.wav", mono, err));
+    REQUIRE(readWav(dir / "stereo.wav", stereo, err));
+    REQUIRE(mono.frames() == 7000);
+    REQUIRE(stereo.frames() == 7000);
+    std::size_t bad = 0;
+    for (std::uint64_t f = 0; f < 7000; ++f) {
+        const bool lost = f >= 4000 && f < 5000;
+        const std::int32_t want0 = lost ? 0 : toStep(marker(f, 0));
+        const std::int32_t want1 = lost ? 0 : toStep(marker(f, 1));
+        if (toStep(mono.samples[f]) != want0) ++bad;
+        if (toStep(stereo.samples[2 * f]) != want1) ++bad;
+        if (toStep(stereo.samples[2 * f + 1]) != want0) ++bad;
+    }
+    CHECK(bad == 0);
+}
+
+TEST_CASE("T-REC-14: frames lost on a disk error are counted", "[recorder][T-REC-14]")
+{
+    test::TempDir dir;
+    Recorder rec;
+    std::string err;
+    RecorderOptions opt;
+    opt.startDiskThread = false;
+    REQUIRE(rec.start({{dir / "full.wav", {0}}}, 1024, 1, err, opt));
+    std::vector<float> in(1000, 0.1f);
+    rec.process(in.data(), 1000, 1);
+    rec.drainForTest();                // 1000 frames reach the file
+    rec.failNextDiskWriteForTest();    // then the disk is "full"
+    for (int i = 0; i < 3; ++i) rec.process(in.data(), 1000, 1);
+    rec.drainForTest();
+    CHECK(rec.droppedFrames() == 3000);  // visible while recording
+    CHECK_FALSE(rec.diskError().empty());
+    rec.process(in.data(), 1000, 1);     // after the error nothing is written
+    const RecordingResult res = rec.stop();
+    REQUIRE(res.takes.size() == 1);
+    CHECK_FALSE(res.error.empty());
+    CHECK(res.takes[0].frames == 1000);
+    CHECK(res.takes[0].droppedFrames == 4000);
+    CHECK(res.lostData());
+    WavData d;
+    REQUIRE(readWav(dir / "full.wav", d, err));  // valid up to the error
+    CHECK(d.frames() == 1000);
 }
 
 TEST_CASE("Recorder refuses bad takes without creating files", "[recorder]")

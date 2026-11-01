@@ -3,6 +3,14 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <system_error>
+
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace minidaw {
 
@@ -52,6 +60,22 @@ std::int32_t floatToPcm24(float sample, bool* clipped)
 // ---------------------------------------------------------------------------
 // WavWriter
 // ---------------------------------------------------------------------------
+namespace {
+
+constexpr std::uint64_t kHeaderBytes = 44;
+
+std::FILE* openFile(const std::filesystem::path& path, bool update)
+{
+#if defined(_WIN32)
+    std::FILE* f = nullptr;
+    return _wfopen_s(&f, path.c_str(), update ? L"r+b" : L"wb") == 0 ? f : nullptr;
+#else
+    return std::fopen(path.c_str(), update ? "r+b" : "wb");
+#endif
+}
+
+} // namespace
+
 WavWriter::~WavWriter()
 {
     std::string ignored;
@@ -61,14 +85,14 @@ WavWriter::~WavWriter()
 bool WavWriter::fail(const char* what, std::string& error)
 {
     error = std::string(what) + " " + path_.string() + " failed";
-    if (out_.is_open()) error += " (disk full or no permission?)";
+    if (file_ != nullptr) error += " (disk full or no permission?)";
     error += ".";
     return false;
 }
 
 bool WavWriter::writeHeader(std::uint64_t dataBytes, bool padded)
 {
-    std::array<unsigned char, 44> h{};
+    std::array<unsigned char, kHeaderBytes> h{};
     const std::uint32_t data32 = static_cast<std::uint32_t>(dataBytes);
     std::memcpy(&h[0], "RIFF", 4);
     put32(&h[4], 36 + data32 + (padded ? 1u : 0u));
@@ -83,8 +107,20 @@ bool WavWriter::writeHeader(std::uint64_t dataBytes, bool padded)
     put16(&h[34], 24);
     std::memcpy(&h[36], "data", 4);
     put32(&h[40], data32);
-    out_.write(reinterpret_cast<const char*>(h.data()), static_cast<std::streamsize>(h.size()));
-    return static_cast<bool>(out_);
+    if (std::fseek(file_, 0, SEEK_SET) != 0) return false;
+    const bool ok = std::fwrite(h.data(), 1, h.size(), file_) == h.size();
+    // Back to the end for the next samples (SEEK_END: no 64-bit offsets needed).
+    return std::fseek(file_, 0, SEEK_END) == 0 && ok;
+}
+
+bool WavWriter::syncFile()
+{
+    if (std::fflush(file_) != 0) return false;
+#if defined(_WIN32)
+    return _commit(_fileno(file_)) == 0;  // FlushFileBuffers
+#else
+    return ::fsync(fileno(file_)) == 0;
+#endif
 }
 
 bool WavWriter::open(const std::filesystem::path& path, unsigned int sampleRate, unsigned int channels,
@@ -104,8 +140,9 @@ bool WavWriter::open(const std::filesystem::path& path, unsigned int sampleRate,
     channels_ = channels;
     frames_ = 0;
     clipped_ = 0;
-    out_.open(path, std::ios::binary | std::ios::trunc);
-    if (!out_.is_open()) return fail("Creating", error);
+    broken_ = false;
+    file_ = openFile(path, false);
+    if (file_ == nullptr) return fail("Creating", error);
     if (!writeHeader(0, false)) return fail("Writing", error);
     return true;
 }
@@ -116,6 +153,7 @@ bool WavWriter::write(const float* interleaved, std::size_t frames, std::string&
         error = "WAV file is not open.";
         return false;
     }
+    if (broken_) return fail("Writing", error);
     const std::size_t samples = frames * channels_;
     const std::uint64_t dataBytes = (frames_ + frames) * channels_ * kBytesPerSample;
     if (dataBytes > kMaxDataBytes) {
@@ -125,8 +163,10 @@ bool WavWriter::write(const float* interleaved, std::size_t frames, std::string&
     bytes_.resize(samples * kBytesPerSample);
     unsigned char* p = bytes_.data();
     for (std::size_t i = 0; i < samples; ++i) {
+        // nullptr input = silence (a gap left by lost audio, SPEC-REC-02/05b)
+        const float v = interleaved != nullptr ? interleaved[i] : 0.0f;
         bool clip = false;
-        const std::int32_t s = floatToPcm24(interleaved[i], &clip);
+        const std::int32_t s = floatToPcm24(v, &clip);
         if (clip) ++clipped_;
         const auto u = static_cast<std::uint32_t>(s);
         p[0] = static_cast<unsigned char>(u);
@@ -134,22 +174,30 @@ bool WavWriter::write(const float* interleaved, std::size_t frames, std::string&
         p[2] = static_cast<unsigned char>(u >> 16);
         p += kBytesPerSample;
     }
-    out_.write(reinterpret_cast<const char*>(bytes_.data()), static_cast<std::streamsize>(bytes_.size()));
-    if (!out_) return fail("Writing", error);
+    if (failNextWrite_) {
+        failNextWrite_ = false;
+        std::fwrite(bytes_.data(), 1, bytes_.size() / 2, file_);
+        broken_ = true;
+        return fail("Writing", error);
+    }
+    if (std::fwrite(bytes_.data(), 1, bytes_.size(), file_) != bytes_.size()) {
+        broken_ = true;  // part of the block may be in the file; close() cuts it off
+        return fail("Writing", error);
+    }
     frames_ += frames;
     return true;
 }
 
-bool WavWriter::updateHeader(std::string& error)
+bool WavWriter::updateHeader(std::string& error, bool syncToDisk)
 {
-    if (!isOpen()) return true;
+    if (!isOpen() || broken_) return true;  // a broken file is repaired by close()
     const std::uint64_t dataBytes = frames_ * channels_ * kBytesPerSample;
-    const auto end = out_.tellp();
-    out_.seekp(0);
-    const bool ok = writeHeader(dataBytes, false);
-    out_.seekp(end);
-    out_.flush();
-    if (!ok || !out_) return fail("Updating the header of", error);
+    bool ok = writeHeader(dataBytes, false);
+    ok = ok && (syncToDisk ? syncFile() : std::fflush(file_) == 0);
+    if (!ok) {
+        broken_ = true;
+        return fail("Updating the header of", error);
+    }
     return true;
 }
 
@@ -157,18 +205,34 @@ bool WavWriter::close(std::string& error)
 {
     if (!isOpen()) return true;
     const std::uint64_t dataBytes = frames_ * channels_ * kBytesPerSample;
-    bool ok = true;
     const bool padded = (dataBytes % 2) != 0;  // RIFF chunks are word-aligned
-    if (padded) {
-        out_.put('\0');
-        ok = static_cast<bool>(out_);
+    const std::uint64_t fileBytes = kHeaderBytes + dataBytes + (padded ? 1 : 0);
+
+    if (!broken_) {
+        bool ok = !padded || std::fputc(0, file_) != EOF;
+        ok = ok && writeHeader(dataBytes, padded);
+        ok = ok && syncFile();
+        ok = (std::fclose(file_) == 0) && ok;
+        file_ = nullptr;
+        if (!ok) return fail("Finishing", error);
+        return true;
     }
-    out_.seekp(0);
-    ok = ok && writeHeader(dataBytes, padded);
-    out_.flush();
-    ok = ok && static_cast<bool>(out_);
-    out_.close();
-    if (!ok) return fail("Finishing", error);
+
+    // After a failed write the file may end in part of a block. Cut it back to
+    // the frames that were written (this also adds the zero padding byte), then
+    // write the header, so the file is valid up to the error.
+    std::fclose(file_);
+    file_ = nullptr;
+    std::error_code ec;
+    std::filesystem::resize_file(path_, fileBytes, ec);
+    if (ec) return fail("Repairing", error);
+    file_ = openFile(path_, true);
+    if (file_ == nullptr) return fail("Repairing", error);
+    bool ok = writeHeader(dataBytes, padded) && syncFile();
+    ok = (std::fclose(file_) == 0) && ok;
+    file_ = nullptr;
+    broken_ = false;
+    if (!ok) return fail("Repairing", error);
     return true;
 }
 

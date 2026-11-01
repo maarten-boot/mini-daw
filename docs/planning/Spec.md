@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.9 (2026-11-01, P5 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.10 (2026-11-01, P5 implemented; crosscheck #3 fixes). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -30,14 +30,14 @@ A small desktop program that records MIDI and audio input on several tracks at o
 
 ### 3.2 Tracks and recording
 - **SPEC-REC-01** The project has several tracks. Each track is an audio track (fed by one or two audio input channels) or a MIDI track (fed by one MIDI input port and channel, or all channels).
-- **SPEC-REC-02** Tracks can be armed for recording. All armed tracks record together, sample-synchronised, when Record is pressed.
+- **SPEC-REC-02** Tracks can be armed for recording. All armed tracks record together, sample-synchronised, when Record is pressed. All takes start in the same audio block and keep the same timeline: audio lost in one take (SPEC-REC-05b) is replaced by silence of the same length, so later audio stays in place and all takes of a recording have the same length.
 - **SPEC-REC-03** Audio takes are saved as WAV files, 24-bit PCM at the session sample rate.
 - **SPEC-REC-04** MIDI takes are saved as Standard MIDI Files (type 1), with timestamps aligned to the audio timeline.
 - **SPEC-REC-05** No data is lost if a recording runs at least 60 minutes. Disk writing happens outside the audio thread.
-  - **SPEC-REC-05a** While a take is being recorded, its WAV header is refreshed about once a second, so after a crash or power loss the file is valid and holds the audio up to that point.
-  - **SPEC-REC-05b** If audio is lost anyway (the disk cannot keep up, the disk is full), the program says so: the number of lost frames per take and the disk error are reported, never hidden. The audio thread buffers about 4 seconds per take.
+  - **SPEC-REC-05a** While a take is being recorded, its WAV header is refreshed about once a second, so after a crash or power loss the file is valid and holds the audio up to that point. For power loss the file is also forced to the disk at each refresh (`FlushFileBuffers` / `fsync`). This can be switched off for slow disks with `sync_to_disk = false` in `[recording]` of `config.ini` (default `true`); then only a program crash is covered. A take is always forced to disk when it is closed.
+  - **SPEC-REC-05b** If audio is lost anyway (the disk cannot keep up, the disk is full), the program says so: the number of lost frames per take and the disk error are reported, never hidden. Lost frames include audio that could not be buffered and audio that could not be written after a disk error. The audio thread buffers at least 4 seconds per take (the buffer is rounded up to a power of two: about 5.5 s at 48 kHz). After a disk error the take stops; its file is cut back to the last complete write and keeps a valid header.
   - **SPEC-REC-05c** A plain WAV file can hold at most 4 GiB (about 8 hours of 24-bit mono or 4 hours of stereo at 48 kHz). A take that reaches this limit stops with a clear message; RF64 for longer takes is a later option.
-- **SPEC-REC-06** `mini-daw --record-test <seconds> <folder>` records input channel 1 (and 2, if the device has it) to `take-YYYYMMDD-HHMMSS.wav` in the folder, without the GUI, and prints frames written, lost frames, clipped samples and dropouts.
+- **SPEC-REC-06** `mini-daw --record-test <seconds> <folder>` (1–3600 s) records input channel 1 (and 2, if the device has it) to `take-YYYYMMDD-HHMMSS.wav` in the folder, without the GUI, and prints frames written, lost frames, clipped samples and dropouts (xruns). Exit code 0 when nothing was lost, 1 when audio was lost or an error occurred.
 
 ### 3.3 Monitoring
 - **SPEC-MON-01** Input monitoring can be switched on or off per armed audio track.
@@ -103,11 +103,12 @@ A small desktop program that records MIDI and audio input on several tracks at o
 
 ## 8b. Observations from the first Windows runs (2026-11-01)
 - The first GUI start failed on the user's Windows 10 machine: `GLFW error 65542: WGL: The driver does not appear to support OpenGL` (no OpenGL driver, probably a VM). Fixed by switching Windows to Direct3D 11 with WARP fallback (SPEC-TECH-05).
-- Input and output devices can have different native sample rates (Line In 44.1 kHz, Speakers 48 kHz on the user's machine). P4/P5 must handle this: one session sample rate (SPEC-DEV-02, default 48 kHz), with WASAPI shared-mode conversion or a clear message when a device cannot run at that rate.
+- Input and output devices can have different native sample rates (Line In 44.1 kHz, Speakers 48 kHz on the user's machine). Handled since P4: one session sample rate (SPEC-DEV-02, default 48 kHz); WASAPI shared mode converts, and a warning is shown when the stream runs at a different rate than requested. Still to confirm on the real machine with an active input (T-DEV-07).
 
 ## 9. Open questions
 - When should ASIO support come? Its licence is settled in SPEC-LIC-03.
 - Should the whole project be exportable as one stereo mix? (Not answered yet.)
-- GitHub: no remote until the user has reviewed a first draft (user, 2026-11-01). Account/organisation still to decide.
 - Should the WASAPI build avoid `MFPlat.dll` so it also starts on Windows 10 N without the Media Feature Pack?
 - Metronome/click track: not for now (user, 2026-11-01).
+
+Settled: GitHub repository `maarten-boot/mini-daw` (2026-11-01); the user pushes, Claude checks CI.

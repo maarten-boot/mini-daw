@@ -4,7 +4,7 @@ a simple daw just for recording and playback with VST3 instrument support
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early version (steps P2–P4). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, shows input levels, and has adjustable contrast and text size. Recording is not implemented yet. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P5). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, shows input levels, and has adjustable contrast and text size. The recording engine works from the command line (`--record-test`); tracks and a Record button in the GUI come next. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -86,7 +86,14 @@ To try recording without the GUI (the Record button comes with tracks):
 mini-daw --record-test 10 C:\Users\me\Music\mini-daw
 ```
 
-This writes `take-YYYYMMDD-HHMMSS.wav` (24-bit) and reports lost frames, clipped samples and dropouts. While a take is being recorded its file is kept valid about once a second, so a crash loses at most the last second.
+This writes `take-YYYYMMDD-HHMMSS.wav` (24-bit) and reports lost frames, clipped samples and dropouts; the exit code is 1 if audio was lost. While a take is being recorded its file is kept valid and forced to the disk about once a second, so a crash or power loss loses at most the last second. If audio is lost (disk too slow), the gap is filled with silence so the rest of the take stays in time, and the loss is reported.
+
+On a slow disk the once-a-second sync can be switched off (then only a program crash is covered):
+
+```
+[recording]
+sync_to_disk = false
+```
 
 ## Graphics
 

@@ -219,7 +219,7 @@ int runAudioTest(AppState& app, int seconds)
         std::printf("%s in %2u: %-10s", ch % 4 == 0 ? "  peak" : "", ch + 1, minidaw::formatDbfs(peak[ch]).c_str());
         if (ch % 4 == 3 || ch + 1 == info.inputChannels) std::printf("\n");
     }
-    std::printf("Callbacks: %llu in %.2f s (expected about %.0f), xruns: %llu\n",
+    std::printf("Callbacks: %llu in %.2f s (expected about %.0f), dropouts (xruns): %llu\n",
                 static_cast<unsigned long long>(callbacks), elapsed, expected,
                 static_cast<unsigned long long>(app.audio.xruns()));
     for (const auto& m : app.audio.takeDriverMessages()) std::printf("driver: %s\n", m.c_str());
@@ -269,7 +269,9 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
     take.path = folder / takeFileName();
     take.channels = info.inputChannels >= 2 ? std::vector<unsigned int>{0, 1} : std::vector<unsigned int>{0};
     std::string error;
-    if (!app.audio.startRecording({take}, error)) {
+    minidaw::RecorderOptions options;
+    options.syncToDisk = app.config.recording.syncToDisk;
+    if (!app.audio.startRecording({take}, error, options)) {
         std::printf("error: %s\n", error.c_str());
         return 1;
     }
@@ -285,12 +287,12 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
     app.audio.close();
 
     for (const auto& t : res.takes) {
-        std::printf("Wrote %s: %llu frames (%.2f s), dropped %llu, clipped samples %llu\n", t.path.string().c_str(),
+        std::printf("Wrote %s: %llu frames (%.2f s), lost frames %llu, clipped samples %llu\n", t.path.string().c_str(),
                     static_cast<unsigned long long>(t.frames), double(t.frames) / rate,
                     static_cast<unsigned long long>(t.droppedFrames),
                     static_cast<unsigned long long>(t.clippedSamples));
     }
-    std::printf("xruns: %llu\n", static_cast<unsigned long long>(xruns));
+    std::printf("dropouts (xruns): %llu\n", static_cast<unsigned long long>(xruns));
     if (!res.error.empty()) std::printf("error: %s\n", res.error.c_str());
     return res.lostData() ? 1 : 0;
 }

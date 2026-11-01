@@ -6,6 +6,11 @@
 
 namespace minidaw {
 
+namespace {
+constexpr std::size_t kGapSlots = 256;           // gap markers waiting for the disk thread
+constexpr std::uint64_t kSilenceChunk = 8192;    // frames of silence per write
+} // namespace
+
 bool RecordingResult::lostData() const
 {
     if (!error.empty()) return true;
@@ -61,6 +66,7 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
         t->spec = spec;
         t->channels = static_cast<unsigned int>(spec.channels.size());
         t->ring = std::make_unique<SpscRing<float>>(std::max<std::size_t>(ringFrames, 1) * t->channels);
+        t->gaps = std::make_unique<SpscRing<Gap>>(kGapSlots);
         if (!t->writer.open(spec.path, sampleRate, t->channels, error)) {
             // Remove files already created for this attempt.
             for (auto& m : made) {
@@ -91,9 +97,18 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
         for (auto& tp : takes_) {
             Take& t = *tp;
             const std::size_t need = static_cast<std::size_t>(frames) * t.channels;
-            if (!t.ring->canWrite(need)) {
+            // After a loss, the gap must be announced before the next block, so
+            // the disk thread can put the silence in the right place.
+            const bool fits = t.ring->canWrite(need) && (t.openGap == 0 || t.gaps->canWrite(1));
+            if (!fits) {
+                t.openGap += frames;
                 t.dropped.fetch_add(frames, std::memory_order_relaxed);
                 continue;
+            }
+            if (t.openGap != 0) {
+                const Gap g{t.queued, t.openGap};
+                t.gaps->write(&g, 1);
+                t.openGap = 0;
             }
             std::size_t k = 0;
             for (unsigned int f = 0; f < frames; ++f) {
@@ -101,10 +116,27 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
                 for (unsigned int c = 0; c < t.channels; ++c) t.ring->slot(k++) = frame[t.spec.channels[c]];
             }
             t.ring->commitWrite(need);
+            t.queued += frames;
         }
         framesCaptured_.fetch_add(frames, std::memory_order_relaxed);
     }
     inProcess_.fetch_sub(1);
+}
+
+bool Recorder::writeSilence(Take& t, std::uint64_t frames)
+{
+    while (frames > 0) {
+        const std::uint64_t n = std::min(frames, kSilenceChunk);
+        std::string err;
+        if (!t.writer.write(nullptr, static_cast<std::size_t>(n), err)) {
+            setDiskError(err);
+            t.writer.close(err);
+            return false;
+        }
+        t.silenceWritten += n;
+        frames -= n;
+    }
+    return true;
 }
 
 std::size_t Recorder::drainOnce(std::vector<float>& scratch)
@@ -112,20 +144,42 @@ std::size_t Recorder::drainOnce(std::vector<float>& scratch)
     std::size_t moved = 0;
     for (auto& tp : takes_) {
         Take& t = *tp;
-        if (!t.writer.isOpen()) continue;  // stopped after an error
-        for (;;) {
-            const std::size_t got = t.ring->read(scratch.data(), scratch.size() - scratch.size() % t.channels);
+        while (t.writer.isOpen()) {  // closed after an error: the ring fills up and losses are counted
+            if (!t.hasPendingGap) t.hasPendingGap = t.gaps->read(&t.pendingGap, 1) == 1;
+            if (t.hasPendingGap && t.pendingGap.at == t.ringRead) {
+                t.hasPendingGap = false;
+                if (!writeSilence(t, t.pendingGap.length)) break;
+                moved += static_cast<std::size_t>(t.pendingGap.length);
+                continue;
+            }
+            std::size_t maxSamples = scratch.size() - scratch.size() % t.channels;
+            if (t.hasPendingGap) {
+                const std::uint64_t untilGap = (t.pendingGap.at - t.ringRead) * t.channels;
+                maxSamples = static_cast<std::size_t>(std::min<std::uint64_t>(maxSamples, untilGap));
+            }
+            const std::size_t got = t.ring->read(scratch.data(), maxSamples);
             if (got == 0) break;
+            const std::size_t frames = got / t.channels;
+            t.ringRead += frames;
             std::string err;
-            if (!t.writer.write(scratch.data(), got / t.channels, err)) {
+            if (!t.writer.write(scratch.data(), frames, err)) {
+                t.lostOnDisk.fetch_add(frames, std::memory_order_relaxed);
                 setDiskError(err);
                 t.writer.close(err);
                 break;
             }
-            moved += got / t.channels;
+            moved += frames;
         }
     }
     return moved;
+}
+
+void Recorder::drainForTest()
+{
+    if (!disk_.joinable()) {
+        std::vector<float> scratch(16384);
+        drainOnce(scratch);
+    }
 }
 
 void Recorder::diskLoop()
@@ -140,7 +194,7 @@ void Recorder::diskLoop()
             lastHeader = now;
             for (auto& tp : takes_) {
                 std::string err;
-                if (!tp->writer.updateHeader(err)) setDiskError(err);
+                if (!tp->writer.updateHeader(err, options_.syncToDisk)) setDiskError(err);
             }
         }
         if (moved == 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -156,7 +210,9 @@ void Recorder::setDiskError(const std::string& text)
 std::uint64_t Recorder::droppedFrames() const
 {
     std::uint64_t n = 0;
-    for (const auto& t : takes_) n = std::max(n, t->dropped.load(std::memory_order_relaxed));
+    for (const auto& t : takes_) {
+        n = std::max(n, t->dropped.load(std::memory_order_relaxed) + t->lostOnDisk.load(std::memory_order_relaxed));
+    }
     return n;
 }
 
@@ -175,18 +231,24 @@ RecordingResult Recorder::stop()
     diskRun_.store(false);
     if (disk_.joinable()) disk_.join();
 
-    // Write what is still buffered, then close the files.
+    // Write what is still buffered, end every take with the silence of a loss
+    // that was still open, so all takes have the same length; close the files.
     std::vector<float> scratch(16384);
     drainOnce(scratch);
+    const std::uint64_t captured = framesCaptured_.load();
     for (auto& tp : takes_) {
         Take& t = *tp;
+        if (t.writer.isOpen() && t.openGap > 0) writeSilence(t, t.openGap);
         std::string err;
         if (!t.writer.close(err)) setDiskError(err);
         TakeResult r;
         r.path = t.spec.path;
         r.channels = t.channels;
         r.frames = t.writer.framesWritten();
-        r.droppedFrames = t.dropped.load();
+        // Everything captured that is not real audio in the file was lost,
+        // whatever the reason (ring full, disk error, left in the ring).
+        const std::uint64_t audioInFile = r.frames - t.silenceWritten;
+        r.droppedFrames = captured > audioInFile ? captured - audioInFile : 0;
         r.clippedSamples = t.writer.clippedSamples();
         result.takes.push_back(r);
     }

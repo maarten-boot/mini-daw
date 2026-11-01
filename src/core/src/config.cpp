@@ -71,6 +71,15 @@ bool parseUnsigned(const std::string& text, unsigned int& out)
     return true;
 }
 
+// true/false, yes/no, on/off, 1/0 (any case).
+bool parseBool(const std::string& text, bool& out)
+{
+    const std::string v = lower(text);
+    if (v == "true" || v == "yes" || v == "on" || v == "1") { out = true; return true; }
+    if (v == "false" || v == "no" || v == "off" || v == "0") { out = false; return true; }
+    return false;
+}
+
 std::vector<std::string_view> splitLines(std::string_view text)
 {
     std::vector<std::string_view> lines;
@@ -178,6 +187,11 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             } else {
                 warn("buffer_size '" + value + "' must be a number from 16 to 8192. Using 256.");
             }
+        } else if (section == "recording" && key == "sync_to_disk") {
+            if (!parseBool(value, cfg.recording.syncToDisk)) {
+                cfg.recording.syncToDisk = true;
+                warn("sync_to_disk '" + value + "' must be true or false. Using true.");
+            }
         } else {
             warn("unknown setting '" + key + "' in section [" + section + "]");
         }
@@ -259,7 +273,12 @@ std::string defaultConfigText()
            "output_device = (default)\n"
            "; Session sample rate in Hz, and buffer size in frames.\n"
            "sample_rate = 48000\n"
-           "buffer_size = 256\n";
+           "buffer_size = 256\n"
+           "\n"
+           "[recording]\n"
+           "; Force take files to the disk once a second, so a take survives a\n"
+           "; power loss. Set to false if recording stutters on a slow disk.\n"
+           "sync_to_disk = true\n";
 }
 
 std::filesystem::path defaultConfigPath()
@@ -313,6 +332,7 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "audio", "output_device", deviceValue(config.audio.outputDevice));
     text = setConfigValue(text, "audio", "sample_rate", std::to_string(config.audio.sampleRate));
     text = setConfigValue(text, "audio", "buffer_size", std::to_string(config.audio.bufferFrames));
+    text = setConfigValue(text, "recording", "sync_to_disk", config.recording.syncToDisk ? "true" : "false");
 
     std::error_code ec;
     if (path.has_parent_path()) {

@@ -15,6 +15,8 @@ Status column in the Results section at the end.
 | T-UI-07 | SPEC-UI-06 | A | Theme has a pair at 5:1, minimum set to AAA | That pair is adjusted to ≥ 7:1 |
 | T-UI-08 | SPEC-UI-02 | A | Contrast function on known pairs: #000/#FFF, #777/#FFF | 21.0, about 4.48 |
 | T-UI-09 | SPEC-UI-07 | M | Look at the level meters with the colours ignored | Level can still be read (text value or pattern) |
+| T-UI-10 | SPEC-TECH-05 | M | Start the GUI on Windows without a GPU/OpenGL driver (VM), and with `MINIDAW_D3D_WARP=1` | Window opens; status line says "Direct3D 11 (WARP software renderer)" |
+| T-UI-11 | SPEC-TECH-05 | M | Make every renderer fail (e.g. Windows Basic Display with D3D disabled) | A message box explains the problem; no silent exit |
 
 ## Devices
 | ID | Spec | Type | Description | Expected result |
@@ -22,6 +24,7 @@ Status column in the Results section at the end.
 | T-DEV-01 | SPEC-DEV-01 | M | Open device settings with a USB audio interface and a MIDI keyboard connected | Both appear in the lists |
 | T-DEV-02 | SPEC-DEV-02 | M | Select 44.1 kHz and a 128-sample buffer | Stream runs at those settings |
 | T-DEV-03 | SPEC-DEV-03 | M | Restart the app | The previous device and settings are restored |
+| T-DEV-05 | SPEC-DEV-01 | A | `scanDevices()` on a machine without audio/MIDI hardware | Does not throw; problems are returned as warnings |
 | T-DEV-04 | SPEC-DEV-03 | A+M | Restart after the saved device has been unplugged | Clear message; falls back to the default device; no crash; saved choice kept |
 | T-DEV-06 | SPEC-DEV-05 | M | Start with a driver that fails on its own thread (e.g. WASAPI under Wine) | Error with the driver's message; not shown as running |
 | T-DEV-07 | SPEC-DEV-06 | M | `mini-daw --audio-test 5` on Windows 10 with Line In + Speakers at 48 kHz | Runs; callbacks ≈ expected; 0 dropouts; peak levels change when a signal is applied |
@@ -37,8 +40,13 @@ Status column in the Results section at the end.
 | T-REC-06 | SPEC-REC-05 | A | Ring buffer stress test: producer and consumer threads, 10⁸ samples | No lost or duplicated samples |
 | T-REC-07 | SPEC-REC-05a | A | Write a WAV file, refresh the header, write more, read the file before closing | File is valid and holds the audio up to the header refresh; after closing, all of it |
 | T-REC-08 | SPEC-REC-03, 05, NF-01 | A | Recorder with 4 input channels and 2 takes (mono ch 3; stereo ch 4+1), a test thread plays the audio callback for 5 s, the real disk thread writes | Both files hold every frame, sample-exact, in the right channel order; 0 lost frames |
-| T-REC-09 | SPEC-REC-05b | A | Recorder without a disk thread and a 4096-frame ring; feed 10 000 frames | 6000 frames reported lost; the 4000 buffered frames are still written on stop |
-| T-REC-10 | SPEC-REC-06 | M | `mini-daw --record-test 10 <folder>` on Windows 10 with a working input, while speaking or playing into it | A 10 s, 24-bit WAV in the folder that plays back what was heard; 0 lost frames, 0 xruns |
+| T-REC-09 | SPEC-REC-05b | A | Recorder without a disk thread and a 4096-frame ring; feed 10 000 frames | 6000 frames reported lost; the 4000 buffered frames are written on stop, followed by 6000 frames of silence (file length 10 000) |
+| T-REC-10 | SPEC-REC-06 | M | `mini-daw --record-test 10 <folder>` on Windows 10 with a working input, while speaking or playing into it | A 10 s, 24-bit WAV in the folder that plays back what was heard; 0 lost frames, 0 dropouts (xruns); exit code 0 |
+| T-REC-11 | SPEC-REC-05c | A | WAV writer placed just below the 4 GiB limit (test hook); write up to it, then one frame more | Write up to the limit succeeds; the next is refused with a "4 GiB limit" message; size fields fit in 32 bits incl. padding |
+| T-REC-12 | SPEC-REC-05b | A | WAV writer: a write fails halfway through a block (test hook), then close | Later writes refused; file cut back to the last complete write, padding byte added, valid header |
+| T-REC-13 | SPEC-REC-02, 05b | A | Recorder with a mono and a stereo take; 1000 frames lost in the middle, then more audio | Both files 7000 frames; lost part is silence; audio after it is at its original position in both takes; 1000 lost frames reported per take |
+| T-REC-14 | SPEC-REC-05b | A | Recorder: the disk "fills up" (test hook) after 1000 frames, 4000 more frames arrive | Disk error reported; 4000 lost frames (live and in the result); file valid with 1000 frames |
+| T-REC-15 | SPEC-REC-05a | A | `sync_to_disk` in `[recording]`: missing, `false`, `Off`, `yes`, `maybe`; save and reload | Default on; values parsed; `maybe` gives a warning and stays on; saved value survives reload. T-REC-07 also covers a header refresh with the hard sync |
 
 ## Monitoring
 | ID | Spec | Type | Description | Expected result |
@@ -96,10 +104,7 @@ Status column in the Results section at the end.
 | T-CI-01 | SPEC-CI-01 | A | `tools/check_licenses.py` scans `.github/workflows/*.yml` | Every `uses:` is pinned to a 40-character SHA; fails otherwise |
 | T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass; both smoke runs succeed; both program downloads are present |
 | T-CI-03 | SPEC-CI-03 | M | Cross-compile with the MinGW toolchain file | `mini-daw.exe` and `minidaw_tests.exe` build without errors |
-| T-DEV-05 | SPEC-DEV-01 | A | `scanDevices()` on a machine without audio/MIDI hardware | Does not throw; problems are returned as warnings |
 
-| T-UI-10 | SPEC-TECH-05 | M | Start the GUI on Windows without a GPU/OpenGL driver (VM), and with `MINIDAW_D3D_WARP=1` | Window opens; status line says "Direct3D 11 (WARP software renderer)" |
-| T-UI-11 | SPEC-TECH-05 | M | Make every renderer fail (e.g. Windows Basic Display with D3D disabled) | A message box explains the problem; no silent exit |
 
 ## Results
 | Date | Test | Environment | Result | Notes |
@@ -152,3 +157,5 @@ Status column in the Results section at the end.
 | 2026-11-01 | all automated | Linux 58/58 ctest; Wine 57/57 Catch2 cases | pass | |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41354090755 | pass | windows 2m55s (58/58), linux 1m28s (58/58), licence; MSVC C4324 on `SpscRing` (intended padding) → switched off for that class |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41354630677 | pass | windows 3m11s, linux 1m35s, licence; 58/58 on both; no MSVC warnings |
+| 2026-11-01 | crosscheck #3 fixes (H1–H9) | Linux 65/65 ctest; MinGW build under Wine 64/64 Catch2 cases (669 assertions) | pass | New: T-REC-11..15; T-REC-09 now expects the silence; T-REC-07 also with hard sync |
+| 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s with `sync_to_disk` on: 96 256 frames, 24-bit stereo 48 kHz; 1 s with it off: 48 128 frames; 0 lost, 0 dropouts, exit code 0. New output wording "lost frames" / "dropouts (xruns)" |
