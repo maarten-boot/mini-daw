@@ -151,3 +151,4 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s → 96 256 frames, 24-bit stereo 48 kHz (checked with Python `wave`); 0 lost, 0 xruns. Windows: to do by the user |
 | 2026-11-01 | all automated | Linux 58/58 ctest; Wine 57/57 Catch2 cases | pass | |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41354090755 | pass | windows 2m55s (58/58), linux 1m28s (58/58), licence; MSVC C4324 on `SpscRing` (intended padding) → switched off for that class |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41354630677 | pass | windows 3m11s, linux 1m35s, licence; 58/58 on both; no MSVC warnings |
