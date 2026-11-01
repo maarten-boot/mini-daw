@@ -88,7 +88,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 
 ## 7. Build and CI
 - **SPEC-CI-01** Every GitHub Actions step (or other CI action) is pinned to a full commit SHA, with the release tag as a comment, using the latest release that works. Any exception is written down here with the reason. Exceptions so far: none.
-- **SPEC-CI-02** CI builds and tests on Windows (primary target) and Linux, and runs the licence and pinning check. Runner images are pinned to a named version (`windows-2025`, `ubuntu-24.04`), not `-latest`.
+- **SPEC-CI-02** CI builds and tests on Windows (primary target) and Linux, and runs the licence and pinning check. The Windows and Linux jobs smoke-run the program and publish it as a download (`mini-daw-windows-x64`, `mini-daw-linux-x64`). Runner images are pinned to a named version (`windows-2025`, `ubuntu-24.04`), not `-latest`.
 - **SPEC-CI-03** The project can be cross-compiled for Windows from Linux with MinGW-w64 (`cmake/toolchains/mingw-w64.cmake`).
 
 ## 8. Known limitations

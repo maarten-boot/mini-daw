@@ -71,6 +71,18 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Smoke-run the program
+        run: |
+          ./build/src/mini-daw --version
+          ./build/src/mini-daw --list-devices
+
+      - name: Upload program
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mini-daw-linux-x64
+          path: build/src/mini-daw
+          if-no-files-found: error
+
   licence:
     runs-on: ubuntu-24.04
     steps:

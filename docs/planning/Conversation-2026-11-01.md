@@ -156,3 +156,5 @@
 - Run 41349876675 green on all jobs; the Windows smoke run shows no warnings any more.
 - User ran `--audio-test 5` on the Windows VM: the capture client could not be initialised (the VM has no active audio input). mini-daw reported this correctly instead of claiming a running stream. T-DEV-07 logged as blocked.
 - Suggested an output-only run with `input_device = (none)` in a test config.
+- Output-only run on the Windows VM passed (0 xruns). The callback count looked 11% high; `--audio-test` now counts from a fixed start and uses the real elapsed time.
+- User asked for a Linux test build as well. Not too early: CI already builds and tests Linux. Added a smoke run and a `mini-daw-linux-x64` download to the linux CI job; local copy in `dist/linux/` (needs glibc 2.43; the CI build from Ubuntu 24.04 is more portable). Spec CI-02 and T-CI-02 updated.

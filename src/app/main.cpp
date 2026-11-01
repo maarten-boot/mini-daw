@@ -198,23 +198,29 @@ int runAudioTest(AppState& app, int seconds)
                 info.outputChannels);
 
     std::array<float, minidaw::kMaxInputChannels> peak{};
+    // Measure from a fixed starting point: the count already includes the callbacks
+    // made while open() waited, and Windows' sleep_for() overshoots, so use real time.
+    const std::uint64_t startCallbacks = app.audio.callbacks();
+    const auto startTime = std::chrono::steady_clock::now();
     for (int t = 0; t < seconds * 10; ++t) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
             peak[ch] = std::max(peak[ch], app.audio.takeInputPeak(ch));
         }
     }
-    const std::uint64_t callbacks = app.audio.callbacks();
-    const double expected = info.bufferFrames ? double(seconds) * info.sampleRate / info.bufferFrames : 0.0;
+    const std::uint64_t callbacks = app.audio.callbacks() - startCallbacks;
+    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
+    const double expected = info.bufferFrames ? elapsed * info.sampleRate / info.bufferFrames : 0.0;
     for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
         std::printf("%s in %2u: %-10s", ch % 4 == 0 ? "  peak" : "", ch + 1, minidaw::formatDbfs(peak[ch]).c_str());
         if (ch % 4 == 3 || ch + 1 == info.inputChannels) std::printf("\n");
     }
-    std::printf("Callbacks: %llu (expected about %.0f), xruns: %llu\n", static_cast<unsigned long long>(callbacks),
-                expected, static_cast<unsigned long long>(app.audio.xruns()));
+    std::printf("Callbacks: %llu in %.2f s (expected about %.0f), xruns: %llu\n",
+                static_cast<unsigned long long>(callbacks), elapsed, expected,
+                static_cast<unsigned long long>(app.audio.xruns()));
     for (const auto& m : app.audio.takeDriverMessages()) std::printf("driver: %s\n", m.c_str());
     app.audio.close();
-    return callbacks > 0 ? 0 : 1;
+    return app.audio.callbacks() > 0 ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

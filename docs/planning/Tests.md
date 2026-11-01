@@ -90,7 +90,7 @@ Status column in the Results section at the end.
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
 | T-CI-01 | SPEC-CI-01 | A | `tools/check_licenses.py` scans `.github/workflows/*.yml` | Every `uses:` is pinned to a 40-character SHA; fails otherwise |
-| T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass |
+| T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass; both smoke runs succeed; both program downloads are present |
 | T-CI-03 | SPEC-CI-03 | M | Cross-compile with the MinGW toolchain file | `mini-daw.exe` and `minidaw_tests.exe` build without errors |
 | T-DEV-05 | SPEC-DEV-01 | A | `scanDevices()` on a machine without audio/MIDI hardware | Does not throw; problems are returned as warnings |
 
@@ -136,3 +136,4 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41341970036 | pass | No MSVC warnings left; `--version` clean. Remaining: "No devices found" reached the GUI/CLI as a warning via RtAudio's error callback → filtered there too |
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41349876675 | pass | windows 3m28s, linux 1m28s, licence; 43/43 tests; smoke run on the runner is now free of warnings |
 | 2026-11-01 | T-DEV-07 | Windows VM, no audio input active | blocked | Error reported correctly: "no audio arrived within 1 second. Driver: RtApiWasapi::wasapiThread: Unable to initialize capture audio client." Next: output-only run (`input_device = (none)`), then a run on a machine with a working input |
+| 2026-11-01 | T-DEV-07 (output only) | Windows VM, `input_device = (none)` | pass | WASAPI, Speakers 48 kHz, 2 ch; 1044 callbacks (expected 938), 0 xruns. The excess was a flaw in the test (count started at open, `sleep_for` overshoot) → now measures real time from a fixed start; Linux: 376 in 2.00 s (expected 375) |

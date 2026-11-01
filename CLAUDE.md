@@ -17,7 +17,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS).
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
-- `dist/` — not committed; Windows builds for the user to try.
+- `dist/` — not committed; test builds for the user to try (`dist/windows/`, `dist/linux/`). The local Linux build needs glibc 2.43; the CI download (built on Ubuntu 24.04, glibc 2.39) runs on more systems.
 
 ## Build and test
 Linux (keep build folders out of the repository, e.g. in the session scratchpad):
