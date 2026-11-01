@@ -40,3 +40,15 @@
 - Plan.md: steps P2–P13, milestones v1 (record/playback) and v2 (VST3).
 - Tests.md: test cases for all Spec items, marked automated or manual.
 - Committed on branch `docs/planning`.
+
+## 8. Licence
+> Licencing would be my normal MIT unless we run into obstables, in esscence free to use and modify for all
+
+- Claude proposed corrections (obstables→obstacles, esscence→essence), checked the licences of the chosen dependencies against MIT, and flagged ASIO as the likely obstacle. Waiting for confirmation before updating Spec.
+
+## 9. Licence decisions
+- User confirmed: MIT, copyright "Maarten Boot". Pointed to https://www.steinberg.net/developers/asiosdk-open/.
+- Claude checked: the ASIO SDK "open" variant is **GPLv3** (the proprietary licence still exists alongside it). The VST3 SDK LICENSE file on GitHub is **MIT**.
+- Decision: the code stays MIT. ASIO is an optional build setting, off by default, and its SDK is never in the repository. ASIO builds under GPLv3 are themselves GPLv3, and the README says so.
+- Spec v0.3: SPEC-LIC-01..04 added. Tests T-LIC-01..04 added. Plan: P1b done, P11b (ASIO) added.
+- `LICENSE` (MIT) committed as the first commit on `main`; `docs/planning` rebased onto it.

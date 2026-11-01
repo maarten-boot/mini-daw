@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: draft v0.2 (2026-11-01). Items marked *(proposed)* are defaults chosen by Claude and not yet confirmed by the user.
+Status: draft v0.3 (2026-11-01). Items marked *(proposed)* are defaults chosen by Claude and not yet confirmed by the user.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -11,11 +11,11 @@ A small desktop program that records MIDI and audio input on several tracks at o
 
 ## 2. Technology
 - **SPEC-TECH-01** Language: C++ (C++20 *(proposed)*), build system CMake *(proposed)*.
-- **SPEC-TECH-02** Audio I/O: RtAudio. Windows backend WASAPI first, ASIO as an option later *(proposed)*.
+- **SPEC-TECH-02** Audio I/O: RtAudio. Windows backend WASAPI first *(proposed)*. ASIO as an option later; see SPEC-LIC-03.
 - **SPEC-TECH-03** MIDI I/O: RtMidi.
 - **SPEC-TECH-04** Plugin hosting: Steinberg VST3 SDK, used directly.
 - **SPEC-TECH-05** GUI: Dear ImGui on GLFW *(proposed)*. GLFW provides the native window handle that VST3 plugin editors need.
-- **SPEC-TECH-06** Only libraries with permissive licences (MIT, BSD, zlib or similar), so the project can be either open or closed source.
+- **SPEC-TECH-06** Only libraries whose licence is compatible with MIT (MIT, BSD, zlib, Boost or similar). See section 6.
 
 ## 3. Functional requirements
 
@@ -67,8 +67,14 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-NF-02** Round-trip latency with WASAPI exclusive mode at a 256-sample buffer stays at or below about 20 ms *(proposed)*.
 - **SPEC-NF-03** A plugin that crashes or misbehaves must not corrupt takes already written to disk.
 
-## 6. Open questions
+## 6. Licensing
+- **SPEC-LIC-01** The project is released under the MIT licence (copyright Maarten Boot): free for anyone to use and modify.
+- **SPEC-LIC-02** Every bundled or fetched dependency has an MIT-compatible licence, and `THIRD_PARTY.md` lists each one with its licence. Checked so far: RtAudio and RtMidi (MIT-style), Dear ImGui (MIT), GLFW (zlib), VST3 SDK (MIT, its LICENSE file on GitHub checked 2026-11-01), GoogleTest (BSD-3) or Catch2 (Boost).
+- **SPEC-LIC-03** ASIO support is an optional build setting `MINIDAW_WITH_ASIO`, off by default. The ASIO SDK is never put in the repository; whoever builds with ASIO downloads it. Steinberg offers it under GPLv3 or a proprietary licence (https://www.steinberg.net/developers/asiosdk-open/). A program built with ASIO under GPLv3 is itself GPLv3, and the README says so.
+- **SPEC-LIC-04** The ASIO logo and trademark are only used as Steinberg's guidelines allow. By default the program does not show the logo.
+
+## 7. Open questions
 - Confirm the defaults marked *(proposed)* above.
-- ASIO support: when should it come, and has the ASIO SDK licence been checked?
+- When should ASIO support come? Its licence is settled in SPEC-LIC-03.
 - Should there be a metronome or click track? (Not requested so far.)
 - Should a separate stereo mixdown/export of the whole project be possible?

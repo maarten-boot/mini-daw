@@ -5,7 +5,8 @@
 |---|------|-----------|-------|
 | P0 | Project setup: git repo, `docs/planning` branch, planning docs | — | done (2026-11-01) |
 | P1 | Turn the scenario into Spec items | all | done, draft v0.2. Waiting for confirmation of the *(proposed)* defaults |
-| P2 | Project skeleton: CMake, dependencies (RtAudio, RtMidi, GLFW, Dear ImGui), CI build on Windows | TECH-01..06 | pending |
+| P1b | Licence: MIT `LICENSE` on `main`, licence rules in Spec | LIC-01..04 | done (2026-11-01) |
+| P2 | Project skeleton: CMake, dependencies (RtAudio, RtMidi, GLFW, Dear ImGui), `THIRD_PARTY.md`, licence check in CI, CI build on Windows | TECH-01..06, LIC-02 | pending |
 | P3 | Theme/contrast system, including WCAG ratio calculation, presets and config file | UI-01..07 | pending |
 | P4 | Device layer: list devices, select them, save settings | DEV-01..03 | pending |
 | P5 | Audio engine: lock-free callback, ring buffers, disk writer thread, WAV writer | NF-01, REC-03, REC-05 | pending |
@@ -17,6 +18,7 @@
 | P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | pending |
 | P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | pending |
 | — | **Milestone v2: VST3 instruments** | | |
+| P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
 | P12 | Port to Linux (ALSA/JACK/PipeWire) and macOS (CoreAudio) | — | later |
 | P13 | Note and sound editing | — | later (not in v1) |
 | PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring, after significant changes |
