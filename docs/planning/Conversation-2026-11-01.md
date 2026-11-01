@@ -53,3 +53,10 @@
 - Spec v0.3: SPEC-LIC-01..04 added. Tests T-LIC-01..04 added. Plan: P1b done, P11b (ASIO) added.
 - `LICENSE` (MIT) committed as the first commit on `main`; `docs/planning` rebased onto it.
 - User pasted the full text of the Steinberg ASIO open-source page. It confirms GPLv3 and adds trademark rules: the logo only unaltered and only in product contexts (splash, About, website, docs); "ASIO" not allowed in product or company names; the logo not on products that don't support ASIO. Added to SPEC-LIC-04 and test T-LIC-05.
+
+## 10. Defaults confirmed, P2 started
+> defaults are fine, no metronome yet, start P2
+
+- All *(proposed)* defaults confirmed → Spec v0.4. Test framework fixed to Catch2. No metronome for now.
+- Still open: stereo mix export of the whole project; when ASIO support comes.
+- P2 started on branch `p2-skeleton` (branched from `docs/planning`, so the planning docs stay in the working tree). Pinned dependencies: RtAudio 6.0.1, RtMidi 6.0.0, GLFW 3.4, Dear ImGui v1.92.9, Catch2 v3.16.1. MinGW-w64 is available locally, so the Windows build can be cross-compiled and checked here.

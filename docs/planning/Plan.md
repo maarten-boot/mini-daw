@@ -4,9 +4,9 @@
 | # | Step | Spec items | State |
 |---|------|-----------|-------|
 | P0 | Project setup: git repo, `docs/planning` branch, planning docs | — | done (2026-11-01) |
-| P1 | Turn the scenario into Spec items | all | done, draft v0.2. Waiting for confirmation of the *(proposed)* defaults |
+| P1 | Turn the scenario into Spec items | all | done (Spec v0.4, defaults confirmed) |
 | P1b | Licence: MIT `LICENSE` on `main`, licence rules in Spec | LIC-01..04 | done (2026-11-01) |
-| P2 | Project skeleton: CMake, dependencies (RtAudio, RtMidi, GLFW, Dear ImGui), `THIRD_PARTY.md`, licence check in CI, CI build on Windows | TECH-01..06, LIC-02 | pending |
+| P2 | Project skeleton: CMake, dependencies (RtAudio, RtMidi, GLFW, Dear ImGui), `THIRD_PARTY.md`, licence check in CI, CI build on Windows | TECH-01..06, LIC-02 | in progress (branch `p2-skeleton`) |
 | P3 | Theme/contrast system, including WCAG ratio calculation, presets and config file | UI-01..07 | pending |
 | P4 | Device layer: list devices, select them, save settings | DEV-01..03 | pending |
 | P5 | Audio engine: lock-free callback, ring buffers, disk writer thread, WAV writer | NF-01, REC-03, REC-05 | pending |
@@ -25,5 +25,5 @@
 
 ## Notes
 - Every new Spec item gets at least one test case in `Tests.md`.
-- Pure logic (contrast maths, WAV/SMF writers, ring buffer, timeline) gets automated unit tests (GoogleTest or Catch2 *(proposed)*). Device and plugin behaviour gets manual test cases.
+- Pure logic (contrast maths, WAV/SMF writers, ring buffer, timeline) gets automated unit tests (Catch2). Device and plugin behaviour gets manual test cases.
 - Design for later editing: takes are immutable files, and tracks refer to them through clips (offset and length). This leaves room for non-destructive editing later.
