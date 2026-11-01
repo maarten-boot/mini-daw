@@ -82,3 +82,8 @@
 - Tests: 30 pass on Linux (T-UI-01..08 automated where possible). GUI checked with Xvfb screenshots at AA and Max, the menu and the report window. Two issues found in the screenshots and fixed: Raise/Lower menu items looked disabled; report window too narrow.
 - Windows build copied to `dist/windows/mini-daw.exe` (MinGW, static). It only needs Windows system DLLs; on Windows 10 N, `MFPlat.dll` needs the Media Feature Pack.
 - New known limitations and open questions in Spec §8/§9: Max mode hides hover/selection colours; no font-size setting; MFPlat on N editions.
+
+## 14. First run on real Windows 10 (user feedback)
+- `mini-daw.exe --list-devices` works: WASAPI finds Speakers (48 kHz, default out) and Line In (44.1 kHz, default in); MIDI: no inputs, 1 output (Microsoft GS Wavetable Synth). The exe needs no extra DLLs; the machine is not an N edition.
+- Finding: RtMidi printed "MidiInWinMM::initialize: no MIDI input devices currently available." to the console. Cause: RtMidi writes warnings to std::cerr in its constructor, before a callback can be set. Fix: capture std::cerr during the MIDI scan, move the messages into DeviceScan::warnings, and drop the normal "no devices" notice. New exe in `dist/windows/`.
+- Noted for P4/P5: input and output devices can run at different native sample rates (Spec §8b).

@@ -107,3 +107,5 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-UI-07 | Linux (unit test) | pass | |
 | 2026-11-01 | T-UI-08 | Linux (unit test) | pass | #777/#FFF = 4.48, #767676 = 4.54, #595959 = 7.00 |
 | 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | P3 build; exe needs only Windows system DLLs (see Spec §8 about MFPlat) |
+| 2026-11-01 | T-DEV-05 | **Windows 10, real machine** (user) | pass | WASAPI: Speakers (out 2, default, 48 kHz), Line In (in 2, default, 44.1 kHz). MIDI: 0 inputs, 1 output (Microsoft GS Wavetable Synth). |
+| 2026-11-01 | T-CI-03 | **Windows 10, real machine** (user) | pass | MinGW-built exe starts and runs `--list-devices` without extra DLLs. Finding: RtMidi printed "no MIDI input devices" straight to the console → fixed (captured; "no devices" notices dropped). |

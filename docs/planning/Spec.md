@@ -91,6 +91,9 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **Windows 10 N editions** have no `MFPlat.dll` (used by RtAudio's WASAPI code) unless the Media Feature Pack is installed. The program then does not start.
 - The default ImGui font is small (13 px) and there is no font-size setting yet.
 
+## 8b. Observations from the first Windows run (2026-11-01)
+- Input and output devices can have different native sample rates (Line In 44.1 kHz, Speakers 48 kHz on the user's machine). P4/P5 must handle this: one session sample rate (SPEC-DEV-02, default 48 kHz), with WASAPI shared-mode conversion or a clear message when a device cannot run at that rate.
+
 ## 9. Open questions
 - When should ASIO support come? Its licence is settled in SPEC-LIC-03.
 - Should the whole project be exportable as one stereo mix? (Not answered yet.)
