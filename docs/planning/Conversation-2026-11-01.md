@@ -101,3 +101,17 @@
 > PS C:\Users\mboot\TMP> .\mini-daw.exe looks good now
 
 - T-UI-01 and T-UI-10 pass on the real Windows 10 machine. Still to report: the renderer named in the status line, and the contrast switch/config file checks (T-UI-03/04 on Windows).
+
+## 17. P4 started; GitHub repository available
+- User: renderer line says "Direct3D 11 (hardware)"; "go on with P4" (accepting the defaults: merge after review, font-size setting in P4, stereo export open; crosscheck #2 after P4).
+- Finding: RtAudio 6.0.1 opens WASAPI in **shared mode only**. Shared mode resamples automatically (solves 44.1/48 kHz), but SPEC-NF-02 (exclusive mode, ≈20 ms) cannot be met as-is → open issue.
+- User: "ok we now have a almost empty repo at: ~/share-local/DEV/github.com/maarten-boot/mini-daw" / "we can relocate there". Correction noted: "a almost" → "an almost".
+- Claude inspected it: GitHub initial commit (README, identical MIT LICENSE, C++ .gitignore), origin git@github.com:maarten-boot/mini-daw.git. All local commits already use the GitHub noreply address.
+- Decisions (user): move **after P4**; then merge p2-skeleton into main and **push main** (CI runs on GitHub). Keep history by placing our commits on top of GitHub's initial commit; old folder kept as backup until the user says otherwise.
+- User (mid-task): "after the relocate i will open a fresh project tree from the new location" → Claude will add a project `CLAUDE.md` and a handover section so a new session can continue.
+
+## 18. P4 — device settings and text size
+- Core: `audio_stream` (device resolution by name with fallback; RtAudio duplex stream, float32, lock-free peak levels and dropout counter; "running" only after the first callback). Config: `[audio]` section, `font_size`, quoted values.
+- GUI: Settings → Audio devices… window, audio status with per-channel peak levels as text, View → Text size + Ctrl+= / - / 0, wrapping status line, "(not found)" marker.
+- CLI: `--audio-test <seconds>`.
+- Tests: 43 pass on Linux; 42 Windows unit tests pass under Wine. Linux audio stream runs (377 callbacks / 2 s, 0 dropouts). Under Wine, RtAudio's WASAPI client fails to initialise in all directions — this exposed that the program reported "running" anyway; fixed (SPEC-DEV-05). Real-Windows audio test (T-DEV-07) pending.

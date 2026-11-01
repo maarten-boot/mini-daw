@@ -25,16 +25,50 @@ std::string lower(std::string_view s)
     return out;
 }
 
-// Strip a trailing "; comment" or "# comment" from a value.
-std::string_view stripComment(std::string_view value)
+// A value is either "quoted" (with \" and \\ escapes; anything after the
+// closing quote is ignored) or plain (a trailing "; comment" or "# comment"
+// is removed).
+std::string parseValue(std::string_view value, bool& ok)
 {
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        if ((value[i] == ';' || value[i] == '#') &&
-            (i == 0 || std::isspace(static_cast<unsigned char>(value[i - 1])))) {
-            return trim(value.substr(0, i));
+    ok = true;
+    value = trim(value);
+    if (value.empty() || value.front() != '"') {
+        std::string_view plain = value;
+        for (std::size_t i = 0; i < plain.size(); ++i) {
+            if ((plain[i] == ';' || plain[i] == '#') &&
+                (i == 0 || std::isspace(static_cast<unsigned char>(plain[i - 1])))) {
+                plain = plain.substr(0, i);
+                break;
+            }
+        }
+        return std::string(trim(plain));
+    }
+    std::string out;
+    for (std::size_t i = 1; i < value.size(); ++i) {
+        const char c = value[i];
+        if (c == '\\' && i + 1 < value.size()) {
+            out += value[++i];
+        } else if (c == '"') {
+            return out;
+        } else {
+            out += c;
         }
     }
-    return trim(value);
+    ok = false;  // no closing quote
+    return out;
+}
+
+bool parseUnsigned(const std::string& text, unsigned int& out)
+{
+    if (text.empty()) return false;
+    unsigned long long v = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9') return false;
+        v = v * 10 + static_cast<unsigned>(c - '0');
+        if (v > 10000000ULL) return false;
+    }
+    out = static_cast<unsigned int>(v);
+    return true;
 }
 
 std::vector<std::string_view> splitLines(std::string_view text)
@@ -96,14 +130,44 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             continue;
         }
         const std::string key = lower(trim(line.substr(0, eq)));
-        const std::string_view value = stripComment(line.substr(eq + 1));
+        bool quotedOk = true;
+        const std::string value = parseValue(line.substr(eq + 1), quotedOk);
+        if (!quotedOk) {
+            warn("missing closing quote");
+        }
+        AppConfig& cfg = result.config;
 
         if (section == "ui" && key == "min_contrast") {
             ContrastParseResult parsed = parseContrastSetting(value);
             if (parsed.setting) {
-                result.config.contrast = *parsed.setting;
+                cfg.contrast = *parsed.setting;
             } else {
                 warn(parsed.error + " Using AA (4.5:1).");
+            }
+        } else if (section == "ui" && key == "font_size") {
+            unsigned int px = 0;
+            if (parseUnsigned(value, px) && static_cast<float>(px) >= kMinFontSize && static_cast<float>(px) <= kMaxFontSize) {
+                cfg.fontSize = static_cast<float>(px);
+            } else {
+                warn("font_size '" + value + "' must be a whole number from 12 to 32. Using 16.");
+            }
+        } else if (section == "audio" && key == "input_device") {
+            cfg.audio.inputDevice = value.empty() ? kDefaultDevice : value;
+        } else if (section == "audio" && key == "output_device") {
+            cfg.audio.outputDevice = value.empty() ? kDefaultDevice : value;
+        } else if (section == "audio" && key == "sample_rate") {
+            unsigned int rate = 0;
+            if (parseUnsigned(value, rate) && rate >= 8000 && rate <= 384000) {
+                cfg.audio.sampleRate = rate;
+            } else {
+                warn("sample_rate '" + value + "' must be a number from 8000 to 384000. Using 48000.");
+            }
+        } else if (section == "audio" && key == "buffer_size") {
+            unsigned int frames = 0;
+            if (parseUnsigned(value, frames) && frames >= 16 && frames <= 8192) {
+                cfg.audio.bufferFrames = frames;
+            } else {
+                warn("buffer_size '" + value + "' must be a number from 16 to 8192. Using 256.");
             }
         } else {
             warn("unknown setting '" + key + "' in section [" + section + "]");
@@ -156,6 +220,17 @@ std::string setConfigValue(std::string_view text, std::string_view section, std:
     return out;
 }
 
+std::string quoteConfigString(std::string_view value)
+{
+    std::string out = "\"";
+    for (char c : value) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    out += '"';
+    return out;
+}
+
 std::string defaultConfigText()
 {
     return "; mini-daw configuration\n"
@@ -164,7 +239,18 @@ std::string defaultConfigText()
            "; Minimum contrast ratio for all screen colours:\n"
            ";   AA  = 4.5:1 (default), AAA = 7:1, Max = 21:1 (pure black on white),\n"
            ";   or a number from 4.5 to 21.\n"
-           "min_contrast = AA\n";
+           "min_contrast = AA\n"
+           "; Text size in pixels, 12 to 32.\n"
+           "font_size = 16\n"
+           "\n"
+           "[audio]\n"
+           "; Device names as shown in the program, in quotes,\n"
+           "; or (default) for the system default, or (none).\n"
+           "input_device = (default)\n"
+           "output_device = (default)\n"
+           "; Session sample rate in Hz, and buffer size in frames.\n"
+           "sample_rate = 48000\n"
+           "buffer_size = 256\n";
 }
 
 std::filesystem::path defaultConfigPath()
@@ -196,7 +282,7 @@ ConfigLoadResult loadConfigFile(const std::filesystem::path& path)
     return parseConfig(text.str(), path.filename().string());
 }
 
-std::string saveContrastSetting(const std::filesystem::path& path, const ContrastSetting& setting)
+std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& config)
 {
     std::string text;
     {
@@ -209,7 +295,15 @@ std::string saveContrastSetting(const std::filesystem::path& path, const Contras
             text = defaultConfigText();
         }
     }
-    text = setConfigValue(text, "ui", "min_contrast", setting.toString());
+    auto deviceValue = [](const std::string& name) {
+        return (name == kDefaultDevice || name == kNoDevice) ? name : quoteConfigString(name);
+    };
+    text = setConfigValue(text, "ui", "min_contrast", config.contrast.toString());
+    text = setConfigValue(text, "ui", "font_size", std::to_string(static_cast<int>(config.fontSize)));
+    text = setConfigValue(text, "audio", "input_device", deviceValue(config.audio.inputDevice));
+    text = setConfigValue(text, "audio", "output_device", deviceValue(config.audio.outputDevice));
+    text = setConfigValue(text, "audio", "sample_rate", std::to_string(config.audio.sampleRate));
+    text = setConfigValue(text, "audio", "buffer_size", std::to_string(config.audio.bufferFrames));
 
     std::error_code ec;
     if (path.has_parent_path()) {

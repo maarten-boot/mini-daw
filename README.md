@@ -2,7 +2,7 @@
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early version (steps P2–P3). The program lists the audio devices and MIDI ports it finds, and has adjustable screen contrast. Recording is not implemented yet. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P4). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, shows input levels, and has adjustable contrast and text size. Recording is not implemented yet. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -43,6 +43,7 @@ cmake --build build-win
 mini-daw                     open the GUI
 mini-daw --config <file>     use this config file instead of the default one
 mini-daw --list-devices      print audio devices and MIDI ports, then exit
+mini-daw --audio-test <sec>  open the configured audio devices, print settings and levels
 mini-daw --contrast-report   print every colour pair and its contrast, then exit
 mini-daw --version           print the version, then exit
 ```
@@ -62,6 +63,18 @@ The default theme is black text on a white background, and every colour combinat
   The file is `%APPDATA%\mini-daw\config.ini` on Windows and `~/.config/mini-daw/config.ini` on Linux.
 
 View → Contrast report shows every colour pair and its ratio.
+
+## Text size
+
+View → Text size, or Ctrl+= / Ctrl+- / Ctrl+0, or `font_size = 20` under `[ui]` in the config file (12 to 32 px, default 16).
+
+## Audio devices
+
+Settings → Audio devices… selects the input and output device, sample rate and buffer size. The choice is saved under `[audio]` in the config file, by device name. If a saved device is missing, the program uses the system default and tells you so. To check the audio without the GUI:
+
+```
+mini-daw --audio-test 5
+```
 
 ## Graphics
 

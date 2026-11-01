@@ -1,15 +1,18 @@
 // mini-daw — application entry point.
 //
 // Command line:
-//   mini-daw                     open the GUI
-//   mini-daw --config <file>     use this config file instead of the default one
-//   mini-daw --list-devices      print audio devices and MIDI ports, then exit
-//   mini-daw --contrast-report   print every colour pair and its contrast, then exit
-//   mini-daw --version           print the version, then exit
+//   mini-daw                       open the GUI
+//   mini-daw --config <file>       use this config file instead of the default one
+//   mini-daw --list-devices        print audio devices and MIDI ports, then exit
+//   mini-daw --audio-test <sec>    open the configured audio devices for <sec> seconds,
+//                                  print the actual settings and input levels, then exit
+//   mini-daw --contrast-report     print every colour pair and its contrast, then exit
+//   mini-daw --version             print the version, then exit
 
 #include "imgui_theme.hpp"
 #include "renderer.hpp"
 
+#include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/theme.hpp"
@@ -20,10 +23,15 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -36,10 +44,10 @@ using minidaw::ContrastSetting;
 // ---------------------------------------------------------------------------
 struct AppState {
     std::filesystem::path configPath;
+    minidaw::AppConfig config;
     std::vector<std::string> configWarnings;
     std::string saveError;
 
-    ContrastSetting contrast;
     minidaw::Palette palette;                    // after enforcement
     std::vector<minidaw::ColorPair> unresolved;  // should stay empty
 
@@ -50,7 +58,21 @@ struct AppState {
 
     minidaw::DeviceScan scan;
     std::string rendererName;
+
+    // Audio (P4)
+    minidaw::AudioStream audio;
+    std::vector<std::string> audioWarnings;
+    std::string audioError;
+    bool showAudioSettings = false;
+    minidaw::AudioSettings pendingAudio;         // edited in the settings window
+    std::array<float, minidaw::kMaxInputChannels> levelHold{};  // shown peak per channel
+    double levelHoldStart = 0.0;
 };
+
+void saveConfig(AppState& app)
+{
+    app.saveError = minidaw::saveConfigFile(app.configPath, app.config);
+}
 
 minidaw::EnforceResult buildPalette(const ContrastSetting& setting)
 {
@@ -60,21 +82,19 @@ minidaw::EnforceResult buildPalette(const ContrastSetting& setting)
 // Apply a new contrast setting to the GUI and store it in the config file.
 void setContrast(AppState& app, const ContrastSetting& setting, bool save)
 {
-    app.contrast = setting;
+    app.config.contrast = setting;
     auto result = buildPalette(setting);
     app.palette = result.palette;
     app.unresolved = result.unresolved;
     minidaw::app::applyPalette(app.palette);
-    if (save) {
-        app.saveError = minidaw::saveContrastSetting(app.configPath, setting);
-    }
+    if (save) saveConfig(app);
 }
 
 // Ctrl+Shift+Up / Down: step through AA -> AAA -> Max.
 void stepContrast(AppState& app, int direction)
 {
     const ContrastSetting steps[] = {{ContrastPreset::AA}, {ContrastPreset::AAA}, {ContrastPreset::Max}};
-    const double current = app.contrast.minimum();
+    const double current = app.config.contrast.minimum();
     if (direction > 0) {
         for (const auto& s : steps) {
             if (s.minimum() > current + 1e-9) { setContrast(app, s, true); return; }
@@ -86,11 +106,39 @@ void stepContrast(AppState& app, int direction)
     }
 }
 
+// Text size (SPEC-UI-08). Applied through ImGui's dynamic font size.
+void setFontSize(AppState& app, float size, bool save)
+{
+    app.config.fontSize = std::clamp(size, minidaw::kMinFontSize, minidaw::kMaxFontSize);
+    ImGui::GetStyle().FontSizeBase = app.config.fontSize;
+    if (save) saveConfig(app);
+}
+
 std::string describeContrast(const ContrastSetting& s)
 {
     char buf[64];
     std::snprintf(buf, sizeof buf, "%s (minimum %.4g:1)", s.toString().c_str(), s.minimum());
     return buf;
+}
+
+// Open the audio stream with the given settings. On success the settings are
+// kept (and saved if `save`); on failure the previous settings are reopened.
+void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
+{
+    const minidaw::AudioSettings previous = app.config.audio;
+    minidaw::OpenResult r = app.audio.open(settings, app.scan);
+    app.audioWarnings = r.warnings;
+    app.audioError = r.error;
+    if (r.error.empty()) {
+        app.config.audio = settings;
+        if (save) saveConfig(app);
+    } else if (!(previous == settings)) {
+        minidaw::OpenResult back = app.audio.open(previous, app.scan);
+        if (back.error.empty()) {
+            app.audioWarnings.push_back("The previous audio settings are active again.");
+        }
+    }
+    app.levelHold.fill(0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +162,7 @@ void printDevices(const minidaw::DeviceScan& scan)
 
 int printContrastReport(const AppState& app)
 {
-    std::printf("Contrast setting: %s\n", describeContrast(app.contrast).c_str());
+    std::printf("Contrast setting: %s\n", describeContrast(app.config.contrast).c_str());
     std::printf("%-22s %-22s %-8s %-8s %8s  %s\n", "Foreground", "Background", "FG", "BG", "Ratio", "Result");
     for (const auto& pair : minidaw::colorPairs()) {
         const auto& fg = app.palette[pair.foreground];
@@ -123,14 +171,61 @@ int printContrastReport(const AppState& app)
         std::printf("%-22s %-22s %-8s %-8s %7.2f:1  %s\n", std::string(minidaw::roleName(pair.foreground)).c_str(),
                     std::string(minidaw::roleName(pair.background)).c_str(), minidaw::toHex(fg).c_str(),
                     minidaw::toHex(bg).c_str(), r,
-                    minidaw::meetsContrast(r, app.contrast.minimum()) ? "pass" : "FAIL");
+                    minidaw::meetsContrast(r, app.config.contrast.minimum()) ? "pass" : "FAIL");
     }
     return app.unresolved.empty() ? 0 : 1;
+}
+
+// --audio-test: open the configured devices, run, report (T-DEV-02 without a GUI).
+int runAudioTest(AppState& app, int seconds)
+{
+    app.scan = minidaw::scanDevices();
+    const auto& s = app.config.audio;
+    std::printf("Requested: input %s, output %s, %u Hz, %u frames\n", s.inputDevice.c_str(),
+                s.outputDevice.c_str(), s.sampleRate, s.bufferFrames);
+    minidaw::OpenResult r = app.audio.open(s, app.scan);
+    for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
+    if (!r.error.empty()) {
+        std::printf("error: %s\n", r.error.c_str());
+        return 1;
+    }
+    const auto& info = app.audio.info();
+    std::printf("Running:   %s, %u Hz, %u frames, reported latency %.1f ms\n", info.api.c_str(), info.sampleRate,
+                info.bufferFrames, info.reportedLatencyMs);
+    std::printf("  input:  %s (%u ch)\n", info.inputName.empty() ? "(none)" : info.inputName.c_str(),
+                info.inputChannels);
+    std::printf("  output: %s (%u ch)\n", info.outputName.empty() ? "(none)" : info.outputName.c_str(),
+                info.outputChannels);
+
+    std::array<float, minidaw::kMaxInputChannels> peak{};
+    for (int t = 0; t < seconds * 10; ++t) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
+            peak[ch] = std::max(peak[ch], app.audio.takeInputPeak(ch));
+        }
+    }
+    const std::uint64_t callbacks = app.audio.callbacks();
+    const double expected = info.bufferFrames ? double(seconds) * info.sampleRate / info.bufferFrames : 0.0;
+    for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
+        std::printf("%s in %2u: %-10s", ch % 4 == 0 ? "  peak" : "", ch + 1, minidaw::formatDbfs(peak[ch]).c_str());
+        if (ch % 4 == 3 || ch + 1 == info.inputChannels) std::printf("\n");
+    }
+    std::printf("Callbacks: %llu (expected about %.0f), xruns: %llu\n", static_cast<unsigned long long>(callbacks),
+                expected, static_cast<unsigned long long>(app.audio.xruns()));
+    for (const auto& m : app.audio.takeDriverMessages()) std::printf("driver: %s\n", m.c_str());
+    app.audio.close();
+    return callbacks > 0 ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
 // GUI panels
 // ---------------------------------------------------------------------------
+void openAudioSettings(AppState& app)
+{
+    app.pendingAudio = app.config.audio;
+    app.showAudioSettings = true;
+}
+
 void drawMenuBar(AppState& app, bool& quit)
 {
     if (!ImGui::BeginMenuBar()) return;
@@ -138,9 +233,13 @@ void drawMenuBar(AppState& app, bool& quit)
         if (ImGui::MenuItem("Quit", "Alt+F4")) quit = true;
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Audio devices...")) openAudioSettings(app);
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("View")) {
         if (ImGui::BeginMenu("Contrast")) {
-            const auto p = app.contrast.preset;
+            const auto p = app.config.contrast.preset;
             if (ImGui::MenuItem("AA  (4.5:1)", nullptr, p == ContrastPreset::AA))
                 setContrast(app, {ContrastPreset::AA}, true);
             if (ImGui::MenuItem("AAA (7:1)", nullptr, p == ContrastPreset::AAA))
@@ -148,13 +247,20 @@ void drawMenuBar(AppState& app, bool& quit)
             if (ImGui::MenuItem("Max (21:1, black on white)", nullptr, p == ContrastPreset::Max))
                 setContrast(app, {ContrastPreset::Max}, true);
             if (ImGui::MenuItem("Custom...", nullptr, p == ContrastPreset::Custom)) {
-                app.customInput = app.contrast.minimum();
+                app.customInput = app.config.contrast.minimum();
                 app.customError.clear();
                 app.showCustomContrast = true;
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Raise contrast", "Ctrl+Shift+Up")) stepContrast(app, +1);
             if (ImGui::MenuItem("Lower contrast", "Ctrl+Shift+Down")) stepContrast(app, -1);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Text size")) {
+            ImGui::Text("Current: %d px", static_cast<int>(app.config.fontSize));
+            if (ImGui::MenuItem("Larger", "Ctrl+=")) setFontSize(app, app.config.fontSize + 2, true);
+            if (ImGui::MenuItem("Smaller", "Ctrl+-")) setFontSize(app, app.config.fontSize - 2, true);
+            if (ImGui::MenuItem("Default (16 px)", "Ctrl+0")) setFontSize(app, minidaw::kDefaultFontSize, true);
             ImGui::EndMenu();
         }
         ImGui::MenuItem("Contrast report", nullptr, &app.showContrastReport);
@@ -166,11 +272,11 @@ void drawMenuBar(AppState& app, bool& quit)
 void drawCustomContrastWindow(AppState& app)
 {
     if (!app.showCustomContrast) return;
-    ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(30 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
     if (ImGui::Begin("Custom contrast", &app.showCustomContrast, ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextWrapped("Minimum contrast ratio for every colour pair, from 4.5 (WCAG AA) to 21 "
                            "(pure black on white).");
-        ImGui::SetNextItemWidth(160);
+        ImGui::SetNextItemWidth(12 * ImGui::GetFontSize());
         ImGui::InputDouble("ratio : 1", &app.customInput, 0.5, 1.0, "%.2f");
         if (ImGui::Button("Apply")) {
             app.customError = minidaw::validateCustomContrast(app.customInput);
@@ -191,10 +297,10 @@ void drawCustomContrastWindow(AppState& app)
 void drawContrastReportWindow(AppState& app)
 {
     if (!app.showContrastReport) return;
-    ImGui::SetNextWindowSize(ImVec2(900, 480), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(60 * ImGui::GetFontSize(), 30 * ImGui::GetFontSize()), ImGuiCond_Appearing);
     if (ImGui::Begin("Contrast report", &app.showContrastReport)) {
         const auto lowest = minidaw::lowestContrast(app.palette);
-        ImGui::Text("Setting: %s", describeContrast(app.contrast).c_str());
+        ImGui::Text("Setting: %s", describeContrast(app.config.contrast).c_str());
         ImGui::Text("Lowest pair: %.2f:1 (%s on %s)", lowest.ratio,
                     std::string(minidaw::roleName(lowest.pair.foreground)).c_str(),
                     std::string(minidaw::roleName(lowest.pair.background)).c_str());
@@ -219,12 +325,114 @@ void drawContrastReportWindow(AppState& app)
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(minidaw::toHex(bg).c_str());
                 ImGui::TableNextColumn(); ImGui::Text("%.2f:1", r);
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(minidaw::meetsContrast(r, app.contrast.minimum()) ? "pass" : "FAIL");
+                ImGui::TextUnformatted(minidaw::meetsContrast(r, app.config.contrast.minimum()) ? "pass" : "FAIL");
             }
             ImGui::EndTable();
         }
     }
     ImGui::End();
+}
+
+// Combo box listing (default), (none) and every device usable in `dir`.
+void deviceCombo(const char* label, std::string& value, const minidaw::DeviceScan& scan, minidaw::Direction dir)
+{
+    const bool input = dir == minidaw::Direction::Input;
+    std::string preview = value;
+    if (value != minidaw::kDefaultDevice && value != minidaw::kNoDevice) {
+        const bool present = std::any_of(scan.audioDevices.begin(), scan.audioDevices.end(), [&](const auto& d) {
+            return d.name == value && (input ? d.inputChannels : d.outputChannels) > 0;
+        });
+        if (!present) preview += "  (not found)";
+    }
+    if (ImGui::BeginCombo(label, preview.c_str())) {
+        if (ImGui::Selectable(minidaw::kDefaultDevice, value == minidaw::kDefaultDevice)) value = minidaw::kDefaultDevice;
+        if (ImGui::Selectable(minidaw::kNoDevice, value == minidaw::kNoDevice)) value = minidaw::kNoDevice;
+        for (const auto& d : scan.audioDevices) {
+            const unsigned int ch = input ? d.inputChannels : d.outputChannels;
+            if (ch == 0) continue;
+            ImGui::PushID(static_cast<int>(d.id));
+            const std::string text = d.name + "  (" + std::to_string(ch) + " ch)";
+            if (ImGui::Selectable(text.c_str(), value == d.name)) value = d.name;
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+}
+
+template <std::size_t N>
+void numberCombo(const char* label, unsigned int& value, const unsigned int (&choices)[N], const char* unit)
+{
+    const std::string current = std::to_string(value) + " " + unit;
+    if (ImGui::BeginCombo(label, current.c_str())) {
+        for (unsigned int c : choices) {
+            const std::string text = std::to_string(c) + " " + unit;
+            if (ImGui::Selectable(text.c_str(), value == c)) value = c;
+        }
+        ImGui::EndCombo();
+    }
+}
+
+void drawAudioSettingsWindow(AppState& app)
+{
+    if (!app.showAudioSettings) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(40 * em, 0), ImGuiCond_Appearing);
+    if (ImGui::Begin("Audio devices", &app.showAudioSettings, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::Text("Audio API: %s", app.scan.audioApi.c_str());
+        ImGui::SetNextItemWidth(26 * em);
+        deviceCombo("Input device", app.pendingAudio.inputDevice, app.scan, minidaw::Direction::Input);
+        ImGui::SetNextItemWidth(26 * em);
+        deviceCombo("Output device", app.pendingAudio.outputDevice, app.scan, minidaw::Direction::Output);
+        ImGui::SetNextItemWidth(12 * em);
+        numberCombo("Sample rate", app.pendingAudio.sampleRate, minidaw::kSampleRateChoices, "Hz");
+        ImGui::SetNextItemWidth(12 * em);
+        numberCombo("Buffer size", app.pendingAudio.bufferFrames, minidaw::kBufferSizeChoices, "frames");
+        if (app.pendingAudio.sampleRate > 0) {
+            ImGui::Text("One buffer = %.1f ms", 1000.0 * app.pendingAudio.bufferFrames / app.pendingAudio.sampleRate);
+        }
+        if (ImGui::Button("Apply")) applyAudioSettings(app, app.pendingAudio, true);
+        ImGui::SameLine();
+        if (ImGui::Button("Rescan devices")) app.scan = minidaw::scanDevices();
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showAudioSettings = false;
+        if (!app.audioError.empty()) ImGui::TextWrapped("Error: %s", app.audioError.c_str());
+        for (const auto& w : app.audioWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
+    }
+    ImGui::End();
+}
+
+void drawAudioStatus(AppState& app)
+{
+    ImGui::SeparatorText("Audio stream");
+    if (ImGui::Button("Audio settings...")) openAudioSettings(app);
+    const auto& info = app.audio.info();
+    if (!info.running) {
+        ImGui::TextWrapped("Stopped. %s", app.audioError.c_str());
+    } else {
+        ImGui::Text("Running: %s, %u Hz, %u frames (%.1f ms per buffer), reported latency %.1f ms", info.api.c_str(),
+                    info.sampleRate, info.bufferFrames, 1000.0 * info.bufferFrames / info.sampleRate,
+                    info.reportedLatencyMs);
+        ImGui::Text("Input:  %s (%u ch)", info.inputName.empty() ? "(none)" : info.inputName.c_str(),
+                    info.inputChannels);
+        ImGui::Text("Output: %s (%u ch)", info.outputName.empty() ? "(none)" : info.outputName.c_str(),
+                    info.outputChannels);
+        ImGui::Text("Dropouts (xruns): %llu", static_cast<unsigned long long>(app.audio.xruns()));
+
+        // Input levels as numbers (SPEC-UI-07: not colour alone). Peak held for 0.3 s.
+        const double now = ImGui::GetTime();
+        const bool refresh = now - app.levelHoldStart > 0.3;
+        for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
+            const float p = app.audio.takeInputPeak(ch);
+            app.levelHold[ch] = refresh ? p : std::max(app.levelHold[ch], p);
+        }
+        if (refresh) app.levelHoldStart = now;
+        for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
+            if (ch % 4 != 0) ImGui::SameLine(static_cast<float>(ch % 4) * 12 * ImGui::GetFontSize());
+            ImGui::Text("In %u: %s", ch + 1, minidaw::formatDbfs(app.levelHold[ch]).c_str());
+        }
+    }
+    for (const auto& w : app.audioWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
+    for (const auto& m : app.audio.takeDriverMessages()) app.audioWarnings.push_back(m);
 }
 
 void drawDevicesPanel(minidaw::DeviceScan& scan)
@@ -274,8 +482,8 @@ void drawStatusLine(const AppState& app)
 {
     ImGui::Separator();
     const auto lowest = minidaw::lowestContrast(app.palette);
-    ImGui::Text("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change.",
-                describeContrast(app.contrast).c_str(), lowest.ratio);
+    ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change. Text: %d px (Ctrl+= / Ctrl+-).",
+                describeContrast(app.config.contrast).c_str(), lowest.ratio, static_cast<int>(app.config.fontSize));
     ImGui::Text("Config: %s", app.configPath.string().c_str());
     ImGui::Text("Graphics: %s", app.rendererName.c_str());
     for (const auto& w : app.configWarnings) ImGui::TextWrapped("Config warning: %s", w.c_str());
@@ -310,6 +518,7 @@ int runGui(AppState& app)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;  // window layout is not saved
+    ImGui::GetIO().Fonts->AddFontDefaultVector();  // scalable, so the text size can change
 
     std::string error;
     if (!minidaw::app::rendererInit(window, error)) {
@@ -321,14 +530,16 @@ int runGui(AppState& app)
     }
     app.rendererName = minidaw::app::rendererName();
 
-    setContrast(app, app.contrast, false);
+    setContrast(app, app.config.contrast, false);
+    setFontSize(app, app.config.fontSize, false);
     app.scan = minidaw::scanDevices();
+    applyAudioSettings(app, app.config.audio, false);
 
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {
         glfwPollEvents();
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
-            glfwWaitEvents();  // minimised: don't render
+            glfwWaitEventsTimeout(0.1);  // minimised: don't render
             continue;
         }
         minidaw::app::rendererNewFrame(window);
@@ -336,6 +547,13 @@ int runGui(AppState& app)
 
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_UpArrow)) stepContrast(app, +1);
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_DownArrow)) stepContrast(app, -1);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal) ||
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd))
+            setFontSize(app, app.config.fontSize + 2, true);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) ||
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
+            setFontSize(app, app.config.fontSize - 2, true);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) setFontSize(app, minidaw::kDefaultFontSize, true);
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -344,14 +562,16 @@ int runGui(AppState& app)
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoBringToFrontOnFocus);
         drawMenuBar(app, quit);
-        const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 4.5f;
+        const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 5.5f;
         if (ImGui::BeginChild("content", ImVec2(0, -statusHeight))) {
+            drawAudioStatus(app);
             drawDevicesPanel(app.scan);
         }
         ImGui::EndChild();
         drawStatusLine(app);
         ImGui::End();
 
+        drawAudioSettingsWindow(app);
         drawCustomContrastWindow(app);
         drawContrastReportWindow(app);
 
@@ -361,6 +581,7 @@ int runGui(AppState& app)
         minidaw::app::rendererRender(window, clear);
     }
 
+    app.audio.close();
     minidaw::app::rendererShutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
@@ -370,7 +591,9 @@ int runGui(AppState& app)
 
 void printUsage(const char* argv0)
 {
-    std::printf("usage: %s [--config <file>] [--list-devices | --contrast-report | --version | --help]\n", argv0);
+    std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> | --contrast-report |\n"
+                "        --version | --help]\n",
+                argv0);
 }
 
 } // namespace
@@ -379,7 +602,8 @@ int main(int argc, char** argv)
 {
     AppState app;
     app.configPath = minidaw::defaultConfigPath();
-    enum class Action { Gui, ListDevices, ContrastReport } action = Action::Gui;
+    enum class Action { Gui, ListDevices, AudioTest, ContrastReport } action = Action::Gui;
+    int audioTestSeconds = 3;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -395,6 +619,9 @@ int main(int argc, char** argv)
             action = Action::ListDevices;
         } else if (std::strcmp(arg, "--contrast-report") == 0) {
             action = Action::ContrastReport;
+        } else if (std::strcmp(arg, "--audio-test") == 0 && i + 1 < argc) {
+            action = Action::AudioTest;
+            audioTestSeconds = std::clamp(std::atoi(argv[++i]), 1, 600);
         } else if (std::strcmp(arg, "--config") == 0 && i + 1 < argc) {
             app.configPath = argv[++i];
         } else {
@@ -404,7 +631,7 @@ int main(int argc, char** argv)
     }
 
     auto loaded = minidaw::loadConfigFile(app.configPath);
-    app.contrast = loaded.config.contrast;
+    app.config = loaded.config;
     app.configWarnings = loaded.warnings;
     for (const auto& w : app.configWarnings) std::fprintf(stderr, "config warning: %s\n", w.c_str());
 
@@ -412,8 +639,10 @@ int main(int argc, char** argv)
     case Action::ListDevices:
         printDevices(minidaw::scanDevices());
         return 0;
+    case Action::AudioTest:
+        return runAudioTest(app, audioTestSeconds);
     case Action::ContrastReport: {
-        auto result = buildPalette(app.contrast);
+        auto result = buildPalette(app.config.contrast);
         app.palette = result.palette;
         app.unresolved = result.unresolved;
         return printContrastReport(app);

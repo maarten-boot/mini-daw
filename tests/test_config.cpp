@@ -104,7 +104,9 @@ TEST_CASE("T-UI-03/04: an interactive change is saved and read back", "[config][
 
     SECTION("new file is created with the default comments")
     {
-        REQUIRE(saveContrastSetting(file, {ContrastPreset::AAA}).empty());
+        AppConfig cfg;
+        cfg.contrast = {ContrastPreset::AAA};
+        REQUIRE(saveConfigFile(file, cfg).empty());
         const std::string text = readFile(file);
         CHECK(text.find("; mini-daw configuration") != std::string::npos);
         CHECK(loadConfigFile(file).config.contrast.preset == ContrastPreset::AAA);
@@ -113,9 +115,64 @@ TEST_CASE("T-UI-03/04: an interactive change is saved and read back", "[config][
     {
         fs::create_directories(file.parent_path());
         std::ofstream(file) << "; my own note\n[ui]\nmin_contrast = AA\n";
-        REQUIRE(saveContrastSetting(file, {ContrastPreset::Custom, 12.5}).empty());
+        AppConfig cfg;
+        cfg.contrast = {ContrastPreset::Custom, 12.5};
+        REQUIRE(saveConfigFile(file, cfg).empty());
         const std::string text = readFile(file);
         CHECK(text.find("; my own note") != std::string::npos);
         CHECK(loadConfigFile(file).config.contrast.minimum() == 12.5);
     }
+}
+
+TEST_CASE("T-UI-12: font_size in the config file", "[config][T-UI-12]")
+{
+    CHECK(parseConfig("[ui]\nfont_size = 20\n").config.fontSize == 20.0f);
+    auto low = parseConfig("[ui]\nfont_size = 8\n");
+    CHECK(low.warnings.size() == 1);
+    CHECK(low.config.fontSize == kDefaultFontSize);
+    CHECK(parseConfig("[ui]\nfont_size = big\n").warnings.size() == 1);
+}
+
+TEST_CASE("T-DEV-03: audio settings in the config file", "[config][T-DEV-03]")
+{
+    auto r = parseConfig("[audio]\n"
+                         "input_device = \"Line In (High Definition Audio Device)\"  ; my interface\n"
+                         "output_device = (none)\n"
+                         "sample_rate = 44100\n"
+                         "buffer_size = 128\n");
+    CHECK(r.warnings.empty());
+    CHECK(r.config.audio.inputDevice == "Line In (High Definition Audio Device)");
+    CHECK(r.config.audio.outputDevice == kNoDevice);
+    CHECK(r.config.audio.sampleRate == 44100);
+    CHECK(r.config.audio.bufferFrames == 128);
+}
+
+TEST_CASE("Audio settings: bad values give warnings and defaults", "[config]")
+{
+    auto r = parseConfig("[audio]\nsample_rate = 1000\nbuffer_size = lots\ninput_device = \"unclosed\n");
+    CHECK(r.warnings.size() == 3);
+    CHECK(r.config.audio.sampleRate == kDefaultSampleRate);
+    CHECK(r.config.audio.bufferFrames == kDefaultBufferFrames);
+}
+
+TEST_CASE("Device names with quotes and semicolons survive save and load", "[config][T-DEV-03]")
+{
+    TempDir dir;
+    const fs::path file = dir.path / "config.ini";
+    AppConfig cfg;
+    cfg.fontSize = 22;
+    cfg.audio.inputDevice = "Mic \"Pro\"; USB #2";
+    cfg.audio.outputDevice = kDefaultDevice;
+    cfg.audio.sampleRate = 96000;
+    cfg.audio.bufferFrames = 512;
+    REQUIRE(saveConfigFile(file, cfg).empty());
+    auto r = loadConfigFile(file);
+    CHECK(r.warnings.empty());
+    CHECK(r.config.fontSize == 22.0f);
+    CHECK(r.config.audio == cfg.audio);
+}
+
+TEST_CASE("quoteConfigString escapes quotes and backslashes", "[config]")
+{
+    CHECK(quoteConfigString("a\"b\\c") == "\"a\\\"b\\\\c\"");
 }

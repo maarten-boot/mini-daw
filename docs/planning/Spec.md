@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.7 (2026-11-01, P3 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.8 (2026-11-01, P4 implemented). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -23,6 +23,10 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-DEV-01** List the available audio input/output devices and MIDI input and output ports.
 - **SPEC-DEV-02** The user selects the audio device, sample rate and buffer size. Default 48 kHz.
 - **SPEC-DEV-03** Device settings are saved and restored on the next start.
+- **SPEC-DEV-02a** Implementation: Settings → Audio devices… chooses input device, output device (each also `(default)` or `(none)`), sample rate (44.1/48/88.2/96 kHz) and buffer size (64–2048 frames). Apply reopens the stream; on failure the previous settings are reopened and the error is shown. All input channels of the input device are opened (up to 32) and stereo output. The window shows the actual rate, buffer size, reported latency, dropouts and a peak level per input channel as text (dBFS).
+- **SPEC-DEV-03a** Devices are stored **by name** in `[audio]` of `config.ini` (RtAudio ids are not stable between runs). A saved device that is missing falls back to the system default with a visible note; the saved choice is kept, so it is used again when the device returns.
+- **SPEC-DEV-05** A stream only counts as running after the first audio callback has arrived (within 1 s). Otherwise the driver's message is shown as an error.
+- **SPEC-DEV-06** `mini-daw --audio-test <seconds>` opens the configured devices without the GUI and prints the actual settings, peak levels, callback count and dropouts.
 
 ### 3.2 Tracks and recording
 - **SPEC-REC-01** The project has several tracks. Each track is an audio track (fed by one or two audio input channels) or a MIDI track (fed by one MIDI input port and channel, or all channels).
@@ -63,6 +67,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-UI-03a** Implementation of UI-03: menu View → Contrast (AA, AAA, Max, Custom…, Raise, Lower) and the shortcuts Ctrl+Shift+Up / Ctrl+Shift+Down, which step through AA → AAA → Max. An interactive change is saved to the config file immediately.
 - **SPEC-UI-04a** Implementation of UI-04: INI file, key `min_contrast` in section `[ui]`, value `AA`, `AAA`, `Max` or a number from 4.5 to 21. Default location: Windows `%APPDATA%\mini-daw\config.ini`, Linux `~/.config/mini-daw/config.ini`, macOS `~/Library/Application Support/mini-daw/config.ini`; `--config <file>` overrides it. Saving keeps the user's own comments and other lines. An invalid value gives a visible warning and falls back to AA.
 - **SPEC-UI-02a** Contrast is checked on a fixed list of foreground/background pairs between colour roles (`colorPairs()`). Every ImGui colour slot maps to a role, so no toolkit default escapes the check. Borders, separators, check marks and scrollbar thumbs are held to the same minimum as text (stricter than WCAG's 3:1 for non-text). `View → Contrast report` and `mini-daw --contrast-report` list every pair with its ratio.
+- **SPEC-UI-08** Text size is adjustable from 12 to 32 px (default 16 px): View → Text size, Ctrl+= / Ctrl+- / Ctrl+0, and `font_size` in `[ui]` of `config.ini`. Uses ImGui's built-in scalable font.
 - **SPEC-UI-07** Level meters and other status shown by colour also show it another way, such as a text value or pattern.
 
 ## 5. Non-functional requirements
@@ -89,7 +94,8 @@ A small desktop program that records MIDI and audio input on several tracks at o
 ## 8. Known limitations
 - **Max (21:1):** every background becomes white, so hovered, pressed and selected states can no longer be told apart by colour; only borders and the focus cursor remain. To be solved together with SPEC-UI-07 (state shown another way than colour).
 - **Windows 10 N editions** have no `MFPlat.dll` (used by RtAudio's WASAPI code) unless the Media Feature Pack is installed. The program then does not start.
-- The default ImGui font is small (13 px) and there is no font-size setting yet.
+- **WASAPI exclusive mode:** RtAudio 6.0.1 opens WASAPI in shared mode only. Shared mode converts sample rates automatically (Line In 44.1 kHz + Speakers 48 kHz works), but SPEC-NF-02 (≈20 ms round trip in exclusive mode) cannot be reached this way. Options: measure shared-mode latency first (T-NF-02); then either extend RtAudio, write an own WASAPI exclusive backend, or rely on ASIO (P11b).
+- **WASAPI under Wine:** RtAudio's WASAPI client fails to start under Wine 10 in this VM ("Unable to initialize capture/render audio client"); the error is now reported (SPEC-DEV-05). Only real Windows tests count for audio.
 
 ## 8b. Observations from the first Windows runs (2026-11-01)
 - The first GUI start failed on the user's Windows 10 machine: `GLFW error 65542: WGL: The driver does not appear to support OpenGL` (no OpenGL driver, probably a VM). Fixed by switching Windows to Direct3D 11 with WARP fallback (SPEC-TECH-05).
@@ -99,6 +105,5 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - When should ASIO support come? Its licence is settled in SPEC-LIC-03.
 - Should the whole project be exportable as one stereo mix? (Not answered yet.)
 - GitHub: no remote until the user has reviewed a first draft (user, 2026-11-01). Account/organisation still to decide.
-- Should there be a font-size / UI-scale setting (accessibility)?
 - Should the WASAPI build avoid `MFPlat.dll` so it also starts on Windows 10 N without the Media Feature Pack?
 - Metronome/click track: not for now (user, 2026-11-01).

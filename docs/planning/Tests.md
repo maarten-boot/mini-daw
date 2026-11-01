@@ -22,7 +22,9 @@ Status column in the Results section at the end.
 | T-DEV-01 | SPEC-DEV-01 | M | Open device settings with a USB audio interface and a MIDI keyboard connected | Both appear in the lists |
 | T-DEV-02 | SPEC-DEV-02 | M | Select 44.1 kHz and a 128-sample buffer | Stream runs at those settings |
 | T-DEV-03 | SPEC-DEV-03 | M | Restart the app | The previous device and settings are restored |
-| T-DEV-04 | SPEC-DEV-03 | M | Restart after the saved device has been unplugged | Clear message; falls back to the default device; no crash |
+| T-DEV-04 | SPEC-DEV-03 | A+M | Restart after the saved device has been unplugged | Clear message; falls back to the default device; no crash; saved choice kept |
+| T-DEV-06 | SPEC-DEV-05 | M | Start with a driver that fails on its own thread (e.g. WASAPI under Wine) | Error with the driver's message; not shown as running |
+| T-DEV-07 | SPEC-DEV-06 | M | `mini-daw --audio-test 5` on Windows 10 with Line In + Speakers at 48 kHz | Runs; callbacks ≈ expected; 0 dropouts; peak levels change when a signal is applied |
 
 ## Recording
 | ID | Spec | Type | Description | Expected result |
@@ -69,6 +71,11 @@ Status column in the Results section at the end.
 |----|------|------|-------------|-----------------|
 | T-PRJ-01 | SPEC-PRJ-01/02 | A | Save a project with 3 tracks, reopen it | Tracks, takes and settings identical |
 | T-PRJ-02 | SPEC-PRJ-02 | A | Open a project with a missing take file | Clear message; the rest loads |
+
+## Text size
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-UI-12 | SPEC-UI-08 | A+M | `font_size = 20` in config; Ctrl+= / Ctrl+- / Ctrl+0 | Text 20 px; changes by 2 px, limited to 12–32; saved; bad values give a warning |
 
 ## Licensing
 | ID | Spec | Type | Description | Expected result |
@@ -117,3 +124,10 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 29 tests, 227 assertions pass |
 | 2026-11-01 | T-UI-01 | **Windows 10, real machine** (user) | pass | "looks good now" after the switch to Direct3D 11 |
 | 2026-11-01 | T-UI-10 | **Windows 10, real machine** (user) | pass | GUI opens on the machine without OpenGL. Which D3D path (hardware/WARP) not yet reported |
+| 2026-11-01 | T-DEV-02 | Linux VM (ALSA→PulseAudio) | pass | `--audio-test 2`: 48 kHz, 256 frames, 377 callbacks (≈375 expected), 0 dropouts |
+| 2026-11-01 | T-DEV-03 | Linux (unit tests + Xvfb) | pass | Settings saved by name, incl. quotes/semicolons; reloaded identically |
+| 2026-11-01 | T-DEV-04 | Linux (unit test + Xvfb) | pass | "Gone Device" → note, PulseAudio used, saved choice kept |
+| 2026-11-01 | T-DEV-06 | Wine 10 | pass | WASAPI fails under Wine; now reported as error with driver text (before the fix it was shown as running) |
+| 2026-11-01 | T-DEV-07 | — | not run | Needs the user's Windows machine |
+| 2026-11-01 | T-UI-12 | Linux (unit tests + Xvfb + xdotool) | pass | 20 px from config; Ctrl+= → 22 px, saved |
+| 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 42 tests, 264 assertions |

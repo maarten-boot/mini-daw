@@ -3,6 +3,7 @@ configure_file(core/include/minidaw/version.hpp.in
 
 # Core library: everything that is not GUI. Tests link against this.
 add_library(minidaw_core STATIC
+    core/src/audio_stream.cpp
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
