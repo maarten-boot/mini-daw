@@ -141,3 +141,10 @@
 
 - Run 41337403277: linux ✓ (1m25s), licence ✓, windows ✗ at Configure: `Generator Visual Studio 17 2022 could not find any instance of Visual Studio` on the `windows-2025` runner image.
 - Fix: no explicit generator in the workflow (CMake chooses the installed Visual Studio); README says "Visual Studio 2022 or newer". Needs a push by the user (Claude's token has no write access).
+
+## 22. CI green
+> pushed it, check the CI run again
+
+- Run 41337681818: all jobs pass. Windows used Visual Studio 18 2026 (MSVC 19.51): 43/43 tests, only the two expected C4996 `getenv` warnings (crosscheck G1 resolved). Artifact `mini-daw-windows-x64` uploaded.
+- Smoke run on the runner (no audio hardware) showed `RtApiWasapi::probeDevices: No devices found.` on the console, even before `--version`. Cause: RtAudio searches for devices in its constructor, before an error callback is attached. Fix: shared `console_capture.hpp` helper (used for RtMidi and RtAudio), RtAudio created only when a stream is opened, "no devices" notices dropped. `getenv` replaced by `_dupenv_s` / `GetEnvironmentVariableA` on Windows.
+- Needs a push by the user.

@@ -1,5 +1,7 @@
 #include "minidaw/audio_stream.hpp"
 
+#include "console_capture.hpp"
+
 #include <RtAudio.h>
 
 #include <algorithm>
@@ -82,15 +84,9 @@ std::string formatDbfs(float peak)
 // ---------------------------------------------------------------------------
 // AudioStream
 // ---------------------------------------------------------------------------
-AudioStream::AudioStream()
-{
-    rtaudio_ = std::make_unique<RtAudio>(RtAudio::UNSPECIFIED, [this](RtAudioErrorType type, const std::string& text) {
-        if (type == RTAUDIO_NO_ERROR) return;
-        std::lock_guard<std::mutex> lock(messagesMutex_);
-        messages_.push_back(text);
-    });
-    rtaudio_->showWarnings(false);  // warnings go to the callback above, not to the console
-}
+// RtAudio is created on first use (open), so `mini-daw --version` and other
+// commands that never open a stream do not search for audio devices.
+AudioStream::AudioStream() = default;
 
 AudioStream::~AudioStream()
 {
@@ -99,7 +95,7 @@ AudioStream::~AudioStream()
 
 void AudioStream::close()
 {
-    if (rtaudio_->isStreamOpen()) {
+    if (rtaudio_ && rtaudio_->isStreamOpen()) {
         if (rtaudio_->isStreamRunning()) rtaudio_->stopStream();
         rtaudio_->closeStream();
     }
@@ -112,6 +108,17 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
 {
     close();
     OpenResult result;
+
+    if (!rtaudio_) {
+        detail::ConsoleCapture capture;  // the constructor may print before the callback is attached
+        rtaudio_ = std::make_unique<RtAudio>(RtAudio::UNSPECIFIED, [this](RtAudioErrorType type, const std::string& text) {
+            if (type == RTAUDIO_NO_ERROR) return;
+            std::lock_guard<std::mutex> lock(messagesMutex_);
+            messages_.push_back(text);
+        });
+        rtaudio_->showWarnings(false);  // warnings go to the callback above, not to the console
+        detail::appendCaptured(capture, "", result.warnings);
+    }
 
     const ResolvedDevice in = resolveAudioDevice(scan.audioDevices, settings.inputDevice, Direction::Input);
     const ResolvedDevice out = resolveAudioDevice(scan.audioDevices, settings.outputDevice, Direction::Output);

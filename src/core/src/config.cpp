@@ -98,8 +98,17 @@ std::string sectionName(std::string_view line)
 
 std::string getEnv(const char* name)
 {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) return {};
+    std::string out(value);
+    std::free(value);
+    return out;
+#else
     const char* v = std::getenv(name);
     return v ? std::string(v) : std::string();
+#endif
 }
 
 } // namespace

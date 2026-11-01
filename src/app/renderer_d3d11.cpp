@@ -14,7 +14,6 @@
 #include <windows.h>
 
 #include <cstdio>
-#include <cstdlib>
 
 namespace minidaw::app {
 namespace {
@@ -84,9 +83,10 @@ bool rendererInit(GLFWwindow* window, std::string& error)
     HWND hwnd = glfwGetWin32Window(window);
 
     // MINIDAW_D3D_WARP=1 skips the GPU and goes straight to WARP (for testing).
-    const char* forceWarp = std::getenv("MINIDAW_D3D_WARP");
+    char forceWarp[4] = {};
+    GetEnvironmentVariableA("MINIDAW_D3D_WARP", forceWarp, sizeof forceWarp);
     HRESULT hr = E_FAIL;
-    if (!(forceWarp && forceWarp[0] == '1')) {
+    if (forceWarp[0] != '1') {
         hr = createDevice(hwnd, D3D_DRIVER_TYPE_HARDWARE);
         g_name = "Direct3D 11 (hardware)";
     }

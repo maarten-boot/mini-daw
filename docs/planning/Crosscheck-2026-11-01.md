@@ -50,7 +50,7 @@ Scope: Spec v0.8, Plan, Tests, code at commit `747687c`.
 ## Findings
 | # | Finding | Action |
 |---|---------|--------|
-| G1 | The Windows build has only been compiled with MinGW. The Visual Studio (MSVC) build used by GitHub CI has never run; `std::getenv` will give MSVC warnings (C4996), and other MSVC-only problems are possible | First push to GitHub runs CI; fix whatever it reports |
+| G1 | **Resolved 2026-11-01:** MSVC build passes in CI (run 41337681818); the two C4996 warnings were fixed. Original note: The Windows build has only been compiled with MinGW. The Visual Studio (MSVC) build used by GitHub CI has never run; `std::getenv` will give MSVC warnings (C4996), and other MSVC-only problems are possible | First push to GitHub runs CI; fix whatever it reports |
 | G2 | `scanDevices()` temporarily redirects `std::cerr` (to capture RtMidi messages). Harmless today (only the GUI thread writes to `std::cerr`), but not thread-safe in general | Noted in the code; revisit if other threads start logging |
 | G3 | PulseAudio on Linux reports 32 input channels, so 32 level lines appear. Not a Windows issue | Revisit with the meters in P7 (e.g. only armed inputs) |
 | G4 | Plan still lists P9b, P11b, P12 correctly; nothing outdated | — |
