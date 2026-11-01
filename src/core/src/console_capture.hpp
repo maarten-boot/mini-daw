@@ -17,9 +17,16 @@
 
 namespace minidaw::detail {
 
+// ALSA (Linux) prints its own errors straight to stderr, e.g. "cannot find
+// card '0'" on a machine without a sound card. Those bypass std::cerr, so
+// install a silent ALSA error handler instead. The failures still reach us
+// through RtAudio/RtMidi return values. Does nothing on other systems; safe
+// to call more than once.
+void silenceAlsaMessages();
+
 class ConsoleCapture {
 public:
-    ConsoleCapture() : old_(std::cerr.rdbuf(buffer_.rdbuf())) {}
+    ConsoleCapture() : old_(std::cerr.rdbuf(buffer_.rdbuf())) { silenceAlsaMessages(); }
     ~ConsoleCapture() { std::cerr.rdbuf(old_); }
     ConsoleCapture(const ConsoleCapture&) = delete;
     ConsoleCapture& operator=(const ConsoleCapture&) = delete;

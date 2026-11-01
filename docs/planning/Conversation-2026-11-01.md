@@ -159,3 +159,7 @@
 - Output-only run on the Windows VM passed (0 xruns). The callback count looked 11% high; `--audio-test` now counts from a fixed start and uses the real elapsed time.
 - User asked for a Linux test build as well. Not too early: CI already builds and tests Linux. Added a smoke run and a `mini-daw-linux-x64` download to the linux CI job; local copy in `dist/linux/` (needs glibc 2.43; the CI build from Ubuntu 24.04 is more portable). Spec CI-02 and T-CI-02 updated.
 - CI run 41351279135 green, with both downloads. On the Linux runner ALSA prints "cannot find card" lines straight to stderr (no sound card there); can be silenced with `snd_lib_error_set_handler` if wanted.
+
+## 25. ALSA messages silenced; P5 started
+- User: "yes silence the ALSA messages, then start P5".
+- `detail::silenceAlsaMessages()` (new `alsa_quiet.cpp`) installs a no-op ALSA error handler once; called from `ConsoleCapture`, which runs before every RtAudio/RtMidi use. Verified with a broken ALSA config: 8 lines before, 0 after.
