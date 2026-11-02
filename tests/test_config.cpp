@@ -132,6 +132,31 @@ TEST_CASE("T-REC-22: recording folder and MIDI timing in the config", "[config][
     CHECK(back.config.recording.midiTiming == MidiTiming::Smpte);
 }
 
+TEST_CASE("T-REC-22: hand-written Windows folder paths", "[config][T-REC-22]")
+{
+    auto folder = [](const std::string& line) {
+        auto r = parseConfig("[recording]\n" + line + "\n");
+        CHECK(r.warnings.empty());
+        return r.config.recording.folder;
+    };
+    CHECK(folder("folder = \"D:\\Takes\\\"") == "D:\\Takes\\");             // trailing backslash in quotes
+    CHECK(folder("folder = \"D:\\Takes\\\"  ; my takes") == "D:\\Takes\\");  // ... with a comment after
+    CHECK(folder("folder = \\\\server\\takes") == "\\\\server\\takes");      // network path without quotes
+    CHECK(folder("folder = \"\\\\\\\\server\\takes\"") == "\\\\server\\takes");  // in quotes, two backslashes stand for one
+    CHECK(folder("folder = D:\\My Takes ; comment") == "D:\\My Takes");
+
+    // Saved by mini-daw and read back: a trailing backslash and a quote survive.
+    TempDir dir;
+    for (const std::string value : {"D:\\Takes\\", "E:\\a \"b\"\\", "\\\\server\\x"}) {
+        AppConfig cfg;
+        cfg.recording.folder = value;
+        REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
+        const auto back = loadConfigFile(dir.path / "c.ini");
+        CHECK(back.warnings.empty());
+        CHECK(back.config.recording.folder == value);
+    }
+}
+
 TEST_CASE("setConfigValue keeps comments and other lines", "[config]")
 {
     const std::string before = "; my notes\n[ui]\n; keep me\nmin_contrast = AA\n\n[other]\nx = 1\n";

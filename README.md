@@ -86,6 +86,8 @@ The main window has a track list. *Add audio track* (one input, or two for stere
 
 Audio is 24-bit WAV. MIDI is a Standard MIDI File; by default with 960 ticks per quarter note at a fixed 120 BPM (0.52 ms resolution, opens cleanly in any DAW). For free playing without a tempo you can switch to SMPTE timing (1 ms ticks) in Settings → Recording… or with `midi_timing = smpte` under `[recording]`. Both keep your timing exactly; PPQ only adds a bar grid that does not mean anything for unmetered playing. The track list is not saved yet (projects come later).
 
+In `config.ini`, write a network folder without quotes (`folder = \\server\takes`); inside quotes, `\\` stands for one backslash.
+
 To try recording without the GUI:
 
 ```

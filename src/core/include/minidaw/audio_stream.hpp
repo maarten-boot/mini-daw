@@ -9,6 +9,7 @@
 #include "minidaw/devices.hpp"
 #include "minidaw/frame_clock.hpp"
 #include "minidaw/recorder.hpp"
+#include "minidaw/session_io.hpp"
 
 #include <array>
 #include <atomic>
@@ -66,10 +67,10 @@ struct OpenResult {
     std::vector<std::string> warnings;
 };
 
-class AudioStream {
+class AudioStream : public SessionAudio {
 public:
     AudioStream();
-    ~AudioStream();
+    ~AudioStream() override;
     AudioStream(const AudioStream&) = delete;
     AudioStream& operator=(const AudioStream&) = delete;
 
@@ -89,19 +90,26 @@ public:
     // Warnings reported by the driver while running.
     std::vector<std::string> takeDriverMessages();
 
-    // Recording of the input (SPEC-REC-03/05). Start it while the stream runs;
-    // close() stops a running recording and finishes its files.
-    bool startRecording(const std::vector<TakeSpec>& takes, std::string& error, const RecorderOptions& options = {});
-    RecordingResult stopRecording() { return recorder_.stop(); }
-    const Recorder& recorder() const { return recorder_; }
+    // Recording of the input (SPEC-REC-03/05). Start it while the stream runs.
+    // close() stops a running recording and finishes its files; the next
+    // stopRecording() then returns that result (crosscheck #4, J8).
+    bool startRecording(const std::vector<TakeSpec>& takes, std::string& error,
+                        const RecorderOptions& options = {}) override;
+    RecordingResult stopRecording() override;
+    const Recorder& recorder() const override { return recorder_; }
+
+    // SessionAudio
+    bool streamRunning() const override { return info_.running; }
+    unsigned int streamSampleRate() const override { return info_.sampleRate; }
+    unsigned int streamInputChannels() const override { return info_.inputChannels; }
 
     // Audio timeline (SPEC-REC-04a): the stream frame that corresponds to a
     // steady-clock time (steadyNowNs()), once the stream runs. Any thread.
-    std::optional<std::uint64_t> frameAtTime(std::int64_t ns) const
+    std::optional<std::uint64_t> frameAtTime(std::int64_t ns) const override
     {
         return clock_.frameAt(ns, clockRate_.load(std::memory_order_acquire));
     }
-    std::optional<std::uint64_t> currentFrame() const { return frameAtTime(steadyNowNs()); }
+    std::optional<std::uint64_t> currentFrame() const override { return frameAtTime(steadyNowNs()); }
 
 private:
     static int audioCallback(void* output, void* input, unsigned int frames, double streamTime,
@@ -110,6 +118,7 @@ private:
     std::unique_ptr<RtAudio> rtaudio_;
     StreamInfo info_;
     Recorder recorder_;
+    std::optional<RecordingResult> closedResult_;  // a recording ended by close()
 
     // Read by the audio thread; only changed while the stream is closed.
     unsigned int cbInputChannels_ = 0;
@@ -125,6 +134,7 @@ private:
     ClockSmoother smoother_;       // audio thread only
     unsigned int cbSampleRate_ = 0;    // read by the audio thread; set before the stream starts
     unsigned int cbBufferFrames_ = 0;
+    unsigned int smootherRate_ = 0;    // audio thread only: rate the smoother was started with
 
     // Driver error messages (not from the audio callback itself).
     std::mutex messagesMutex_;

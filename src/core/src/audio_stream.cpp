@@ -99,7 +99,7 @@ void AudioStream::close()
         if (rtaudio_->isStreamRunning()) rtaudio_->stopStream();
         rtaudio_->closeStream();
     }
-    if (recorder_.recording()) recorder_.stop();  // finishes the files
+    if (recorder_.recording()) closedResult_ = recorder_.stop();  // finishes the files
     clockRate_.store(0, std::memory_order_release);
     info_ = {};
     cbInputChannels_ = 0;
@@ -154,6 +154,7 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     clock_.reset();
     framePos_ = 0;
     smoother_.reset();
+    smootherRate_ = 0;
     cbSampleRate_ = settings.sampleRate;      // corrected below if the device runs at another rate
     cbBufferFrames_ = settings.bufferFrames;
     cbInputChannels_ = in.id ? in.channels : 0;
@@ -234,9 +235,20 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     return result;
 }
 
+RecordingResult AudioStream::stopRecording()
+{
+    if (!recorder_.recording() && closedResult_) {
+        RecordingResult r = std::move(*closedResult_);
+        closedResult_.reset();
+        return r;
+    }
+    return recorder_.stop();
+}
+
 bool AudioStream::startRecording(const std::vector<TakeSpec>& takes, std::string& error,
                                  const RecorderOptions& options)
 {
+    closedResult_.reset();
     if (!info_.running) {
         error = "The audio stream is not running.";
         return false;
@@ -267,9 +279,13 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
     const std::uint64_t blockFrame = self->framePos_;
     self->framePos_ += frames;
     // The block just received ends at framePos_ "now" (SPEC-REC-04a), smoothed.
-    const unsigned int rate = self->clockRate_.load(std::memory_order_relaxed);
-    const std::int64_t at = self->smoother_.update(self->framePos_, now, rate != 0 ? rate : self->cbSampleRate_,
-                                                   self->cbBufferFrames_, status != 0);
+    const unsigned int published = self->clockRate_.load(std::memory_order_relaxed);
+    const unsigned int rate = published != 0 ? published : self->cbSampleRate_;
+    if (rate != self->smootherRate_) {  // the device's actual rate is known now (J12)
+        self->smoother_.reset();
+        self->smootherRate_ = rate;
+    }
+    const std::int64_t at = self->smoother_.update(self->framePos_, now, rate, self->cbBufferFrames_, status != 0);
     self->clock_.publish(self->framePos_, at);
     self->callbacks_.fetch_add(1, std::memory_order_release);  // see the wait in open()
     if (status != 0) {

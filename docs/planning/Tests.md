@@ -53,7 +53,128 @@ Status column in the Results section at the end.
 | T-REC-19 | SPEC-REC-07, 01a | A | Take folder and file names: track names with `/ \ : * ? " < > |`, duplicate folder name in the same second; default tracks for 1 and 2 inputs | Safe names; second folder gets `-2`; one mono or one stereo track |
 | T-REC-20 | SPEC-REC-04c | A | Rewrite a MIDI take while recording, then read it | Valid file with the events so far; no `.tmp` left after stop |
 | T-REC-21 | SPEC-REC-02a | M | GUI: arm 1 audio + 1 MIDI track, Ctrl+R, play, Ctrl+R | Take folder with one WAV and one MID of the same length; elapsed time shown while recording; "armed" visible as text |
-| T-REC-22 | SPEC-REC-07 | A+M | `[recording] folder`, `midi_timing`, `sync_to_disk` in the config; Settings → Recording… | Parsed with warnings for bad values; changes saved |
+| T-REC-22 | SPEC-REC-07 | A+M | `[recording] folder`, `midi_timing`, `sync_to_disk` in the config; Settings → Recording…; hand-written Windows paths (`"D:\Takes\"`, `\\server\takes` without quotes) | Parsed with warnings for bad values; paths kept as typed; changes saved and read back unchanged |
+| T-REC-23 | SPEC-REC-01, 02, 04, 04a, 07 | A | Session with stand-in audio/MIDI: 1 audio + 2 MIDI tracks (all channels; channel 2) on one port, 1 unarmed track; MIDI before the first audio frame, a held note | One WAV (4800 frames) and two MID files named `NN-name`; early message dropped; positions in ticks exact; channel filter; held note ends at the take end; no `.tmp` left |
+| T-REC-24 | SPEC-REC-04a | A | MIDI-only session | Timeline from the stream clock: positions and end of track exact |
+| T-REC-25 | SPEC-REC-01a, 07 | A | Session start failures: nothing armed, MIDI track without port, port not open, stream not running, no audio input, channel that does not exist | Clear message each time; no take folder left behind |
+| T-REC-26 | SPEC-REC-02, 04, 04c, 05b | A | Session robustness: first audio take stops on a disk error; Stop before any audio; MIDI message that cannot be placed; MIDI file rewrite blocked, then free; stream gone before Stop | MIDI keeps the full timeline; "No audio arrived"; counted as lost (live and in the result); "retrying" then cleared; last periodic MIDI file kept |
+| T-REC-27 | SPEC-REC-04b | A | MIDI take builder edge cases: note-off without note-on, a note started twice, empty or reversed range, unsorted input, short message | Kept; two note-offs; nothing; sorted (stable); ignored |
+| T-REC-28 | SPEC-REC-07 | A | Track and folder names with non-ASCII characters ("Gitaar éè ♪", "Opnamen ü") | Files and folders get exactly these names (UTF-8 → path conversion; matters on Windows) |
+| T-REC-29 | SPEC-REC-01a, 02a | M | GUI: arm a MIDI track whose device is unplugged, plug it in; also add tracks while the audio stream is not running, then start it | The port opens within about 2 s (or at Record) without re-arming; the user's tracks stay, no default track is added |
+
+## Monitoring
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-MON-01 | SPEC-MON-01 | M | Monitoring on, then off, on an armed track | Input is heard, then silent |
+| T-MON-02 | SPEC-MON-02 | M | Feed a −6 dBFS sine wave | Meter reads −6 dB ± 0.5 |
+
+## Playback
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-PLAY-01 | SPEC-PLAY-01 | M | Play / Stop / Record / return to start | Transport state and position behave correctly |
+| T-PLAY-02 | SPEC-PLAY-02 | M | Play back 2 recorded audio tracks | In sync, with no drift after 10 min |
+| T-PLAY-03 | SPEC-PLAY-03 | M | Play back a MIDI take to an external MIDI output | Notes heard with correct timing |
+| T-PLAY-04 | SPEC-PLAY-04 | M | Mute track 1, solo track 2 | Only the expected tracks are heard |
+
+## VST3 (phase 2)
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-VST-01 | SPEC-VST-01 | M | Scan with a known free VST3 instrument installed | It appears in the list |
+| T-VST-02 | SPEC-VST-02 | M | Load the instrument on a MIDI track and play the keyboard | Sound is heard live |
+| T-VST-03 | SPEC-VST-03 | M | Record while playing the instrument | WAV take contains the instrument audio |
+| T-VST-04 | SPEC-VST-04 | M/A | Render a recorded MIDI take offline | WAV has the expected length; notes at the expected positions |
+| T-VST-05 | SPEC-VST-05 | M | Open and close the plugin editor | Window opens and closes; no crash |
+| T-VST-06 | SPEC-VST-06 | M | Change a preset, save the project, reopen it | Plugin state restored |
+| T-VST-07 | SPEC-NF-03 | M | Plugin crashes during recording | Takes already written are intact and playable |
+
+## Non-functional
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-NF-02 | SPEC-NF-02 | M | Loopback cable from output to input; play a click and record it with WASAPI exclusive mode at 256 samples, 48 kHz | Measured round-trip latency ≤ about 20 ms |
+
+## Project
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-PRJ-01 | SPEC-PRJ-01/02 | A | Save a project with 3 tracks, reopen it | Tracks, takes and settings identical |
+| T-PRJ-02 | SPEC-PRJ-02 | A | Open a project with a missing take file | Clear message; the rest loads |
+
+## Text size
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-UI-12 | SPEC-UI-08 | A+M | `font_size = 20` in config; Ctrl+= / Ctrl+- / Ctrl+0 | Text 20 px; changes by 2 px, limited to 12–32; saved; bad values give a warning |
+
+## Licensing
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-LIC-01 | SPEC-LIC-01 | A | `tools/check_licenses.py` checks the `LICENSE` file at the repository root | MIT text with "Copyright (c) 2026 Maarten Boot" |
+| T-LIC-02 | SPEC-LIC-02 | A | CI script checks that every dependency in the build has an entry in `THIRD_PARTY.md` with an allowed licence (MIT, BSD, zlib, Boost, Apache-2.0) | Passes; fails if an entry is missing or the licence is not allowed |
+| T-LIC-03 | SPEC-LIC-03 | A | Default configure and build (no options set) | Builds; no ASIO symbols or headers involved; repository contains no ASIO SDK files |
+| T-LIC-04 | SPEC-LIC-03 | M | Configure with `-DMINIDAW_WITH_ASIO=ON` and no SDK path set | Configure stops with a clear message explaining where to get the SDK and what its licence means |
+| T-LIC-05 | SPEC-LIC-04 | M | Look at the product name, build names, About box and installer, with and without ASIO enabled | No "ASIO" in any name; logo, if any, only in ASIO builds and only in the About box, splash screen or docs |
+
+## Build and CI
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-CI-01 | SPEC-CI-01 | A | `tools/check_licenses.py` scans `.github/workflows/*.yml` | Every `uses:` is pinned to a 40-character SHA; fails otherwise |
+| T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass; both smoke runs succeed; both program downloads are present |
+| T-CI-03 | SPEC-CI-03 | M | Cross-compile with the MinGW toolchain file | `mini-daw.exe` and `minidaw_tests.exe` build without errors |
+
+
+## Results
+| Date | Test | Environment | Result | Notes |
+|------|------|-------------|--------|-------|
+| 2026-11-01 | T-LIC-02 | Linux | pass | Also checked against planted failures: wrong version, GPL licence, unpinned action, `asio.h` file. All 4 caught. |
+| 2026-11-01 | T-LIC-03 | Linux | pass | No ASIO SDK files; default build has no ASIO |
+| 2026-11-01 | T-LIC-04 | Linux + MinGW | pass | Clear message on Linux ("Windows only") and on Windows without an SDK path |
+| 2026-11-01 | T-LIC-05 | Linux | pass (partial) | Product name checked by unit test; About box, installer and logo come later |
+| 2026-11-01 | T-CI-01 | Linux | pass | |
+| 2026-11-01 | T-CI-02 | — | not run | No GitHub remote yet |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41337403277 | **FAIL** (Windows) | Linux and licence jobs pass. Windows configure: "could not find any instance of Visual Studio" for `-G \"Visual Studio 17 2022\"` on `windows-2025` → generator removed |
+| 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | Not run under Wine: root disk 98% full |
+| 2026-11-01 | T-DEV-05 | Linux VM (no sound card) | pass | ALSA sequencer access denied → returned as MIDI warnings |
+| 2026-11-01 | T-UI-01 | Linux (unit test + Xvfb screenshot) | pass | White background, black text |
+| 2026-11-01 | T-UI-02 | Linux (unit test) | pass | 19 pairs; lowest 5.38:1 (accent on pressed control) |
+| 2026-11-01 | T-UI-03 | Linux (Xvfb + xdotool) | pass | Ctrl+Shift+Up twice → Max; screen pure black/white; saved to config. Menu checked by screenshot |
+| 2026-11-01 | T-UI-04 | Linux (unit test + `--contrast-report`) | pass | Also: user comments kept when saving |
+| 2026-11-01 | T-UI-05 | Linux (unit test + `--contrast-report`) | pass | Value 3 → warning, AA used |
+| 2026-11-01 | T-UI-06 | Linux (unit test) | pass | 10:1, 15:1 also checked |
+| 2026-11-01 | T-UI-07 | Linux (unit test) | pass | |
+| 2026-11-01 | T-UI-08 | Linux (unit test) | pass | #777/#FFF = 4.48, #767676 = 4.54, #595959 = 7.00 |
+| 2026-11-01 | T-CI-03 | Linux (MinGW 13) | pass | P3 build; exe needs only Windows system DLLs (see Spec §8 about MFPlat) |
+| 2026-11-01 | T-DEV-05 | **Windows 10, real machine** (user) | pass | WASAPI: Speakers (out 2, default, 48 kHz), Line In (in 2, default, 44.1 kHz). MIDI: 0 inputs, 1 output (Microsoft GS Wavetable Synth). |
+| 2026-11-01 | T-CI-03 | **Windows 10, real machine** (user) | pass | MinGW-built exe starts and runs `--list-devices` without extra DLLs. Finding: RtMidi printed "no MIDI input devices" straight to the console → fixed (captured; "no devices" notices dropped). |
+| 2026-11-01 | T-UI-01 | **Windows 10, real machine** (user) | **FAIL** | `GLFW error 65542: WGL: The driver does not appear to support OpenGL`. No window. → Windows renderer switched to Direct3D 11 + WARP |
+| 2026-11-01 | T-UI-10 | Wine 10 on Xvfb (D3D11 hardware path, and WARP forced) | pass | Both paths open the window and show the correct renderer name. Wine is not real Windows; needs re-test by user |
+| 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 29 tests, 227 assertions pass |
+| 2026-11-01 | T-UI-01 | **Windows 10, real machine** (user) | pass | "looks good now" after the switch to Direct3D 11 |
+| 2026-11-01 | T-UI-10 | **Windows 10, real machine** (user) | pass | GUI opens on the machine without OpenGL. Which D3D path (hardware/WARP) not yet reported |
+| 2026-11-01 | T-DEV-02 | Linux VM (ALSA→PulseAudio) | pass | `--audio-test 2`: 48 kHz, 256 frames, 377 callbacks (≈375 expected), 0 dropouts |
+| 2026-11-01 | T-DEV-03 | Linux (unit tests + Xvfb) | pass | Settings saved by name, incl. quotes/semicolons; reloaded identically |
+| 2026-11-01 | T-DEV-04 | Linux (unit test + Xvfb) | pass | "Gone Device" → note, PulseAudio used, saved choice kept |
+| 2026-11-01 | T-DEV-06 | Wine 10 | pass | WASAPI fails under Wine; now reported as error with driver text (before the fix it was shown as running) |
+| 2026-11-01 | T-DEV-07 | — | not run | Needs the user's Windows machine |
+| 2026-11-01 | T-UI-12 | Linux (unit tests + Xvfb + xdotool) | pass | 20 px from config; Ctrl+= → 22 px, saved |
+| 2026-11-01 | T-CI-03 | Wine 10 | pass | `minidaw_tests.exe`: 42 tests, 264 assertions |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41337681818 | pass | windows (Visual Studio 18 2026, MSVC 19.51) 3m14s, 43/43 tests; linux 1m5s; licence. Only 2 MSVC warnings (C4996 `getenv`) → fixed. Smoke run on the runner (no sound card): RtAudio printed "No devices found" to the console → now captured |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41341970036 | pass | No MSVC warnings left; `--version` clean. Remaining: "No devices found" reached the GUI/CLI as a warning via RtAudio's error callback → filtered there too |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41349876675 | pass | windows 3m28s, linux 1m28s, licence; 43/43 tests; smoke run on the runner is now free of warnings |
+| 2026-11-01 | T-DEV-07 | Windows VM, no audio input active | blocked | Error reported correctly: "no audio arrived within 1 second. Driver: RtApiWasapi::wasapiThread: Unable to initialize capture audio client." Next: output-only run (`input_device = (none)`), then a run on a machine with a working input |
+| 2026-11-01 | T-DEV-07 (output only) | Windows VM, `input_device = (none)` | pass | WASAPI, Speakers 48 kHz, 2 ch; 1044 callbacks (expected 938), 0 xruns. The excess was a flaw in the test (count started at open, `sleep_for` overshoot) → now measures real time from a fixed start; Linux: 376 in 2.00 s (expected 375) |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41351279135 | pass | licence 4s, windows 3m15s, linux 1m11s; both downloads present (`mini-daw-windows-x64`, `mini-daw-linux-x64`). Linux smoke run works; ALSA prints its own "cannot find card '0'" lines on the runner (no sound card) — they bypass our `std::cerr` capture |
+| 2026-11-01 | — (console noise, SPEC-DEV-01 output) | Linux, `ALSA_CONFIG_PATH=/nonexistent` | pass | Before: 8 "ALSA lib …" lines on `--list-devices`; after the silent `snd_lib_error_set_handler`: 0 |
+| 2026-11-01 | T-REC-02 | Linux + Wine (MinGW build) | pass | Sine read back within one 24-bit step; header fields; odd-size padding; clipping/NaN; 16-bit and float reading |
+| 2026-11-01 | T-REC-06 | Linux + Wine | pass | 10⁸ values with changing block sizes, 0 errors (≈0.1 s). First run hung: buffer overrun in the test's producer (blocks up to 515 values in a 512 buffer) → fixed |
+| 2026-11-01 | T-REC-07 | Linux + Wine | pass | |
+| 2026-11-01 | T-REC-08 | Linux + Wine | pass | 937 blocks of 256 frames into 2 takes; 0 mismatches, 0 lost |
+| 2026-11-01 | T-REC-09 | Linux + Wine | pass | |
+| 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s → 96 256 frames, 24-bit stereo 48 kHz (checked with Python `wave`); 0 lost, 0 xruns. Windows: to do by the user |
+| 2026-11-01 | all automated | Linux 58/58 ctest; Wine 57/57 Catch2 cases | pass | |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41354090755 | pass | windows 2m55s (58/58), linux 1m28s (58/58), licence; MSVC C4324 on `SpscRing` (intended padding) → switched off for that class |
+| 2026-11-01 | T-CI-02 | GitHub Actions run 41354630677 | pass | windows 3m11s, linux 1m35s, licence; 58/58 on both; no MSVC warnings |
+| 2026-11-01 | crosscheck #3 fixes (H1–H9) | Linux 65/65 ctest; MinGW build under Wine 64/64 Catch2 cases (669 assertions) | pass | New: T-REC-11..15; T-REC-09 now expects the silence; T-REC-07 also with hard sync |
+| 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s with `sync_to_disk` on: 96 256 frames, 24-bit stereo 48 kHz; 1 s with it off: 48 128 frames; 0 lost, 0 dropouts, exit code 0. New output wording "lost frames" / "dropouts (xruns)" |
+| 2026-11-01 | T-REC-07 | GitHub Actions run 41357305545 (windows) | **FAIL** | Both T-REC-07 cases: the take could not be read while being written (`_wfopen_s` opens without sharing). Linux, licence pass. Wine did not show it → `_wfsopen(..., _SH_DENYWR)` |
+| 2026-11-02 | T-CI-02 | GitHub Actions run 41432521646 | pass | windows 4m29s (65/65, incl. T-REC-07 on real Windows), linux 1m28s (65/65), licence; no MSVC warnings; both downloads present |
 | 2026-11-02 | T-REC-16..20, T-REC-22 | Linux 76/76 ctest; MinGW build under Wine 75/75 Catch2 cases (783 assertions) | pass | SMF ppq/smpte round trip, take builder, clock mapping + seqlock stress (2·10⁶ writes, 0 torn reads), take names, config incl. Windows paths with backslashes |
 | 2026-11-02 | T-REC-21 (audio part) | Linux VM, Xvfb + xdotool | pass (partial) | Arm, Ctrl+R, 2.5 s, Ctrl+R: take folder with `01-Audio 1+2.wav` (128 000 frames), elapsed time shown, "armed" as text, widgets disabled while recording. MIDI part needs sequencer access (`audio` group) |
 | 2026-11-02 | T-REC-10 | Linux VM (PulseAudio) | pass (Linux only) | `--record-test 2` through the session: take folder, 97 280 frames, 0 lost, 0 dropouts; MIDI scan warning printed (no sequencer access) |
@@ -65,3 +186,6 @@ Status column in the Results section at the end.
 | 2026-11-02 | T-REC-17 (live) | same, one 4 s note, recording stopped after 3 s | pass | Note held at Stop gets its note-off at the end of the take (2987 ms) |
 | 2026-11-02 | T-REC-21 | Linux VM, Xvfb + xdotool, sequencer via `sg audio` | pass | Audio + MIDI track armed, Ctrl+R, notes sent, Ctrl+R: `01-Audio 1+2.wav` (362 496 frames) and `02-MIDI 2.mid` (21 events); MIDI activity and message count shown while recording |
 | 2026-11-02 | T-REC-18 + T-REC-04 (spread) after clock smoothing | Linux 78/78; Wine 77/77 Catch2 cases; live on the VM with `aplaymidi` → Midi Through | pass | 1024-frame buffer: gaps within 0.52 ms (one tick) in 2 runs, before 9–16 ms; 256 frames: within 1.04 ms. One note length 3.6 ms off once. First version (creeping minimum, no warm-up) left the first note 16 ms late: start-up burst → warm-up added |
+| 2026-11-02 | T-REC-22..28 (crosscheck #4 fixes) | Linux 88/88 ctest; MinGW build under Wine 87/87 Catch2 cases (902 assertions) | pass | Session tests with stand-ins; non-ASCII names also under Wine |
+| 2026-11-02 | T-REC-01/04 (regression) | Linux VM, Midi Through + `aplaymidi`, 1024-frame buffer | pass | 21/21 events, gaps within 0.52 ms, note lengths within 1 ms |
+| 2026-11-02 | `--record-test` argument check (J12) | Linux | pass | `abc`, `0`, `99999`, `5x` → message, exit code 2 |

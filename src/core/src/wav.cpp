@@ -1,4 +1,5 @@
 #include "minidaw/wav.hpp"
+#include "minidaw/path_util.hpp"
 
 #include <array>
 #include <cmath>
@@ -75,7 +76,7 @@ WavWriter::~WavWriter()
 
 bool WavWriter::fail(const char* what, std::string& error)
 {
-    error = std::string(what) + " " + path_.string() + " failed";
+    error = std::string(what) + " " + pathToUtf8(path_) + " failed";
     if (file_ != nullptr) error += " (disk full or no permission?)";
     error += ".";
     return false;
@@ -143,7 +144,7 @@ bool WavWriter::write(const float* interleaved, std::size_t frames, std::string&
     const std::size_t samples = frames * channels_;
     const std::uint64_t dataBytes = (frames_ + frames) * channels_ * kBytesPerSample;
     if (dataBytes > kMaxDataBytes) {
-        error = "WAV file " + path_.string() + " reached the 4 GiB limit of the format.";
+        error = "WAV file " + pathToUtf8(path_) + " reached the 4 GiB limit of the format.";
         return false;
     }
     bytes_.resize(samples * kBytesPerSample);
@@ -230,13 +231,13 @@ bool readWav(const std::filesystem::path& path, WavData& data, std::string& erro
     data = {};
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        error = "Cannot open " + path.string() + ".";
+        error = "Cannot open " + pathToUtf8(path) + ".";
         return false;
     }
     unsigned char riff[12];
     if (!in.read(reinterpret_cast<char*>(riff), 12) || std::memcmp(riff, "RIFF", 4) != 0 ||
         std::memcmp(riff + 8, "WAVE", 4) != 0) {
-        error = path.string() + " is not a WAV file.";
+        error = pathToUtf8(path) + " is not a WAV file.";
         return false;
     }
 
@@ -263,7 +264,7 @@ bool readWav(const std::filesystem::path& path, WavData& data, std::string& erro
             const bool pcmOk = format == kFormatPcm && (bits == 16 || bits == 24 || bits == 32);
             const bool floatOk = data.isFloat && bits == 32;
             if (!(pcmOk || floatOk) || data.channels == 0) {
-                error = path.string() + ": unsupported WAV format.";
+                error = pathToUtf8(path) + ": unsupported WAV format.";
                 return false;
             }
             const unsigned int bps = bits / 8;
@@ -295,7 +296,7 @@ bool readWav(const std::filesystem::path& path, WavData& data, std::string& erro
             in.seekg(size + (size & 1u), std::ios::cur);
         }
     }
-    error = path.string() + ": no audio data found.";
+    error = pathToUtf8(path) + ": no audio data found.";
     return false;
 }
 

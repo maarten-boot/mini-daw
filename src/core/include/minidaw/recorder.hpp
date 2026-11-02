@@ -93,10 +93,15 @@ public:
 
     // Tests only, and only with startDiskThread = false: do one disk pass now.
     void drainForTest();
-    // Tests only (T-REC-14), before the first disk pass: the next file write fails.
+    // Tests only (T-REC-14), with no disk thread running: the next file write
+    // fails, for every take or only for take `index`.
     void failNextDiskWriteForTest()
     {
         for (auto& t : takes_) t->writer.failNextWriteForTest();
+    }
+    void failNextDiskWriteForTest(std::size_t index)
+    {
+        if (index < takes_.size()) takes_[index]->writer.failNextWriteForTest();
     }
 
 private:

@@ -20,6 +20,7 @@
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/midi_input.hpp"
+#include "minidaw/path_util.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
@@ -82,6 +83,7 @@ struct AppState {
     bool tracksCreated = false;
     minidaw::MidiInputs midi;
     bool midiPortsDirty = true;            // armed MIDI tracks changed: reopen ports
+    double midiRetryAt = 0.0;              // when to retry a port that did not open (0 = no retry due)
     std::vector<std::string> midiWarnings;
     minidaw::RecordingSession session;
     std::string recordError;
@@ -252,17 +254,17 @@ std::vector<std::string> describeResult(const minidaw::SessionResult& res)
 {
     std::vector<std::string> lines;
     char buf[1024];
-    std::snprintf(buf, sizeof buf, "Take folder %s, %.2f s", res.folder.string().c_str(), res.seconds);
+    std::snprintf(buf, sizeof buf, "Take folder %s, %.2f s", minidaw::pathToUtf8(res.folder).c_str(), res.seconds);
     lines.emplace_back(buf);
     for (const auto& t : res.audio.takes) {
         std::snprintf(buf, sizeof buf, "%s: %llu frames, lost frames %llu, clipped samples %llu",
-                      t.path.filename().string().c_str(), static_cast<unsigned long long>(t.frames),
+                      minidaw::pathToUtf8(t.path.filename()).c_str(), static_cast<unsigned long long>(t.frames),
                       static_cast<unsigned long long>(t.droppedFrames), static_cast<unsigned long long>(t.clippedSamples));
         lines.emplace_back(buf);
     }
     for (const auto& m : res.midi) {
         std::snprintf(buf, sizeof buf, "%s: %zu MIDI events from \"%s\", lost messages %llu",
-                      m.path.filename().string().c_str(), m.events, m.port.c_str(),
+                      minidaw::pathToUtf8(m.path.filename()).c_str(), m.events, m.port.c_str(),
                       static_cast<unsigned long long>(m.lostMessages));
         lines.emplace_back(buf);
     }
@@ -305,13 +307,13 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
     }
 
     minidaw::RecordingSettings settings = app.config.recording;
-    settings.folder = folder.string();
+    settings.folder = minidaw::pathToUtf8(folder);
     std::string error;
     if (!app.session.start(tracks, settings, app.audio, app.midi, error)) {
         std::printf("error: %s\n", error.c_str());
         return 1;
     }
-    std::printf("Recording into %s for %d s at %u Hz:\n", app.session.folder().string().c_str(), seconds,
+    std::printf("Recording into %s for %d s at %u Hz:\n", minidaw::pathToUtf8(app.session.folder()).c_str(), seconds,
                 info.sampleRate);
     for (const auto& t : tracks) {
         if (!t.armed) continue;
@@ -563,24 +565,39 @@ void drawAudioStatus(AppState& app)
 }
 
 // --- Tracks and recording (P6) ---------------------------------------------
+// The default track is added once, when the stream first runs, and only if
+// the user has not made any track yet (crosscheck #4, J3).
 void ensureDefaultTracks(AppState& app)
 {
-    if (app.tracksCreated || !app.audio.info().running) return;
+    if (app.tracksCreated) return;
+    if (!app.tracks.empty()) {
+        app.tracksCreated = true;
+        return;
+    }
+    if (!app.audio.info().running) return;
     app.tracks = minidaw::defaultTracks(app.audio.info().inputChannels);
     app.tracksCreated = true;
 }
 
 // Open exactly the MIDI ports of armed MIDI tracks (Windows lets only one
 // program open a port, so unarmed tracks do not hold it).
-void syncMidiPorts(AppState& app)
+// A port that does not open (unplugged, used by another program) is tried
+// again every 2 seconds, and right before Record (crosscheck #4, J2).
+void syncMidiPorts(AppState& app, bool force = false)
 {
-    if (!app.midiPortsDirty || app.session.recording()) return;
+    if (app.session.recording()) return;
+    const double now = ImGui::GetTime();
+    const bool retryDue = app.midiRetryAt != 0.0 && now >= app.midiRetryAt;
+    if (!force && !app.midiPortsDirty && !retryDue) return;
     std::vector<std::string> ports;
     for (const auto& t : app.tracks) {
         if (t.kind == minidaw::TrackKind::Midi && t.armed && !t.midiPort.empty()) ports.push_back(t.midiPort);
     }
     app.midiWarnings = app.midi.setPorts(ports);
     app.midiPortsDirty = false;
+    const bool allOpen =
+        std::all_of(ports.begin(), ports.end(), [&](const std::string& p) { return app.midi.isOpen(p); });
+    app.midiRetryAt = allOpen ? 0.0 : now + 2.0;
 }
 
 void toggleRecording(AppState& app)
@@ -589,7 +606,7 @@ void toggleRecording(AppState& app)
         app.lastTake = describeResult(app.session.stop());
         return;
     }
-    syncMidiPorts(app);
+    syncMidiPorts(app, true);
     app.recordError.clear();
     if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) return;
     app.lastTake.clear();
@@ -654,9 +671,10 @@ void drawTransport(AppState& app)
     if (rec) {
         const double s = app.session.elapsedSeconds();
         const int m = static_cast<int>(s / 60);
-        ImGui::Text("RECORDING  %02d:%04.1f   lost frames: %llu   MIDI messages: %zu", m, s - 60.0 * m,
-                    static_cast<unsigned long long>(app.session.lostFrames()), app.session.midiMessages());
-        ImGui::TextWrapped("Into: %s", app.session.folder().string().c_str());
+        ImGui::Text("RECORDING  %02d:%04.1f   lost frames: %llu   MIDI messages: %zu (lost: %llu)", m, s - 60.0 * m,
+                    static_cast<unsigned long long>(app.session.lostFrames()), app.session.midiMessages(),
+                    static_cast<unsigned long long>(app.session.midiLost()));
+        ImGui::TextWrapped("Into: %s", minidaw::pathToUtf8(app.session.folder()).c_str());
         const std::string err = app.session.diskError();
         if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
     } else {
@@ -664,7 +682,7 @@ void drawTransport(AppState& app)
             app.pendingRecording = app.config.recording;
             app.showRecordingSettings = true;
         }
-        ImGui::TextWrapped("Stopped. Takes go to %s", minidaw::recordingFolder(app.config.recording).string().c_str());
+        ImGui::TextWrapped("Stopped. Takes go to %s", minidaw::pathToUtf8(minidaw::recordingFolder(app.config.recording)).c_str());
     }
     if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
     if (!app.lastTake.empty()) {
@@ -774,7 +792,7 @@ void drawRecordingSettingsWindow(AppState& app)
         auto& p = app.pendingRecording;
         ImGui::SetNextItemWidth(30 * em);
         ImGui::InputText("Folder", &p.folder);
-        ImGui::TextWrapped("Empty = %s", minidaw::defaultRecordingFolder().string().c_str());
+        ImGui::TextWrapped("Empty = %s", minidaw::pathToUtf8(minidaw::defaultRecordingFolder()).c_str());
         const char* timingText = p.midiTiming == minidaw::MidiTiming::Smpte ? "SMPTE, 1 ms ticks"
                                                                             : "960 PPQ at 120 BPM (default)";
         ImGui::SetNextItemWidth(20 * em);
@@ -961,6 +979,15 @@ int runGui(AppState& app)
     return 0;
 }
 
+// A whole number of seconds in [lo, hi], or -1 (crosscheck #4, J12).
+int parseSeconds(const char* text, int lo, int hi)
+{
+    char* end = nullptr;
+    const long v = std::strtol(text, &end, 10);
+    if (end == text || *end != '\0' || v < lo || v > hi) return -1;
+    return static_cast<int>(v);
+}
+
 void printUsage(const char* argv0)
 {
     std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> |\n"
@@ -994,10 +1021,18 @@ int main(int argc, char** argv)
             action = Action::ContrastReport;
         } else if (std::strcmp(arg, "--audio-test") == 0 && i + 1 < argc) {
             action = Action::AudioTest;
-            audioTestSeconds = std::clamp(std::atoi(argv[++i]), 1, 600);
+            audioTestSeconds = parseSeconds(argv[++i], 1, 600);
+            if (audioTestSeconds < 0) {
+                std::fprintf(stderr, "--audio-test needs a number of seconds from 1 to 600, not '%s'\n", argv[i]);
+                return 2;
+            }
         } else if (std::strcmp(arg, "--record-test") == 0 && i + 2 < argc) {
             action = Action::RecordTest;
-            audioTestSeconds = std::clamp(std::atoi(argv[++i]), 1, 3600);
+            audioTestSeconds = parseSeconds(argv[++i], 1, 3600);
+            if (audioTestSeconds < 0) {
+                std::fprintf(stderr, "--record-test needs a number of seconds from 1 to 3600, not '%s'\n", argv[i]);
+                return 2;
+            }
             recordFolder = std::filesystem::path(argv[++i]);  // native encoding, as argv is
         } else if (std::strcmp(arg, "--config") == 0 && i + 1 < argc) {
             app.configPath = argv[++i];

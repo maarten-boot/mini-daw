@@ -245,3 +245,32 @@ TEST_CASE("T-REC-18: the clock smoother follows drift and restarts after a dropo
     CHECK(worst < 1'000'000);
     CHECK(framesToNs(48000ull * 3600 * 100, 48000) == 360'000'000'000'000);  // 100 h, no overflow
 }
+
+TEST_CASE("T-REC-27: MIDI take builder edge cases", "[smf][T-REC-27]")
+{
+    // A note-off whose note-on came before the take is kept as it is.
+    auto a = buildMidiTake({timed(1500, 0x80, 60, 0)}, 0, 1000, 3000);
+    REQUIRE(a.size() == 1);
+    CHECK(a[0].frame == 500);
+
+    // The same note started twice and never released: two note-offs at the end.
+    auto b = buildMidiTake({timed(1000, 0x90, 60, 100), timed(1200, 0x90, 60, 90)}, 0, 1000, 3000);
+    REQUIRE(b.size() == 4);
+    CHECK(b[2].frame == 2000);
+    CHECK(b[3].frame == 2000);
+
+    // An empty or reversed range gives nothing, and no note-offs.
+    CHECK(buildMidiTake({timed(1000, 0x90, 60, 100)}, 0, 3000, 3000).empty());
+    CHECK(buildMidiTake({timed(1000, 0x90, 60, 100)}, 0, 3000, 1000).empty());
+
+    // Input out of order is sorted (stable for equal frames).
+    auto c = buildMidiTake({timed(2000, 0x90, 62, 1), timed(1000, 0x90, 61, 1), timed(2000, 0x80, 62, 0)}, 0, 0,
+                           3000);
+    REQUIRE(c.size() == 4);
+    CHECK(c[0].data[1] == 61);
+    CHECK(c[1].data[0] == 0x90);
+    CHECK(c[2].data[0] == 0x80);
+
+    // Messages too short for their status byte are ignored.
+    CHECK(buildMidiTake({timed(1000, 0x90, 60, 0, 2)}, 0, 0, 3000).empty());
+}

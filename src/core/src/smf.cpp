@@ -1,4 +1,5 @@
 #include "minidaw/smf.hpp"
+#include "minidaw/path_util.hpp"
 
 #include "file_util.hpp"
 
@@ -47,9 +48,16 @@ std::uint8_t channelMessageSize(std::uint8_t status)
 std::vector<MidiEvent> buildMidiTake(const std::vector<TimedMidi>& input, int channel, std::uint64_t startFrame,
                                      std::uint64_t endFrame)
 {
-    std::vector<TimedMidi> sorted = input;
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const TimedMidi& a, const TimedMidi& b) { return a.frame < b.frame; });
+    // The session keeps its list sorted; only copy and sort if it is not.
+    const auto byFrame = [](const TimedMidi& a, const TimedMidi& b) { return a.frame < b.frame; };
+    std::vector<TimedMidi> copy;
+    const std::vector<TimedMidi>* events = &input;
+    if (!std::is_sorted(input.begin(), input.end(), byFrame)) {
+        copy = input;
+        std::stable_sort(copy.begin(), copy.end(), byFrame);
+        events = &copy;
+    }
+    const std::vector<TimedMidi>& sorted = *events;
 
     std::vector<MidiEvent> out;
     std::array<std::array<std::uint16_t, 128>, 16> held{};  // note-on count per channel/note
@@ -189,7 +197,7 @@ bool writeSmf(const std::filesystem::path& path, const std::string& takeName, co
     tmp += ".tmp";
     std::FILE* f = detail::openForWriting(tmp, false);
     if (f == nullptr) {
-        error = "Creating " + tmp.string() + " failed.";
+        error = "Creating " + pathToUtf8(tmp) + " failed.";
         return false;
     }
     bool ok = std::fwrite(file.data(), 1, file.size(), f) == file.size();
@@ -198,13 +206,13 @@ bool writeSmf(const std::filesystem::path& path, const std::string& takeName, co
     std::error_code ec;
     if (!ok) {
         std::filesystem::remove(tmp, ec);
-        error = "Writing " + path.string() + " failed (disk full or no permission?).";
+        error = "Writing " + pathToUtf8(path) + " failed (disk full or no permission?).";
         return false;
     }
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
         std::filesystem::remove(tmp, ec);
-        error = "Replacing " + path.string() + " failed: " + ec.message();
+        error = "Replacing " + pathToUtf8(path) + " failed: " + ec.message();
         return false;
     }
     return true;
@@ -249,12 +257,12 @@ bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& erro
     data = {};
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        error = "Cannot open " + path.string() + ".";
+        error = "Cannot open " + pathToUtf8(path) + ".";
         return false;
     }
     const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     if (bytes.size() < 14 || std::memcmp(bytes.data(), "MThd", 4) != 0 || get32be(&bytes[4]) < 6) {
-        error = path.string() + " is not a MIDI file.";
+        error = pathToUtf8(path) + " is not a MIDI file.";
         return false;
     }
     data.format = static_cast<std::uint16_t>((bytes[8] << 8) | bytes[9]);
@@ -306,7 +314,7 @@ bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& erro
                 events.push_back(ev);
             }
             if (!c.ok) {
-                error = path.string() + ": damaged track.";
+                error = pathToUtf8(path) + ": damaged track.";
                 return false;
             }
             data.tracks.push_back(std::move(events));
@@ -314,7 +322,7 @@ bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& erro
         pos += len;
     }
     if (data.tracks.size() != ntracks) {
-        error = path.string() + ": missing tracks.";
+        error = pathToUtf8(path) + ": missing tracks.";
         return false;
     }
     return true;

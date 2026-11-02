@@ -1,4 +1,5 @@
 #include "minidaw/track.hpp"
+#include "minidaw/path_util.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -58,14 +59,14 @@ std::filesystem::path createTakeFolder(const std::filesystem::path& base, const 
     std::error_code ec;
     std::filesystem::create_directories(base, ec);
     if (ec) {
-        error = "Cannot create the recording folder " + base.string() + ": " + ec.message();
+        error = "Cannot create the recording folder " + pathToUtf8(base) + ": " + ec.message();
         return {};
     }
     for (int i = 1; i < 1000; ++i) {
         const auto path = base / (i == 1 ? name : name + "-" + std::to_string(i));
         if (std::filesystem::create_directory(path, ec)) return path;  // false if it already existed
         if (ec) {
-            error = "Cannot create " + path.string() + ": " + ec.message();
+            error = "Cannot create " + pathToUtf8(path) + ": " + ec.message();
             return {};
         }
     }

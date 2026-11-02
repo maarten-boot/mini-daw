@@ -72,3 +72,26 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - First idea (keep the minimum, let it creep up 200 ppm for drift) replaced before testing live: a start-up burst would pin it too low for about a minute. The windowed version still left the first note 16 ms late in a live run (burst remembered for up to 2 s) → 0.5 s warm-up and 0.5 s windows.
 - Result with a 1024-frame buffer: gaps within 0.52 ms instead of 9–16 ms; 256 frames: within about 1 ms. Unit tests with simulated jitter, burst, drift and dropout. Linux 78/78, Wine 77/77.
 - Next: commit; Windows MIDI tests by the user; crosscheck #4.
+
+## 9. CI check and crosscheck #4
+> pushed it, check the CI run; and do a crosscheck
+
+- No CI run for `c80053f`: GitHub's `main` is still `341fc26`; `d2ca5b2` and `c80053f` did not arrive (push failed or went elsewhere).
+- Crosscheck #4 in `Crosscheck-2026-11-02.md`. Spec ↔ Plan ↔ Tests by Claude; the P6 code also by an independent reviewer (subagent), main findings re-checked.
+- **J1:** `Tests.md` had been cut to 59 lines by commit `341fc26` (my edit script dropped the rest of the file). Rebuilt from `b571a1e` + P6 rows + results since; no other file affected.
+- Code findings J2–J14 (3 medium: MIDI port retry, default tracks wiping user tracks, MIDI end taken from the first audio take). Waiting for the user's go.
+
+## 10. Crosscheck #4 fixes
+> yes fix J2–J14, medium ones first
+
+- Medium first: J2 (MIDI port retried every 2 s and at Record), J3 (default track only if none exists), J4 (MIDI end = recorder timeline). Then J5–J14; details in `Crosscheck-2026-11-02.md`.
+- J13: session now talks to `SessionAudio` / `SessionMidi`; `test_session.cpp` drives the real session and recorder with stand-ins (T-REC-23..26, 28), plus T-REC-27.
+- On the way: the first J7 rule ("a `\"` followed only by a comment closes the value") broke device names like `Mic \"Pro\"; USB #2` — caught by the existing round-trip test; the rule now also requires that no other quote follows.
+- `Tests.md` edited by replacing one row with itself plus the new rows, then diffed: only the intended lines changed (lesson from J1).
+- Results: Linux 88/88; Wine 87/87; live MIDI regression exact.
+- Reminder for the user: the previous push (`d2ca5b2`, `c80053f`) did not reach GitHub.
+
+## 11. MIDI test tools
+> yes add the scripts to tools and commit it, i'll push
+
+- `tools/midi_test/make_test_mid.py` (options: notes, gap, length, held last note) and `check_take_mid.py` (gaps, lengths, end of track; exit code 1 above a tolerance). Run end to end on the VM: gaps within 0.52 ms, lengths within 1.04 ms, exit 0. Usage noted in `CLAUDE.md`.

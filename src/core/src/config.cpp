@@ -1,4 +1,5 @@
 #include "minidaw/config.hpp"
+#include "minidaw/path_util.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -34,9 +35,20 @@ std::string lower(std::string_view s)
 }
 
 // A value is either "quoted" (with \" and \\ escapes, any other backslash is
-// kept as it is, so "D:\Takes" works; anything after the
-// closing quote is ignored) or plain (a trailing "; comment" or "# comment"
-// is removed).
+// kept as it is, so "D:\Takes" works; a final \" before the end of the line
+// or a comment is a backslash plus the closing quote, so "D:\Takes\" works
+// too; anything after the closing quote is ignored) or plain (a trailing
+// "; comment" or "# comment" is removed; backslashes are kept as typed).
+// After a \" : is this the last quote of the line, followed only by spaces or a
+// comment? Values written by mini-daw always end in a real closing quote, so
+// this only matches hand-written values such as "D:\Takes\".
+bool onlyCommentAfter(std::string_view rest)
+{
+    if (rest.find('"') != std::string_view::npos) return false;
+    rest = trim(rest);
+    return rest.empty() || rest.front() == ';' || rest.front() == '#';
+}
+
 std::string parseValue(std::string_view value, bool& ok)
 {
     ok = true;
@@ -55,6 +67,10 @@ std::string parseValue(std::string_view value, bool& ok)
     std::string out;
     for (std::size_t i = 1; i < value.size(); ++i) {
         const char c = value[i];
+        if (c == '\\' && i + 1 < value.size() && value[i + 1] == '"' && onlyCommentAfter(value.substr(i + 2))) {
+            out += '\\';  // "D:\Takes\": the last quote closes the value (J7)
+            return out;
+        }
         if (c == '\\' && i + 1 < value.size() && (value[i + 1] == '"' || value[i + 1] == '\\')) {
             out += value[++i];
         } else if (c == '"') {
@@ -295,8 +311,9 @@ std::string defaultConfigText()
            "; Force take files to the disk once a second, so a take survives a\n"
            "; power loss. Set to false if recording stutters on a slow disk.\n"
            "sync_to_disk = true\n"
-           "; Folder for takes, in quotes. Empty: Documents\\mini-daw on Windows,\n"
-           "; ~/Music/mini-daw on Linux and macOS.\n"
+           "; Folder for takes. Empty: Documents\\mini-daw on Windows, ~/Music/mini-daw\n"
+           "; on Linux and macOS. Without quotes the path is used as typed\n"
+           "; (folder = \\\\server\\takes). Inside quotes, \\\\ stands for one \\.\n"
            "folder = \"\"\n"
            "; MIDI file timing: ppq (960 ticks per quarter at 120 BPM) or smpte (1 ms ticks).\n"
            "midi_timing = ppq\n";
@@ -343,7 +360,7 @@ std::filesystem::path defaultRecordingFolder()
 std::filesystem::path recordingFolder(const RecordingSettings& settings)
 {
     if (settings.folder.empty()) return defaultRecordingFolder();
-    return std::filesystem::path(settings.folder);
+    return pathFromUtf8(settings.folder);
 }
 
 ConfigLoadResult loadConfigFile(const std::filesystem::path& path)
@@ -354,7 +371,7 @@ ConfigLoadResult loadConfigFile(const std::filesystem::path& path)
     }
     std::ostringstream text;
     text << in.rdbuf();
-    return parseConfig(text.str(), path.filename().string());
+    return parseConfig(text.str(), pathToUtf8(path.filename()));
 }
 
 std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& config)
@@ -386,12 +403,12 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     std::error_code ec;
     if (path.has_parent_path()) {
         std::filesystem::create_directories(path.parent_path(), ec);
-        if (ec) return "cannot create folder " + path.parent_path().string() + ": " + ec.message();
+        if (ec) return "cannot create folder " + pathToUtf8(path.parent_path()) + ": " + ec.message();
     }
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return "cannot write " + path.string();
+    if (!out) return "cannot write " + pathToUtf8(path);
     out << text;
-    if (!out) return "error while writing " + path.string();
+    if (!out) return "error while writing " + pathToUtf8(path);
     return {};
 }
 

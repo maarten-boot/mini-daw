@@ -1,5 +1,7 @@
 #include "minidaw/recording_session.hpp"
 
+#include "minidaw/path_util.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -17,14 +19,15 @@ RecordingSession::~RecordingSession()
     if (active_) stop();
 }
 
-bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSettings& settings, AudioStream& audio,
-                             MidiInputs& midi, std::string& error)
+bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSettings& settings, SessionAudio& audio,
+                             SessionMidi& midi, std::string& error)
 {
     if (active_) stop();
     error.clear();
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
         error_.clear();
+        midiRetryError_.clear();
     }
     std::vector<const Track*> armed;
     for (const auto& t : tracks) {
@@ -34,7 +37,7 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
         error = "No track is armed. Arm at least one track to record.";
         return false;
     }
-    if (!audio.info().running || audio.info().sampleRate == 0) {
+    if (!audio.streamRunning() || audio.streamSampleRate() == 0) {
         error = "The audio stream is not running; it is needed for the recording timeline.";
         return false;
     }
@@ -47,7 +50,7 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
             error = "Track " + std::to_string(t->number) + ": MIDI input \"" + t->midiPort + "\" is not open.";
             return false;
         }
-        if (t->kind == TrackKind::Audio && audio.info().inputChannels == 0) {
+        if (t->kind == TrackKind::Audio && audio.streamInputChannels() == 0) {
             error = "Track " + std::to_string(t->number) + ": there is no audio input device.";
             return false;
         }
@@ -67,15 +70,15 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
     settings_ = settings;
     audio_ = &audio;
     midi_ = &midi;
-    sampleRate_ = audio.info().sampleRate;
+    sampleRate_ = audio.streamSampleRate();
     folder_ = folder;
-    takeName_ = folder.filename().string();
+    takeName_ = pathToUtf8(folder.filename());
 
     std::vector<TakeSpec> audioTakes;
     midiTakes_.clear();
     portEvents_.clear();
     for (const Track* t : armed) {
-        const auto path = folder / takeFileName(*t);
+        const auto path = folder / pathFromUtf8(takeFileName(*t));
         if (t->kind == TrackKind::Audio) {
             audioTakes.push_back({path, t->channels});
         } else {
@@ -96,6 +99,7 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
 
     hasAudio_ = !audioTakes.empty();
     midiMessages_.store(0);
+    midiUnplaced_.store(0);
     if (!midiTakes_.empty()) midi.setCapture(true);
     if (hasAudio_) {
         RecorderOptions options;
@@ -131,8 +135,19 @@ void RecordingSession::collectMidi()
             const std::size_t n = midi_->read(pe.port, buf, 256);
             for (std::size_t i = 0; i < n; ++i) {
                 const auto frame = audio_->frameAtTime(buf[i].ns);
-                if (!frame) continue;
-                pe.events.push_back({*frame, buf[i].data, buf[i].size});
+                if (!frame) {  // no timeline (stream not running): counted, not silently dropped
+                    ++pe.unplaced;
+                    midiUnplaced_.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                const TimedMidi m{*frame, buf[i].data, buf[i].size};
+                if (pe.events.empty() || pe.events.back().frame <= m.frame) {
+                    pe.events.push_back(m);
+                } else {  // slightly out of order (clock adjustments): keep the list sorted
+                    const auto at = std::upper_bound(pe.events.begin(), pe.events.end(), m,
+                                                     [](const TimedMidi& a, const TimedMidi& b) { return a.frame < b.frame; });
+                    pe.events.insert(at, m);
+                }
             }
             midiMessages_.fetch_add(n, std::memory_order_relaxed);
             if (n < 256) break;
@@ -145,6 +160,7 @@ bool RecordingSession::writeMidiFiles(std::uint64_t endFrame, bool final, std::v
     const auto start = timelineStart();
     if (!start) return true;  // the first audio block has not arrived yet
     bool ok = true;
+    std::string firstError;
     for (const auto& mt : midiTakes_) {
         const auto pe = std::find_if(portEvents_.begin(), portEvents_.end(),
                                      [&](const PortEvents& p) { return p.port == mt.track.midiPort; });
@@ -155,10 +171,21 @@ bool RecordingSession::writeMidiFiles(std::uint64_t endFrame, bool final, std::v
         const bool sync = settings_.syncToDisk || final;
         if (!writeSmf(mt.path, takeName_, {st}, sampleRate_, settings_.midiTiming, endFrame - std::min(endFrame, *start),
                       sync, err)) {
-            setError(err);
+            if (firstError.empty()) firstError = err;
             ok = false;
         }
-        if (results) results->push_back({mt.path, mt.track.midiPort, st.events.size(), midi_->messagesLost(mt.track.midiPort)});
+        if (results) {
+            results->push_back({mt.path, mt.track.midiPort, st.events.size(),
+                                midi_->messagesLost(mt.track.midiPort) + pe->unplaced});
+        }
+    }
+    if (final) {
+        if (!ok) setError(firstError);
+    } else {
+        // A failed periodic write is retried a second later; it only stays
+        // an error if the final write fails too (J10).
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        midiRetryError_ = ok ? std::string() : firstError + " (retrying)";
     }
     return ok;
 }
@@ -207,9 +234,17 @@ std::string RecordingSession::diskError() const
     if (active_ && hasAudio_) e = audio_->recorder().diskError();
     if (e.empty()) {
         std::lock_guard<std::mutex> lock(errorMutex_);
-        e = error_;
+        e = !error_.empty() ? error_ : midiRetryError_;
     }
     return e;
+}
+
+std::uint64_t RecordingSession::midiLost() const
+{
+    if (!active_) return 0;
+    std::uint64_t n = midiUnplaced_.load(std::memory_order_relaxed);
+    for (const auto& mt : midiTakes_) n += midi_->messagesLost(mt.track.midiPort);
+    return n;
 }
 
 SessionResult RecordingSession::stop()
@@ -218,16 +253,20 @@ SessionResult RecordingSession::stop()
     if (!active_) return result;
     result.folder = folder_;
 
-    // End of the take: the audio length, or "now" for a MIDI-only recording.
+    // End of the take: the audio timeline (all frames the recorder took in,
+    // whatever happened to single files: J4), or "now" for a MIDI-only
+    // recording. The start is read after the recorder has stopped (J5).
     std::uint64_t endFrame = 0;
-    std::optional<std::uint64_t> start = timelineStart();
+    std::optional<std::uint64_t> start;
+    bool haveEnd = true;
     if (hasAudio_) {
-        const std::uint64_t first = start ? *start : 0;
         result.audio = audio_->stopRecording();
-        const std::uint64_t frames = result.audio.takes.empty() ? 0 : result.audio.takes.front().frames;
-        endFrame = first + frames;
+        start = timelineStart();
+        endFrame = (start ? *start : 0) + audio_->recorder().framesCaptured();
     } else {
+        start = midiOnlyStart_;
         const auto f = audio_->currentFrame();
+        haveEnd = f.has_value();
         endFrame = f ? *f : midiOnlyStart_;
     }
 
@@ -238,17 +277,22 @@ SessionResult RecordingSession::stop()
     if (!midiTakes_.empty()) {
         collectMidi();
         midi_->setCapture(false);
-        if (!start) start = timelineStart();
-        if (start) {
-            writeMidiFiles(endFrame, true, &result.midi);
-        } else {
+        if (!start) {
             setError("No audio arrived, so the MIDI takes could not be placed on the timeline.");
+        } else if (!haveEnd) {
+            // The stream stopped during the recording: keep the files of the
+            // last periodic write instead of replacing them (J8).
+            setError("The audio stream stopped during the recording; the MIDI files hold the state of the last "
+                     "update (about one second before).");
+        } else {
+            writeMidiFiles(endFrame, true, &result.midi);
         }
     }
     if (sampleRate_ > 0 && start) result.seconds = static_cast<double>(endFrame - std::min(endFrame, *start)) / sampleRate_;
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
         result.error = error_;
+        midiRetryError_.clear();
     }
     active_ = false;
     midiTakes_.clear();

@@ -17,6 +17,7 @@
 //   [recording]
 //   sync_to_disk = true       ; force take files to disk each second (true/false)
 //   folder = "D:\Takes"         ; empty = Documents\mini-daw (Windows), ~/Music/mini-daw
+//                               ; network path: folder = \\server\takes (no quotes)
 //   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
 //
 // Default location:

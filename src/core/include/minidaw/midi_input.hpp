@@ -12,6 +12,7 @@
 // opened only for armed MIDI tracks.
 
 #include "minidaw/ring_buffer.hpp"
+#include "minidaw/session_io.hpp"
 
 #include <array>
 #include <atomic>
@@ -31,10 +32,10 @@ struct RawMidi {
     std::uint8_t size = 0;
 };
 
-class MidiInputs {
+class MidiInputs : public SessionMidi {
 public:
     MidiInputs();
-    ~MidiInputs();
+    ~MidiInputs() override;
     MidiInputs(const MidiInputs&) = delete;
     MidiInputs& operator=(const MidiInputs&) = delete;
 
@@ -44,19 +45,19 @@ public:
     std::vector<std::string> setPorts(const std::vector<std::string>& names);
     void closeAll() { setPorts({}); }
 
-    bool isOpen(const std::string& name) const;
+    bool isOpen(const std::string& name) const override;
 
     // Capture on: messages are queued for read(). Turning it on first
     // discards anything still queued.
-    void setCapture(bool on);
+    void setCapture(bool on) override;
 
     // Session thread: take up to `max` queued messages of a port.
-    std::size_t read(const std::string& name, RawMidi* out, std::size_t max);
+    std::size_t read(const std::string& name, RawMidi* out, std::size_t max) override;
 
     // Messages seen on a port since it was opened (for an activity display),
     // and messages lost because its ring was full.
     std::uint64_t messagesSeen(const std::string& name) const;
-    std::uint64_t messagesLost(const std::string& name) const;
+    std::uint64_t messagesLost(const std::string& name) const override;
 
     // Errors reported by RtMidi while ports are open.
     std::vector<std::string> takeMessages();

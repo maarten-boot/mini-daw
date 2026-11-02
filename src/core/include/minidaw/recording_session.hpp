@@ -9,9 +9,9 @@
 // file about once a second. stop() ends everything and writes the final
 // files. The audio stream must keep running from start() to stop().
 
-#include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/midi_input.hpp"
+#include "minidaw/session_io.hpp"
 #include "minidaw/smf.hpp"
 #include "minidaw/track.hpp"
 
@@ -29,7 +29,7 @@ struct MidiTakeResult {
     std::filesystem::path path;
     std::string port;
     std::size_t events = 0;           // events in the file (incl. added note-offs)
-    std::uint64_t lostMessages = 0;   // the port's ring was full
+    std::uint64_t lostMessages = 0;   // the port's ring was full, or the message could not be placed
 };
 
 struct SessionResult {
@@ -51,8 +51,8 @@ public:
     // Records all armed tracks. Needs a running stream; MIDI tracks need their
     // port open in `midi`. On failure nothing is recorded and the new take
     // folder is removed again.
-    bool start(const std::vector<Track>& tracks, const RecordingSettings& settings, AudioStream& audio,
-               MidiInputs& midi, std::string& error);
+    bool start(const std::vector<Track>& tracks, const RecordingSettings& settings, SessionAudio& audio,
+               SessionMidi& midi, std::string& error);
     SessionResult stop();
 
     bool recording() const { return active_; }
@@ -63,6 +63,7 @@ public:
     std::uint64_t lostFrames() const;
     std::string diskError() const;
     std::size_t midiMessages() const { return midiMessages_.load(std::memory_order_relaxed); }
+    std::uint64_t midiLost() const;   // lost MIDI messages so far (SPEC-REC-05b, J11)
 
 private:
     struct MidiTake {
@@ -71,7 +72,8 @@ private:
     };
     struct PortEvents {
         std::string port;
-        std::vector<TimedMidi> events;
+        std::vector<TimedMidi> events;   // kept sorted by frame
+        std::uint64_t unplaced = 0;      // messages that could not be put on the timeline
     };
 
     void midiLoop();
@@ -82,8 +84,8 @@ private:
 
     bool active_ = false;
     bool hasAudio_ = false;
-    AudioStream* audio_ = nullptr;
-    MidiInputs* midi_ = nullptr;
+    SessionAudio* audio_ = nullptr;
+    SessionMidi* midi_ = nullptr;
     RecordingSettings settings_;
     unsigned int sampleRate_ = 0;
     std::filesystem::path folder_;
@@ -93,10 +95,12 @@ private:
     std::vector<MidiTake> midiTakes_;
     std::vector<PortEvents> portEvents_;                  // MIDI thread (and stop() after join)
     std::atomic<std::size_t> midiMessages_{0};
+    std::atomic<std::uint64_t> midiUnplaced_{0};
     std::atomic<bool> midiRun_{false};
     std::thread midiThread_;
     mutable std::mutex errorMutex_;
-    std::string error_;
+    std::string error_;               // final errors (kept)
+    std::string midiRetryError_;      // a periodic MIDI write failed; cleared when one succeeds (J10)
 };
 
 } // namespace minidaw

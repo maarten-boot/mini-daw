@@ -17,6 +17,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS).
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
+- `tools/midi_test/` — make a test MIDI file and check the timing of a recorded MIDI take (T-REC-01/04).
 - `dist/` — not committed; test builds for the user to try (`dist/windows/`, `dist/linux/`). The local Linux build needs glibc 2.43; the CI download (built on Ubuntu 24.04, glibc 2.39) runs on more systems.
 
 ## Build and test
@@ -38,7 +39,7 @@ Windows/MSVC is built by GitHub Actions (`.github/workflows/build.yml`).
 - **GUI screenshots:** `Xvfb :77 -screen 0 1150x750x24 &`, then `DISPLAY=:77 LIBGL_ALWAYS_SOFTWARE=1 mini-daw --config <file>`, capture with `import -window root shot.png`, drive with `xdotool` (key presses, menu clicks). Always pass `--config` with a scratch file so the user's real config is not touched.
 - **Windows exe under Wine:** a Wine prefix needs ≈1.2 GB; keep it in RAM (the root disk was once nearly full; 13 GB free on 2026-11-01): `mkdir -p /dev/shm/minidaw-wine && WINEPREFIX=/dev/shm/minidaw-wine WINEDEBUG=-all wineboot -i`, run, then `/usr/lib/x86_64-linux-gnu/wine/wineserver -k; rm -rf /dev/shm/minidaw-wine` (`wineserver` is not on the PATH). (Wine refuses to create the prefix unless the folder exists first.)
 - **Wine limits:** D3D11 works (hardware and `MINIDAW_D3D_WARP=1`), unit tests pass, but RtAudio's WASAPI client fails to initialise under Wine. Audio on Windows must be tested by the user on the real Windows 10 machine.
-- This VM has no sound card (ALSA→PulseAudio only) and no MIDI access (`/dev/snd/seq` permission denied).
+- This VM has a virtual sound card. The user is in group `audio` (since 2026-11-02); in a shell started before that, use `sg audio -c "..."` for MIDI. MIDI test without a keyboard: `tools/midi_test/make_test_mid.py send.mid`, start `--record-test 8 <folder>`, then `aplaymidi -p 14:0 send.mid` into "Midi Through"; check the take with `tools/midi_test/check_take_mid.py "<folder>/take-*/02-*.mid"` (exit code 1 if gaps or note lengths are off by more than 2 ms).
 
 ## Useful program options
-`--config <file>`, `--list-devices`, `--audio-test <seconds>`, `--record-test <seconds> <folder>`, `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.
+`--config <file>`, `--list-devices`, `--audio-test <seconds>`, `--record-test <seconds> <folder>` (audio + every MIDI input), `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.

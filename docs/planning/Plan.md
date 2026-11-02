@@ -13,7 +13,7 @@
 | P6 | Tracks and multi-track recording (audio + MIDI), SMF writer, sample-accurate MIDI timestamps | REC-01..04, 01a, 02a, 04a–c, 07 | P6a, P6b done (2026-11-02); P6c (real MIDI) pending |
 | P6a | Core: SMF writer/reader, MIDI take builder, clock→frame mapping, MIDI inputs, recording session, `[recording]` settings | REC-04a–c, 07 | done (2026-11-02) |
 | P6b | GUI: track list, Arm, Record/Stop, Settings → Recording…; `--record-test` through the session (audio + MIDI) | REC-01a, 02a, 06 | done (2026-11-02) |
-| P6c | Manual tests with real MIDI: Linux VM (virtual keyboard, `audio` group), Windows (USB keyboard, virtual port) | REC-01, 04 | pending |
+| P6c | Manual tests with real MIDI: Linux VM (virtual keyboard, `audio` group), Windows (USB keyboard, virtual port) | REC-01, 04 | Linux done (2026-11-02, Midi Through + aplaymidi); Windows pending |
 | P7 | Monitoring and meters | MON-01..02, UI-07 | pending |
 | P8 | Transport and playback | PLAY-01..04 | pending |
 | P9 | Project save/load | PRJ-01..02 | pending |
@@ -25,7 +25,7 @@
 | P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |
 | P13 | Note and sound editing | — | later (not in v1) |
-| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (all in `Crosscheck-2026-11-01.md`) |
+| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b (`Crosscheck-2026-11-02.md`) |
 
 ## Notes
 - Every new Spec item gets at least one test case in `Tests.md`.
