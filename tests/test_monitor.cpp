@@ -123,6 +123,34 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
         CHECK(peak == Approx(1.7f));
         for (float v : out) CHECK(v == 1.0f);
     }
+    SECTION("per-channel peaks before limiting (output meter, K7)")
+    {
+        MonitorGains left;
+        left.left[0] = 1.0f;  // input 1 to the left only
+        std::vector<float> loud;
+        for (unsigned int f = 0; f < frames; ++f) loud.insert(loud.end(), {1.5f, 0.0f, 0.0f});
+        MonitorGains current = left;
+        std::vector<float> out(frames * 2, 0.0f);
+        float peaks[2] = {-1.0f, -1.0f};
+        mixMonitor(loud.data(), frames, inCh, out.data(), 2, current, left, peaks);
+        CHECK(peaks[0] == Approx(1.5f));  // +3.5 dBFS shown, although the output is limited
+        CHECK(peaks[1] == 0.0f);
+        CHECK(out[0] == 1.0f);
+    }
+    SECTION("a NaN input sample becomes silence, not NaN on the output (K4)")
+    {
+        std::vector<float> bad = in;
+        bad[1 * inCh + 1] = std::nanf("");  // frame 1, input 2
+        MonitorGains current = on;
+        std::vector<float> out(frames * 2, 0.0f);
+        float peaks[2] = {};
+        const float peak = mixMonitor(bad.data(), frames, inCh, out.data(), 2, current, on, peaks);
+        for (float v : out) CHECK(v == v);
+        CHECK(out[2] == 0.0f);  // frame 1: the NaN was summed into both sides, so that sample is silence
+        CHECK(out[3] == 0.0f);
+        CHECK(out[4] == Approx(0.15f));  // the next frame is normal again
+        CHECK(peak == Approx(0.25f));
+    }
     SECTION("no input (output-only stream) leaves silence")
     {
         MonitorGains current = on;

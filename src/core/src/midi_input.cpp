@@ -27,20 +27,38 @@ MidiInputs::Port* MidiInputs::find(const std::string& name) const
     return nullptr;
 }
 
-std::string midiPortBaseName(std::string_view name)
+MidiNaming nativeMidiNaming()
 {
-    // Trailing " <digits>" or " <digits>:<digits>".
-    std::size_t end = name.size();
-    std::size_t i = end;
-    auto digitsBefore = [&](std::size_t pos) {
-        std::size_t j = pos;
-        while (j > 0 && name[j - 1] >= '0' && name[j - 1] <= '9') --j;
-        return j;
-    };
-    std::size_t j = digitsBefore(i);
-    if (j == i) return std::string(name);
-    if (j > 0 && name[j - 1] == ':') {
-        const std::size_t k = digitsBefore(j - 1);
+#if defined(_WIN32)
+    return MidiNaming::WinMM;
+#elif defined(__linux__)
+    return MidiNaming::Alsa;
+#else
+    return MidiNaming::Plain;
+#endif
+}
+
+namespace {
+
+// Start of the digits that end at `end` (== end if none).
+std::size_t digitsStart(std::string_view s, std::size_t end)
+{
+    std::size_t j = end;
+    while (j > 0 && s[j - 1] >= '0' && s[j - 1] <= '9') --j;
+    return j;
+}
+
+} // namespace
+
+std::string midiPortBaseName(std::string_view name, MidiNaming naming)
+{
+    if (naming == MidiNaming::Plain) return std::string(name);
+    std::size_t j = digitsStart(name, name.size());
+    if (j == name.size()) return std::string(name);  // no number at the end
+    if (naming == MidiNaming::Alsa) {
+        // " <client>:<port>"
+        if (j == 0 || name[j - 1] != ':') return std::string(name);
+        const std::size_t k = digitsStart(name, j - 1);
         if (k == j - 1) return std::string(name);
         j = k;
     }
@@ -48,19 +66,88 @@ std::string midiPortBaseName(std::string_view name)
     return std::string(name.substr(0, j - 1));
 }
 
-std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted)
+std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted,
+                                         MidiNaming naming)
 {
     for (std::size_t i = 0; i < available.size(); ++i) {
         if (available[i] == wanted) return i;
     }
-    const std::string base = midiPortBaseName(wanted);
+    const std::string base = midiPortBaseName(wanted, naming);
+    if (base == wanted) return std::nullopt;  // no backend number: only the exact name counts
     std::optional<std::size_t> found;
     for (std::size_t i = 0; i < available.size(); ++i) {
-        if (midiPortBaseName(available[i]) != base) continue;
+        if (midiPortBaseName(available[i], naming) != base) continue;
         if (found) return std::nullopt;  // several devices of the same kind: do not guess
         found = i;
     }
     return found;
+}
+
+MidiCheckPlan planMidiCheck(const std::vector<MidiPortState>& ports, const std::vector<std::string>& available,
+                            MidiNaming naming)
+{
+    MidiCheckPlan plan;
+    std::vector<bool> claimed(available.size(), false);  // an available port serves one track port at most
+
+    // 1. Connected ports, per base name, by count.
+    std::vector<bool> done(ports.size(), false);
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        if (!ports[i].connected || done[i]) continue;
+        const std::string base = midiPortBaseName(ports[i].openedAs, naming);
+        std::vector<std::size_t> group;
+        for (std::size_t j = i; j < ports.size(); ++j) {
+            if (ports[j].connected && !done[j] && midiPortBaseName(ports[j].openedAs, naming) == base) {
+                group.push_back(j);
+                done[j] = true;
+            }
+        }
+        std::vector<std::size_t> present;
+        for (std::size_t a = 0; a < available.size(); ++a) {
+            if (midiPortBaseName(available[a], naming) == base) present.push_back(a);
+        }
+        if (present.size() >= group.size()) {
+            // All still there. Claim the entries: the exact name first, else a
+            // free one (the system renumbered it; the handle stays valid).
+            for (std::size_t g : group) {
+                for (std::size_t a : present) {
+                    if (!claimed[a] && available[a] == ports[g].openedAs) { claimed[a] = true; break; }
+                }
+            }
+            for (std::size_t g : group) {
+                const bool exact = std::any_of(present.begin(), present.end(), [&](std::size_t a) {
+                    return available[a] == ports[g].openedAs;
+                });
+                if (exact) continue;
+                for (std::size_t a : present) {
+                    if (claimed[a]) continue;
+                    claimed[a] = true;
+                    plan.rename.push_back({g, available[a]});
+                    break;
+                }
+            }
+        } else if (group.size() == 1 || present.empty()) {
+            for (std::size_t g : group) plan.disconnect.push_back(g);  // gone; reopened when back
+        } else {
+            for (std::size_t g : group) plan.block.push_back(g);       // cannot tell which one went
+            for (std::size_t a : present) claimed[a] = true;           // do not reopen them as others
+        }
+    }
+
+    // 2. Ports that are not connected (and not blocked): open when there.
+    std::vector<std::string> free;
+    std::vector<std::size_t> freeIndex;
+    for (std::size_t a = 0; a < available.size(); ++a) {
+        if (!claimed[a]) { free.push_back(available[a]); freeIndex.push_back(a); }
+    }
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        if (ports[i].connected || ports[i].blocked) continue;
+        const auto m = matchMidiPort(free, ports[i].name, naming);
+        if (!m) continue;
+        plan.connect.push_back({i, free[*m]});
+        free.erase(free.begin() + static_cast<std::ptrdiff_t>(*m));
+        freeIndex.erase(freeIndex.begin() + static_cast<std::ptrdiff_t>(*m));
+    }
+    return plan;
 }
 
 bool MidiInputs::isOpen(const std::string& name) const
@@ -187,42 +274,60 @@ std::vector<MidiPortEvent> MidiInputs::setPorts(const std::vector<std::string>& 
     return added ? checkConnections() : std::vector<MidiPortEvent>{};
 }
 
+bool MidiInputs::isBlocked(const std::string& name) const
+{
+    const Port* p = find(name);
+    return p != nullptr && p->blocked;
+}
+
 std::vector<MidiPortEvent> MidiInputs::checkConnections()
 {
     std::vector<MidiPortEvent> events;
     if (ports_.empty()) return events;
     const std::vector<std::string> available = availablePorts();
-    for (auto& p : ports_) {
-        Port& port = *p;
-        const bool connected = port.connected.load(std::memory_order_relaxed);
-        if (connected) {
-            // Still there, perhaps under a new number (Windows renumbers the
-            // other devices when one is unplugged): the open handle stays valid.
-            const auto still = matchMidiPort(available, port.openedAs);
-            if (still) {
-                port.openedAs = available[*still];
-            } else {
-                disconnect(port);
-                port.disconnects.fetch_add(1, std::memory_order_relaxed);
-                events.push_back({MidiPortEvent::Kind::Disconnected, port.name, port.openedAs});
-                // The next checks find it missing: that is already reported.
-                port.lastProblem = "MIDI input \"" + port.name + "\" was not found.";
-            }
-            continue;
-        }
-        const auto index = matchMidiPort(available, port.name);
-        std::string problem;
-        if (!index) {
-            problem = "MIDI input \"" + port.name + "\" was not found.";
-        } else {
-            problem = connect(port, available[*index]);
-        }
+    std::vector<MidiPortState> states;
+    for (const auto& p : ports_) {
+        states.push_back({p->name, p->connected.load(std::memory_order_relaxed), p->openedAs, p->blocked});
+    }
+    const MidiCheckPlan plan = planMidiCheck(states, available);
+
+    for (const auto& [i, name] : plan.rename) ports_[i]->openedAs = name;
+    for (std::size_t i : plan.disconnect) {
+        Port& port = *ports_[i];
+        disconnect(port);
+        port.disconnects.fetch_add(1, std::memory_order_relaxed);
+        events.push_back({MidiPortEvent::Kind::Disconnected, port.name, port.openedAs});
+        // The next checks find it missing: that is already reported.
+        port.lastProblem = "MIDI input \"" + port.name + "\" was not found.";
+    }
+    for (std::size_t i : plan.block) {
+        Port& port = *ports_[i];
+        disconnect(port);
+        port.disconnects.fetch_add(1, std::memory_order_relaxed);
+        port.blocked = true;
+        events.push_back({MidiPortEvent::Kind::Ambiguous, port.name, port.openedAs});
+    }
+    std::vector<bool> connecting(ports_.size(), false);
+    for (const auto& [i, actual] : plan.connect) {
+        connecting[i] = true;
+        Port& port = *ports_[i];
+        const std::string problem = connect(port, actual);
         if (problem.empty()) {
             events.push_back({port.everConnected ? MidiPortEvent::Kind::Reconnected : MidiPortEvent::Kind::Opened,
                               port.name, port.openedAs});
             port.everConnected = true;
             port.lastProblem.clear();
         } else if (problem != port.lastProblem) {
+            events.push_back({MidiPortEvent::Kind::Failed, port.name, problem});
+            port.lastProblem = problem;
+        }
+    }
+    // Wanted, not connected and not found: report once.
+    for (std::size_t i = 0; i < ports_.size(); ++i) {
+        Port& port = *ports_[i];
+        if (connecting[i] || port.blocked || port.connected.load(std::memory_order_relaxed)) continue;
+        const std::string problem = "MIDI input \"" + port.name + "\" was not found.";
+        if (problem != port.lastProblem) {
             events.push_back({MidiPortEvent::Kind::Failed, port.name, problem});
             port.lastProblem = problem;
         }

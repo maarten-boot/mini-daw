@@ -64,6 +64,7 @@ Status column in the Results section at the end.
 | T-REC-30 | SPEC-REC-01b | A | Session: a MIDI port is unplugged during a take (and once before it) | Take result: 1 disconnect for that port, 0 for the other; events that arrived are kept; take counts as lost data |
 | T-REC-31 | SPEC-REC-01b | A | Port matching: same name, new ALSA client number, Windows renumbering, missing port, two devices of the same kind | Found; found; found; not found; only the exact name |
 | T-REC-32 | SPEC-REC-01b | M | Arm a MIDI track; unplug the keyboard, plug it in again; also during a recording; plug in a new keyboard | "DISCONNECTED - waiting for it", then back to the message count without re-arming; take summary reports the disconnect; the new keyboard appears in the port list within about 2 s |
+| T-REC-33 | SPEC-REC-01b | A | Port check plan with identical devices (WinMM names): one renumbered; one gone; two open and the first unplugged; both unplugged; three present; three open and one unplugged; a blocked port; two waiting ports | Renamed, stays open; disconnected; both closed and blocked; both disconnected (reopened later); none closed; all three blocked; not reopened, others keep their own entry; each gets its own |
 
 ## Diagnostics
 | ID | Spec | Type | Description | Expected result |
@@ -72,6 +73,7 @@ Status column in the Results section at the end.
 | T-LOG-02 | SPEC-LOG-01 | A | Lines in memory, counts, more than 2000 lines, two threads writing | Order kept, oldest dropped, counts right, nothing lost between threads |
 | T-LOG-03 | SPEC-LOG-01 | A | The log file cannot be created | Error text returned; the log still works in memory |
 | T-LOG-04 | SPEC-LOG-01 | M | GUI: View → Log (Ctrl+L), "Only warnings and errors", "Copy all", "Open log folder"; unplug a MIDI keyboard | Lines shown with level as text; filter works; clipboard holds the lines; the file manager opens the folder; the disconnect appears in the log and the status line count |
+| T-LOG-05 | SPEC-LOG-01 | A | The previous log cannot be renamed (a non-empty folder in the place of `mini-daw.old.log`) | The new run is added to the end of the old file after a marked line; nothing lost |
 
 ## Monitoring
 | ID | Spec | Type | Description | Expected result |
@@ -79,7 +81,7 @@ Status column in the Results section at the end.
 | T-MON-01 | SPEC-MON-01, 01a | M | Monitoring on, then off, on an armed track (GUI, or `--audio-test 5 --monitor`) | Input is heard and the output meter shows it, then silent; state shown as text; delay note shown while on |
 | T-MON-02 | SPEC-MON-02, 02a | A+M | Feed a −6 dBFS sine wave | Meter reads −6 dB ± 0.5 |
 | T-MON-03 | SPEC-MON-01a | A | Monitor gains from tracks: mono, stereo, not armed, monitor off, channel used twice, channel beyond the device, MIDI track | Mono both sides, stereo left/right, the rest silent, a shared channel heard once |
-| T-MON-04 | SPEC-MON-01a, NF-01 | A | Mixer: steady gains, switch on, switch off, mono output, overload, no input | Routed as set; gains ramp over the block; L/R averaged; output limited to ±1 with the real peak reported; silence |
+| T-MON-04 | SPEC-MON-01a, 02a, NF-01 | A | Mixer: steady gains, switch on, switch off, mono output, overload, per-channel peaks, NaN input, no input | Routed as set; gains ramp over the block; L/R averaged; output limited to ±1 with the real (per-channel) peak reported; a NaN sample becomes silence; silence |
 | T-MON-05 | SPEC-MON-02a, UI-07 | A | Meter: fall rate, peak hold, text window, clip at full scale, clear, NaN input | 20 dB/s; hold 1.5 s then falls; louder peak at once; CLIP latched until cleared; NaN = silence |
 | T-MON-06 | SPEC-MON-01a, 02a | M | Windows (WASAPI): headphones, an armed track with Monitor on; sing or play loudly up to clipping; click CLIP; press Record | Input heard with little delay; CLIP appears and clears on click and at Record; no clicks when switching Monitor on/off |
 
@@ -216,3 +218,7 @@ Status column in the Results section at the end.
 | 2026-11-02 | T-REC-32 (headless) | Linux VM, `tools/midi_test/vkeys.c` as a keyboard that comes and goes, `--record-test 12` | pass | Disconnect noticed 0.1 s after the port went, reconnected at the next 2 s check, disconnected again at its end; summary "disconnected 2 time(s)", exit code 1; all in the log |
 | 2026-11-02 | T-REC-32, T-LOG-04 (GUI part) | Linux VM, Xvfb + xdotool + vkeys | pass | Track shows "DISCONNECTED - waiting for it", then the message count again without re-arming; the new port appears in the list; View → Log shows open / disconnect / connected again / list changes. Fixed on the way: MIDI port box pushed the channel box out of view (now fits; full name as tooltip) |
 | 2026-11-02 | T-LOG-01 (Windows build) | Wine, GUI | pass | `mini-daw.log` written next to the `--config` file: renderer D3D11, WASAPI devices, the expected WASAPI error under Wine |
+| 2026-11-02 | T-CI-02 | GitHub Actions run 41518587535 (`bc3d8e5`, P7 + hot-plug + log) | pass | windows 5m11s (97/97, MSVC, no compiler warnings), linux 1m51s (97/97), licence; both downloads present |
+| 2026-11-02 | T-UI-09 | Linux VM, screenshots of 2026-11-02 (P7, hot-plug) | pass (Linux) | Levels readable without colour: dBFS text beside every bar, CLIP as a labelled button, "armed", "on"/"off", "receiving", "DISCONNECTED - waiting for it" as text. Windows with the user's next test |
+| 2026-11-02 | crosscheck #5 fixes (K1–K8): T-REC-31, T-REC-33, T-MON-04, T-LOG-05 | Linux 99/99 ctest; MinGW build under Wine 98/98 Catch2 cases (1088 assertions) | pass | First version of the NaN test expected input 3 to survive in the NaN frame; the NaN is summed into both sides first, so that sample is silence as specified: test corrected |
+| 2026-11-02 | T-REC-32 (regression), T-LOG-01 | Linux VM, vkeys + `--record-test 10` | pass | Disconnect, reconnect, disconnect; "disconnected 2 time(s)"; the log now also has the device scan and the audio stream line in this mode (K3) |

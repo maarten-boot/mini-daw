@@ -25,6 +25,16 @@ inline std::FILE* openForWriting(const std::filesystem::path& path, bool update)
 #endif
 }
 
+// Opens for appending ("ab"), with the same sharing rule as openForWriting.
+inline std::FILE* openForAppending(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    return _wfsopen(path.c_str(), L"ab", _SH_DENYWR);
+#else
+    return std::fopen(path.c_str(), "ab");
+#endif
+}
+
 // Flush the C buffer and force the data onto the disk (FlushFileBuffers / fsync).
 inline bool syncToDisk(std::FILE* file)
 {

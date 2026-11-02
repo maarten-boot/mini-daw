@@ -122,6 +122,7 @@ struct AppState {
     std::vector<std::string> midiWarnings; // the latest MIDI events, shown under the tracks
     minidaw::RecordingSession session;
     std::string recordError;
+    std::string loggedRecordingError;      // the disk error already written to the log
     std::vector<std::string> lastTake;     // summary of the last recording
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
@@ -285,10 +286,12 @@ int printContrastReport(const AppState& app)
 int runAudioTest(AppState& app, int seconds, bool monitor)
 {
     app.scan = minidaw::scanDevices();
+    logScan(app);
     const auto& s = app.config.audio;
     std::printf("Requested: input %s, output %s, %u Hz, %u frames\n", s.inputDevice.c_str(),
                 s.outputDevice.c_str(), s.sampleRate, s.bufferFrames);
     minidaw::OpenResult r = app.audio.open(s, app.scan);
+    logOpenResult(app, r);
     for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
     if (!r.error.empty()) {
         std::printf("error: %s\n", r.error.c_str());
@@ -409,6 +412,12 @@ std::string noteMidiEvent(AppState& app, const minidaw::MidiPortEvent& e, bool r
         text = e.detail + " Trying again every 2 seconds.";
         app.log.warning(text);
         break;
+    case Kind::Ambiguous:
+        text = port + as + ": one of several identical MIDI devices was unplugged and mini-daw cannot tell which, " +
+               "so all of them are closed" + (recording ? " (MIDI from them is missing from now on)" : "") +
+               ". Arm the track off and on to open it again.";
+        app.log.warning(text);
+        break;
     }
     return text;
 }
@@ -417,7 +426,9 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
 {
     app.scan = minidaw::scanDevices();
     for (const auto& w : app.scan.warnings) std::printf("warning: %s\n", w.c_str());
+    logScan(app);
     minidaw::OpenResult r = app.audio.open(app.config.audio, app.scan);
+    logOpenResult(app, r);
     for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
     if (!r.error.empty()) {
         std::printf("error: %s\n", r.error.c_str());
@@ -466,7 +477,10 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
     app.log.info("Recording test into " + minidaw::pathToUtf8(app.session.folder()));
     for (int t = 0; t < seconds * 10; ++t) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (!app.session.diskError().empty()) break;
+        if (!app.session.diskError().empty()) {
+            app.log.error("Recording: " + app.session.diskError());
+            break;
+        }
         if (t % 20 == 19) {  // hot-plug check every 2 s, as in the GUI
             for (const auto& e : app.midi.checkConnections()) {
                 std::printf("%s\n", noteMidiEvent(app, e, true).c_str());
@@ -668,7 +682,11 @@ void drawAudioSettingsWindow(AppState& app)
         }
         if (ImGui::Button("Apply")) applyAudioSettings(app, app.pendingAudio, true);
         ImGui::SameLine();
-        if (ImGui::Button("Rescan devices")) app.scan = minidaw::scanDevices();
+        if (ImGui::Button("Rescan devices")) {
+            app.scan = minidaw::scanDevices();
+            app.log.info("Devices rescanned");
+            logScan(app);
+        }
         ImGui::SameLine();
         if (ImGui::Button("Close")) app.showAudioSettings = false;
         if (!app.audioError.empty()) ImGui::TextWrapped("Error: %s", app.audioError.c_str());
@@ -980,6 +998,10 @@ void drawTransport(AppState& app)
         ImGui::TextWrapped("Into: %s", minidaw::pathToUtf8(app.session.folder()).c_str());
         const std::string err = app.session.diskError();
         if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
+        if (err != app.loggedRecordingError) {  // log it at once, not only at Stop (crosscheck #5, K3)
+            if (!err.empty()) app.log.error("Recording: " + err);
+            app.loggedRecordingError = err;
+        }
     } else {
         if (ImGui::SmallButton("Recording settings...")) {
             app.pendingRecording = app.config.recording;
@@ -1108,6 +1130,12 @@ void drawTracksPanel(AppState& app)
                 } else {
                     drawMeter(app, meters, 10 * em);
                 }
+            } else if (t.armed && app.midi.isBlocked(t.midiPort)) {
+                ImGui::TextUnformatted("CLOSED - arm off and on");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("One of several identical MIDI devices was unplugged; mini-daw cannot tell "
+                                      "which.\nArm this track off and on to open the port again.");
+                }
             } else if (t.armed && app.midi.isWanted(t.midiPort) && !app.midi.isOpen(t.midiPort)) {
                 ImGui::TextUnformatted(app.midi.disconnects(t.midiPort) > 0 ? "DISCONNECTED - waiting for it"
                                                                            : "not connected - waiting for it");
@@ -1180,10 +1208,13 @@ void drawRecordingSettingsWindow(AppState& app)
     ImGui::End();
 }
 
-void drawDevicesPanel(minidaw::DeviceScan& scan)
+void drawDevicesPanel(AppState& app)
 {
+    minidaw::DeviceScan& scan = app.scan;
     if (ImGui::Button("Rescan devices")) {
         scan = minidaw::scanDevices();
+        app.log.info("Devices rescanned");
+        logScan(app);
     }
     ImGui::SameLine();
     ImGui::Text("Audio API: %s", scan.audioApi.empty() ? "(none)" : scan.audioApi.c_str());
@@ -1236,13 +1267,17 @@ bool openFolder(const std::filesystem::path& folder)
 #else
     const char* tool = "xdg-open";
 #endif
+    // Do not wait for it: on some desktops xdg-open stays until the file
+    // manager closes (crosscheck #5, K6). Children from earlier clicks are
+    // reaped here without blocking.
+    static std::vector<pid_t> children;
+    std::erase_if(children, [](pid_t p) { return waitpid(p, nullptr, WNOHANG) != 0; });
     const std::string dir = folder.string();
     char* args[] = {const_cast<char*>(tool), const_cast<char*>(dir.c_str()), nullptr};
     pid_t pid = 0;
-    if (posix_spawnp(&pid, tool, nullptr, nullptr, args, environ) != 0) return false;
-    int status = 0;
-    waitpid(pid, &status, 0);  // xdg-open returns at once; the file manager keeps running
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (posix_spawnp(&pid, tool, nullptr, nullptr, args, environ) != 0) return false;  // e.g. no xdg-open
+    children.push_back(pid);
+    return true;
 #endif
 }
 
@@ -1395,7 +1430,7 @@ int runGui(AppState& app)
             drawAudioStatus(app);
             drawTransport(app);
             drawTracksPanel(app);
-            if (ImGui::CollapsingHeader("Devices")) drawDevicesPanel(app.scan);
+            if (ImGui::CollapsingHeader("Devices")) drawDevicesPanel(app);
         }
         ImGui::EndChild();
         drawStatusLine(app);

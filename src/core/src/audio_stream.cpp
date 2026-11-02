@@ -321,12 +321,12 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
             target.right[ch] = self->monitorRight_[ch].load(std::memory_order_relaxed);
         }
         auto* out = static_cast<float*>(output);
-        const unsigned int outCh = self->cbOutputChannels_;
+        const unsigned int outCh = self->cbOutputChannels_;  // at most kMaxOutputChannels
+        float peaks[kMaxOutputChannels] = {};
         if (mixMonitor(static_cast<const float*>(input), frames, self->cbInputChannels_, out, outCh,
-                       self->monitorCurrent_, target) > 0.0f) {
+                       self->monitorCurrent_, target, peaks) > 0.0f) {
             for (unsigned int ch = 0; ch < outCh && ch < kMaxOutputChannels; ++ch) {
-                float peak = 0.0f;
-                for (unsigned int f = 0; f < frames; ++f) peak = std::max(peak, std::fabs(out[f * outCh + ch]));
+                const float peak = peaks[ch];  // before limiting, so the meter shows an overload (K7)
                 auto& slot = self->outPeaks_[ch];
                 float prev = slot.load(std::memory_order_relaxed);
                 while (peak > prev && !slot.compare_exchange_weak(prev, peak, std::memory_order_relaxed)) {

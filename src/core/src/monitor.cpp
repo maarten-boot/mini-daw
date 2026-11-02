@@ -24,8 +24,11 @@ MonitorGains monitorGains(const std::vector<Track>& tracks, unsigned int inputCh
 }
 
 float mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, float* out,
-                 unsigned int outChannels, MonitorGains& current, const MonitorGains& target)
+                 unsigned int outChannels, MonitorGains& current, const MonitorGains& target, float* channelPeaks)
 {
+    if (channelPeaks != nullptr) {
+        for (unsigned int c = 0; c < outChannels; ++c) channelPeaks[c] = 0.0f;
+    }
     if (out == nullptr || outChannels == 0 || frames == 0) {
         current = target;
         return 0.0f;
@@ -57,12 +60,15 @@ float mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, 
     if (!any) return 0.0f;
 
     float peak = 0.0f;
-    const unsigned int n = frames * outChannels;
-    for (unsigned int i = 0; i < n; ++i) {
-        const float v = out[i];
-        const float a = std::fabs(v);
-        if (a > peak) peak = a;
-        out[i] = std::clamp(v, -1.0f, 1.0f);
+    for (unsigned int f = 0; f < frames; ++f) {
+        for (unsigned int c = 0; c < outChannels; ++c) {
+            float& v = out[f * outChannels + c];
+            if (!(v == v)) v = 0.0f;  // NaN: std::clamp would pass it on (K4)
+            const float a = std::fabs(v);
+            if (a > peak) peak = a;
+            if (channelPeaks != nullptr && a > channelPeaks[c]) channelPeaks[c] = a;
+            v = std::clamp(v, -1.0f, 1.0f);
+        }
     }
     return peak;
 }

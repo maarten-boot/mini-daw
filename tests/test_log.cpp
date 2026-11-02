@@ -90,6 +90,28 @@ TEST_CASE("T-LOG-02: lines in memory, counts, levels as text", "[log][T-LOG-02]"
     CHECK(shared.warningCount() == 1000);
 }
 
+TEST_CASE("T-LOG-05: the previous log cannot be renamed: the new run is added, nothing lost", "[log][T-LOG-05]")
+{
+    test::TempDir dir;
+    const fs::path file = dir.path() / "mini-daw.log";
+    {
+        Log log;
+        REQUIRE(log.open(file).empty());
+        log.info("first run");
+    }
+    // A non-empty folder in the place of the .old.log cannot be removed or replaced.
+    fs::create_directories(Log::oldFileFor(file) / "blocker");
+    {
+        Log log;
+        REQUIRE(log.open(file).empty());
+        log.info("second run");
+    }
+    const std::string text = readAll(file);
+    CHECK(text.find("first run") != std::string::npos);
+    CHECK(text.find("could not be renamed") != std::string::npos);
+    CHECK(text.find("second run") != std::string::npos);
+}
+
 TEST_CASE("T-LOG-03: a log file that cannot be created is reported; memory still works", "[log][T-LOG-03]")
 {
     test::TempDir dir;
@@ -102,23 +124,94 @@ TEST_CASE("T-LOG-03: a log file that cannot be created is reported; memory still
 
 TEST_CASE("T-REC-31: MIDI ports are found again under a new number", "[midi][T-REC-31]")
 {
-    CHECK(midiPortBaseName("Keystation 49 MK3 1") == "Keystation 49 MK3");        // Windows: index
-    CHECK(midiPortBaseName("Keystation 49 MK3:Keystation 49 MK3 MIDI 1 24:0") ==
-          "Keystation 49 MK3:Keystation 49 MK3 MIDI 1");                           // ALSA: client:port
-    CHECK(midiPortBaseName("Midi Through:Midi Through Port-0 14:0") == "Midi Through:Midi Through Port-0");
-    CHECK(midiPortBaseName("NoNumber") == "NoNumber");
-    CHECK(midiPortBaseName("Ends:5") == "Ends:5");
-    CHECK(midiPortBaseName("12") == "12");
+    const auto W = MidiNaming::WinMM;
+    const auto A = MidiNaming::Alsa;
+    const auto P = MidiNaming::Plain;
+    CHECK(midiPortBaseName("Keystation 49 MK3 1", W) == "Keystation 49 MK3");                // WinMM: index
+    CHECK(midiPortBaseName("Keystation 49 MK3:Keystation 49 MK3 MIDI 1 24:0", A) ==
+          "Keystation 49 MK3:Keystation 49 MK3 MIDI 1");                                     // ALSA: client:port
+    CHECK(midiPortBaseName("Midi Through:Midi Through Port-0 14:0", A) == "Midi Through:Midi Through Port-0");
+    CHECK(midiPortBaseName("Synth 1", A) == "Synth 1");        // ALSA only strips " C:P" (K2)
+    CHECK(midiPortBaseName("Keys 24:0", W) == "Keys 24:0");     // WinMM only strips " N"
+    CHECK(midiPortBaseName("Synth 1", P) == "Synth 1");        // CoreMIDI/JACK: the number is part of the name
+    CHECK(midiPortBaseName("NoNumber", W) == "NoNumber");
+    CHECK(midiPortBaseName("Ends:5", A) == "Ends:5");
+    CHECK(midiPortBaseName("12", W) == "12");
 
-    const std::vector<std::string> now = {"Midi Through:Midi Through Port-0 14:0", "Keys:Keys MIDI 1 28:0",
-                                          "loopMIDI Port 2"};
-    CHECK(matchMidiPort(now, "Keys:Keys MIDI 1 28:0") == 1u);  // same name
-    CHECK(matchMidiPort(now, "Keys:Keys MIDI 1 24:0") == 1u);  // plugged in again, new client number
-    CHECK(matchMidiPort(now, "loopMIDI Port 0") == 2u);        // Windows renumbered it
-    CHECK_FALSE(matchMidiPort(now, "Pads 1").has_value());     // not there
+    const std::vector<std::string> alsa = {"Midi Through:Midi Through Port-0 14:0", "Keys:Keys MIDI 1 28:0"};
+    CHECK(matchMidiPort(alsa, "Keys:Keys MIDI 1 28:0", A) == 1u);  // same name
+    CHECK(matchMidiPort(alsa, "Keys:Keys MIDI 1 24:0", A) == 1u);  // plugged in again, new client number
+    CHECK_FALSE(matchMidiPort(alsa, "Pads 1", A).has_value());     // not there
+    CHECK(matchMidiPort({"loopMIDI Port 2"}, "loopMIDI Port 0", W) == 0u);  // Windows renumbered it
+    // Without a backend number, "Synth 1" never opens "Synth 2" (K2).
+    CHECK_FALSE(matchMidiPort({"Synth 2"}, "Synth 1", P).has_value());
+    CHECK(matchMidiPort({"Synth 2", "Synth 1"}, "Synth 1", P) == 1u);
 
     // Two devices of the same kind: only an exact name is trusted.
     const std::vector<std::string> twins = {"Keys 0", "Keys 1"};
-    CHECK(matchMidiPort(twins, "Keys 1") == 1u);
-    CHECK_FALSE(matchMidiPort(twins, "Keys 2").has_value());
+    CHECK(matchMidiPort(twins, "Keys 1", W) == 1u);
+    CHECK_FALSE(matchMidiPort(twins, "Keys 2", W).has_value());
+}
+
+TEST_CASE("T-REC-33: identical MIDI devices: an unplug is never missed or guessed", "[midi][T-REC-33]")
+{
+    const auto W = MidiNaming::WinMM;
+    auto open = [](std::string name, std::string as) { return MidiPortState{std::move(name), true, std::move(as), false}; };
+
+    SECTION("one device renumbered by Windows: stays connected under its new name")
+    {
+        const auto plan = planMidiCheck({open("Keys 1", "Keys 1")}, {"Keys 0"}, W);
+        CHECK(plan.disconnect.empty());
+        CHECK(plan.block.empty());
+        REQUIRE(plan.rename.size() == 1);
+        CHECK(plan.rename[0].second == "Keys 0");
+    }
+    SECTION("one device gone")
+    {
+        const auto plan = planMidiCheck({open("Keys 0", "Keys 0")}, {"Other 0"}, W);
+        CHECK(plan.disconnect == std::vector<std::size_t>{0});
+    }
+    SECTION("two identical devices, the first unplugged (the survivor is renamed 'X 0'): both closed and blocked")
+    {
+        const auto plan = planMidiCheck({open("X 0", "X 0"), open("X 1", "X 1")}, {"X 0"}, W);
+        CHECK(plan.block == std::vector<std::size_t>{0, 1});
+        CHECK(plan.disconnect.empty());
+        CHECK(plan.connect.empty());
+    }
+    SECTION("two identical devices, both unplugged: plain disconnects, reopened when back")
+    {
+        const auto plan = planMidiCheck({open("X 0", "X 0"), open("X 1", "X 1")}, {}, W);
+        CHECK(plan.disconnect == std::vector<std::size_t>{0, 1});
+        CHECK(plan.block.empty());
+    }
+    SECTION("three identical devices all present: none closed (was wrongly closed before K1)")
+    {
+        const auto plan = planMidiCheck({open("X 0", "X 0"), open("X 1", "X 1"), open("X 2", "X 2")},
+                                        {"X 0", "X 1", "X 2"}, W);
+        CHECK(plan.disconnect.empty());
+        CHECK(plan.block.empty());
+        CHECK(plan.rename.empty());
+    }
+    SECTION("three open, one unplugged: all three blocked")
+    {
+        const auto plan =
+            planMidiCheck({open("X 0", "X 0"), open("X 1", "X 1"), open("X 2", "X 2")}, {"X 0", "X 1"}, W);
+        CHECK(plan.block.size() == 3);
+    }
+    SECTION("a blocked port is not reopened; a waiting port does not take an entry another port holds")
+    {
+        std::vector<MidiPortState> ports = {open("X 0", "X 0"), {"X 1", false, "", true}, {"Y 0", false, "", false}};
+        const auto plan = planMidiCheck(ports, {"X 0", "X 1", "Y 3"}, W);
+        REQUIRE(plan.connect.size() == 1);
+        CHECK(plan.connect[0].first == 2u);
+        CHECK(plan.connect[0].second == "Y 3");
+    }
+    SECTION("two waiting ports for two identical devices: each gets its own")
+    {
+        std::vector<MidiPortState> ports = {{"X 0", false, "", false}, {"X 1", false, "", false}};
+        const auto plan = planMidiCheck(ports, {"X 0", "X 1"}, W);
+        REQUIRE(plan.connect.size() == 2);
+        CHECK(plan.connect[0].second == "X 0");
+        CHECK(plan.connect[1].second == "X 1");
+    }
 }

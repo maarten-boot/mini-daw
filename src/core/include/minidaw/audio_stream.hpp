@@ -87,8 +87,8 @@ public:
     // (0 .. 1, can exceed 1 when clipping). Resets the value.
     float takeInputPeak(unsigned int channel);
 
-    // Highest absolute output value per output channel since the last call
-    // (after limiting to -1..1, so 1.0 means the output was limited). Resets it.
+    // Highest absolute output value per output channel since the last call,
+    // before limiting to -1..1 (above 1.0: the output was limited). Resets it.
     float takeOutputPeak(unsigned int channel);
 
     // Input monitoring (SPEC-MON-01): the gains the callback mixes with from

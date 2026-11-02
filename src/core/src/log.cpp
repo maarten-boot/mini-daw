@@ -70,16 +70,36 @@ std::string Log::open(const std::filesystem::path& file)
     std::lock_guard<std::mutex> lock(mutex_);
     std::error_code ec;
     if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
+    std::string renameError;
     if (std::filesystem::exists(file, ec)) {
         const auto old = oldFileFor(file);
-        std::filesystem::remove(old, ec);  // Windows' rename does not replace
-        std::filesystem::rename(file, old, ec);
+        std::error_code rmEc;
+        std::filesystem::remove(old, rmEc);  // Windows' rename does not replace
+        std::error_code mvEc;
+        std::filesystem::rename(file, old, mvEc);
+        if (mvEc) renameError = mvEc.message();
     }
-    fp_ = detail::openForWriting(file, false);
     fileBytes_ = 0;
     fileFull_ = false;
-    if (!fp_) return "The log file " + pathToUtf8(file) + " could not be created.";
+    // If the previous run could not be moved aside (e.g. another mini-daw has
+    // it open), add to it instead of overwriting it (crosscheck #5, K5).
+    fp_ = renameError.empty() ? detail::openForWriting(file, false) : detail::openForAppending(file);
+    if (!fp_) {
+        return "The log file " + pathToUtf8(file) + " could not be " + (renameError.empty() ? "created." : "opened.") +
+               (renameError.empty() ? "" : " (The previous log could not be renamed: " + renameError + ")");
+    }
     file_ = file;
+    if (!renameError.empty()) {
+        fileBytes_ = std::filesystem::file_size(file, ec);
+        if (ec) fileBytes_ = 0;
+        const std::string line = "\n" + nowText() +
+                                 " WARNING ---- New run. The previous log could not be renamed to " +
+                                 pathToUtf8(oldFileFor(file).filename()) + " (" + renameError +
+                                 "), so this run is added to it. ----\n";
+        std::fwrite(line.data(), 1, line.size(), fp_);
+        std::fflush(fp_);
+        fileBytes_ += line.size();
+    }
     return {};
 }
 

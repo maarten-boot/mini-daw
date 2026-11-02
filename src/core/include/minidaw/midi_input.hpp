@@ -40,18 +40,47 @@ struct RawMidi {
     std::uint8_t size = 0;
 };
 
-// RtMidi adds a number to port names: Windows " 0" (the device index), ALSA
-// " 24:0" (client:port). Both can change when a device is plugged in again.
-// This returns the name without that number.
-std::string midiPortBaseName(std::string_view name);
+// RtMidi adds a number to port names: Windows (WinMM) " 0" (the device
+// index), ALSA " 24:0" (client:port). Both can change when a device is
+// plugged in again or another one is removed. Other backends (CoreMIDI,
+// JACK: later) add nothing, so a trailing number there is part of the name.
+enum class MidiNaming { WinMM, Alsa, Plain };
+MidiNaming nativeMidiNaming();
+
+// The name without the number this backend adds (unchanged for Plain, or
+// when the name does not end in that backend's kind of number).
+std::string midiPortBaseName(std::string_view name, MidiNaming naming = nativeMidiNaming());
 
 // The port in `available` to use for `wanted`: the same name, else the only
 // port with the same base name. Empty if none (or several) match.
-std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted);
+std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted,
+                                         MidiNaming naming = nativeMidiNaming());
+
+// What checkConnections() decides, as a pure function (unit-tested,
+// crosscheck #5 K1). Ports are checked per base name by count: they stay
+// connected while at least as many ports with that base name are present
+// (the open handles stay valid when the system renumbers them). When the
+// count drops and several open ports share the base name, it cannot be told
+// which device went: all of them are closed and blocked (not reopened
+// automatically), so a track never silently records the other device.
+struct MidiPortState {
+    std::string name;          // the name the track uses
+    bool connected = false;
+    std::string openedAs;      // when connected: the name it was opened as
+    bool blocked = false;      // after an ambiguous unplug: wait for the user
+};
+struct MidiCheckPlan {
+    std::vector<std::size_t> disconnect;                          // gone
+    std::vector<std::size_t> block;                               // gone or not: cannot tell (also disconnect)
+    std::vector<std::pair<std::size_t, std::string>> rename;      // still there, new name
+    std::vector<std::pair<std::size_t, std::string>> connect;     // open as this available name
+};
+MidiCheckPlan planMidiCheck(const std::vector<MidiPortState>& ports, const std::vector<std::string>& available,
+                            MidiNaming naming = nativeMidiNaming());
 
 // A change found by MidiInputs::checkConnections().
 struct MidiPortEvent {
-    enum class Kind { Opened, Disconnected, Reconnected, Failed } kind = Kind::Opened;
+    enum class Kind { Opened, Disconnected, Reconnected, Failed, Ambiguous } kind = Kind::Opened;
     std::string port;      // the name the track uses
     std::string detail;    // the name it was opened as, or the error
 };
@@ -80,6 +109,9 @@ public:
 
     // Wanted and connected.
     bool isOpen(const std::string& name) const override;
+    // Closed after an ambiguous unplug of identical devices; the user has to
+    // choose the port again (arm the track off and on).
+    bool isBlocked(const std::string& name) const;
     // Wanted (setPorts), connected or not.
     bool isWanted(const std::string& name) const { return find(name) != nullptr; }
     // Times the port went away since it was first wanted (SessionMidi).
@@ -112,6 +144,7 @@ private:
         bool everConnected = false;     // GUI thread only
         std::string openedAs;           // GUI thread only: RtMidi name it was opened as
         std::string lastProblem;        // GUI thread only: last failure reported
+        bool blocked = false;           // GUI thread only: ambiguous unplug, not reopened (K1)
         // Last, so it is destroyed first: its thread stops before the ring goes.
         // Only the GUI thread touches it.
         std::unique_ptr<RtMidiIn> in;

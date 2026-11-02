@@ -51,3 +51,48 @@ Scope: Spec v0.13, Plan, Tests, README, code at commit `c80053f`. Spec ↔ Plan 
 | J14 | SPEC-REC-04a states what happens before time 0 and how the end is chosen. |
 
 Result: Linux 88/88 ctest; MinGW build under Wine 87/87 Catch2 cases; live MIDI regression on the VM: gaps within 0.52 ms with a 1024-frame buffer.
+
+---
+
+# Crosscheck #5 — 2026-11-02 (after P7 and P7b)
+
+Scope: Spec v0.16, Plan, Tests, README, code at commit `bc3d8e5` (changes since `d6874b7`: monitoring, meters, MIDI hot-plug, log). Spec ↔ Plan ↔ Tests ↔ code checked by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Findings K1, K2 and K4 were checked again in the code.
+
+| Area | Verdict |
+|------|---------|
+| NF-01 (audio callback) | ✅ monitoring mix, gain ramp, output peaks: no locks, allocation, I/O or log calls; gains via atomics; channel counts clamped (32 in, 2 out) |
+| MON-01a / 02a | ✅ as specified (live on the VM); ⚠️ NaN input reaches the output → **K4** |
+| REC-01b (hot-plug) | ✅ no data race: the port list only changes outside recordings, the session thread only reads rings and atomics, the old RtMidi thread is joined before a new one writes the ring; ❌ identical devices → **K1**; ⚠️ base-name rule too loose for backends without RtMidi numbering → **K2** |
+| LOG-01 | ⚠️ `--audio-test` / `--record-test` do not log the device scan and the audio open, a disk error during a recording reaches the log only at Stop, "Rescan devices" is not logged → **K3**; a failed rename of the old log goes unnoticed → **K5** |
+| GUI | ✅ Begin/End and Disabled pairs balanced, IDs distinct, status as text (UI-07); ⚠️ "Open log folder" waits for `xdg-open` on the GUI thread → **K6** |
+| Spec ↔ tests | ✅ every Spec item has a test or is a design rule / sub-item (TECH-*, the "a" items); T-UI-09 can now be run → **K8** |
+| Plan | ⚠️ PX row does not list #5 yet |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| K1 | medium | Two identical MIDI devices on Windows ("X 0", "X 1"), both armed. Unplug the first: WinMM renumbers the survivor to "X 0". Track A's handle (opened as "X 0") matches the survivor's new name and stays "connected"; track B's also matches by base name. The unplug is not noticed and not counted, so the take loses A's MIDI silently. With three identical devices the opposite happens: the base name is ambiguous, so a working port is closed as "disconnected" and never reopened. | Check connected ports per base name by **count**: still connected while at least as many ports with that base are present. When the count drops and more than one open port shares the base, mini-daw cannot tell which one went: close all of them with a warning and do not reopen them automatically (the user picks the ports again, so a track never silently records the other keyboard). Write this limit into SPEC-REC-01b; tests for 2 and 3 identical devices. |
+| K2 | low (now) | `midiPortBaseName` strips any trailing number. On a backend that adds no number (CoreMIDI, JACK: P12) "Synth 1" and "Synth 2" both become "Synth", so a track could open the other synth. On WinMM and ALSA the RtMidi suffix is always there, so not reachable today. | Strip only the suffix the backend adds: WinMM " N", ALSA " C:P", none elsewhere (explicit naming style, tested for all three). |
+| K3 | low | Log gaps against SPEC-LOG-01: (a) `--audio-test` / `--record-test` do not log the device scan or the audio open result; (b) a disk error during a recording is logged only at Stop (lost if the program crashes first); (c) "Rescan devices" is not logged. | Log them: scan + open result in both test modes, the disk error when it first appears, the rescan. |
+| K4 | low | `mixMonitor`: `std::clamp(NaN)` returns NaN, so a NaN input sample (float driver glitch) goes to the output. | Replace NaN by 0 before limiting; test. |
+| K5 | low | `Log::open` ignores a failed rename (e.g. a second mini-daw has the log open on Windows); the previous run's log is then lost or the open fails without saying why. | Report the rename failure as a warning in the new log (or the open error). |
+| K6 | low | "Open log folder" (Linux) waits for `xdg-open`; on a desktop where it stays in the foreground the GUI freezes until the file manager closes. | Do not wait: reap the child later without blocking. |
+| K7 | low (design) | The output meter is fed from the limited output, so it never shows how far the monitor mix went over 0 dBFS (CLIP still shows). The overload value `mixMonitor` returns is only used as "something was mixed". | Feed the meter with the value before limiting (per channel), so the dBFS text shows the overload. |
+| K8 | docs | T-UI-09 (meters readable without colour) was never recorded; the screenshots of 2026-11-02 show dBFS text, CLIP, "armed", "on"/"off" and "DISCONNECTED" as text. | Record T-UI-09 as passed on Linux; Windows with the user's next test. PX row: add #5. |
+| K9 | test gap | `MidiInputs` itself (setPorts, checkConnections, reconnect) has no automated test; T-REC-30 uses the stand-in. Tested live with `tools/midi_test/vkeys.c` only. | Keep the live test (documented in `CLAUDE.md`); an automated test with an RtMidi virtual port on Linux is possible but needs sequencer access in CI, so not now. |
+| K10 | note | `openPort` runs on the GUI thread; a driver that hangs on open would stall the window every 2 s. Not seen. | No change now; a worker thread if it shows up. |
+
+## Actions taken (user: "yes fix K1–K8, K1 first")
+| # | Done |
+|---|------|
+| K1 | `planMidiCheck` (pure, unit-tested): connected ports are checked per base name by count; renumbered ports keep their open handle under the new name; when the count drops and several open ports share the name, all are closed and blocked ("CLOSED - arm off and on", logged), never reopened as the other device; each available port serves one track port. T-REC-33 (2 and 3 identical devices). |
+| K2 | `MidiNaming` (WinMM " N", ALSA " C:P", Plain = none), native per platform; the base-name fallback only applies when the backend's number is there. T-REC-31 extended ("Synth 1" never opens "Synth 2"). |
+| K3 | `--audio-test` / `--record-test` log the device scan and the audio open; a disk error during a recording is logged when it appears (GUI and `--record-test`); both "Rescan devices" buttons log the new list. Checked live in `--record-test`. |
+| K4 | `mixMonitor` turns a NaN output sample into silence before limiting. T-MON-04. |
+| K5 | `Log::open`: if the previous log cannot be renamed, the new run is appended after a marked warning line (new `openForAppending`). T-LOG-05 (also under Wine). |
+| K6 | "Open log folder" (Linux/macOS) no longer waits for `xdg-open`; earlier children are reaped without blocking. |
+| K7 | `mixMonitor` reports the per-channel peak before limiting; the callback feeds the output meter with it (no second pass over the buffer), so the dBFS text shows an overload. T-MON-04. |
+| K8 | T-UI-09 recorded as passed on Linux; PX row lists #5. |
+| K9, K10 | No change (see above). |
+
+Result: Linux 99/99 ctest; MinGW build under Wine 98/98 Catch2 cases (1088 assertions); live hot-plug regression on the VM.

@@ -133,3 +133,20 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - Spec v0.16 (REC-01b, LOG-01); tests T-REC-30..32, T-LOG-01..04; `tools/midi_test/vkeys.c`.
 - Tests: Linux 97/97, Wine 96/96; live hot-plug headless and in the GUI on the VM; Windows build under Wine writes its log.
 - `dist/` now holds only the new Windows build.
+
+## 16. Crosscheck #5
+> pushed it, check the CI run
+> do the crosscheck #5
+
+- CI run 41518587535 for `bc3d8e5` started (result below when finished).
+- Crosscheck #5 in `Crosscheck-2026-11-02.md`: Spec ↔ Plan ↔ Tests ↔ code by Claude; code also by an independent reviewer (subagent), K1/K2/K4 re-checked in the code.
+- Main finding K1 (medium): with two identical MIDI devices, Windows renumbering can hide an unplug (and with three, close a working port). K2–K7 low (base-name rule for future backends, log gaps, NaN to the output, log rename failure, `xdg-open` wait, output meter after limiting); K8 docs; K9/K10 notes. Waiting for the user's go.
+- CI run 41518587535 (`bc3d8e5`): windows 97/97 (MSVC, no warnings), linux 97/97, licence: green.
+
+## 17. Crosscheck #5 fixes
+> yes fix K1–K8, K1 first
+
+- K1: port check moved into a pure `planMidiCheck` (per base name, by count; ambiguous unplug of identical devices → all closed and blocked, user re-arms). K2: naming style per backend. K3–K7 as proposed; K8 docs. Details in `Crosscheck-2026-11-02.md`.
+- One test expectation of mine was wrong (NaN frame: the whole sample is silence, as specified); test corrected, not the code.
+- Spec v0.17; tests T-REC-33, T-LOG-05, T-MON-04 extended; T-UI-09 recorded.
+- Linux 99/99, Wine 98/98, live hot-plug regression. `dist/windows` refreshed.
