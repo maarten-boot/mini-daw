@@ -153,6 +153,9 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     callbacks_.store(0, std::memory_order_relaxed);
     clock_.reset();
     framePos_ = 0;
+    smoother_.reset();
+    cbSampleRate_ = settings.sampleRate;      // corrected below if the device runs at another rate
+    cbBufferFrames_ = settings.bufferFrames;
     cbInputChannels_ = in.id ? in.channels : 0;
     cbOutputChannels_ = out.id ? out.channels : 0;
 
@@ -263,8 +266,11 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
     const std::int64_t now = steadyNowNs();
     const std::uint64_t blockFrame = self->framePos_;
     self->framePos_ += frames;
-    // The block just received ends at framePos_ "now" (SPEC-REC-04a).
-    self->clock_.publish(self->framePos_, now);
+    // The block just received ends at framePos_ "now" (SPEC-REC-04a), smoothed.
+    const unsigned int rate = self->clockRate_.load(std::memory_order_relaxed);
+    const std::int64_t at = self->smoother_.update(self->framePos_, now, rate != 0 ? rate : self->cbSampleRate_,
+                                                   self->cbBufferFrames_, status != 0);
+    self->clock_.publish(self->framePos_, at);
     self->callbacks_.fetch_add(1, std::memory_order_release);  // see the wait in open()
     if (status != 0) {
         self->xruns_.fetch_add(1, std::memory_order_relaxed);

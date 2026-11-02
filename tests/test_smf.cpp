@@ -199,3 +199,49 @@ TEST_CASE("MIDI timing names", "[smf][T-REC-22]")
     CHECK_FALSE(parseMidiTiming("bpm", t));
     CHECK(std::string(midiTimingName(MidiTiming::Smpte)) == "smpte");
 }
+
+TEST_CASE("T-REC-18: the clock smoother removes callback jitter", "[smf][T-REC-18]")
+{
+    // 48 kHz, 1024-frame blocks; callbacks late by 0..15 ms (fixed pseudo-random),
+    // with a start-up burst of 4 blocks delivered at once.
+    const unsigned int rate = 48000;
+    const unsigned int block = 1024;
+    const std::int64_t t0 = 5'000'000'000;
+    ClockSmoother sm;
+    std::uint32_t seed = 12345;
+    auto lateNs = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<std::int64_t>((seed >> 8) % 15'000'000);
+    };
+    std::int64_t worst = 0;
+    for (std::uint64_t i = 1; i <= 600; ++i) {  // about 12.8 s
+        const std::uint64_t frame = i * block;
+        const std::int64_t ideal = t0 + framesToNs(frame, rate);
+        const std::int64_t callback = i <= 4 ? t0 + framesToNs(4 * block, rate) - 30'000'000 : ideal + lateNs();
+        const std::int64_t smoothed = sm.update(frame, callback, rate, block, false);
+        if (i > 70) worst = std::max(worst, std::abs(smoothed - ideal));  // from 1.5 s on
+    }
+    CAPTURE(worst);
+    CHECK(worst < 2'000'000);  // < 2 ms from up to 15 ms uniform raw jitter (live: about 0.5 ms)
+}
+
+TEST_CASE("T-REC-18: the clock smoother follows drift and restarts after a dropout", "[smf][T-REC-18]")
+{
+    const unsigned int rate = 48000;
+    const unsigned int block = 256;
+    ClockSmoother sm;
+    // The audio clock runs 300 ppm slow: each block takes a little longer in system time.
+    std::int64_t worst = 0;
+    std::int64_t gap = 0;
+    for (std::uint64_t i = 1; i <= 20000; ++i) {  // about 107 s
+        const std::uint64_t frame = i * block;
+        const auto ideal = static_cast<std::int64_t>(static_cast<double>(framesToNs(frame, rate)) * 1.0003);
+        const bool dropout = i == 15000;
+        if (dropout) gap = 100'000'000;  // 100 ms of time without frames
+        const std::int64_t t = ideal + gap;
+        const std::int64_t smoothed = sm.update(frame, t, rate, block, dropout);
+        if (i > 1000 && (i < 15000 || i > 15001)) worst = std::max(worst, std::abs(smoothed - t));
+    }
+    CHECK(worst < 1'000'000);
+    CHECK(framesToNs(48000ull * 3600 * 100, 48000) == 360'000'000'000'000);  // 100 h, no overflow
+}

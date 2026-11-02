@@ -122,6 +122,9 @@ private:
     FrameClock clock_;
     std::atomic<unsigned int> clockRate_{0};  // 0 while no stream runs
     std::uint64_t framePos_ = 0;   // audio thread only: frames received since open
+    ClockSmoother smoother_;       // audio thread only
+    unsigned int cbSampleRate_ = 0;    // read by the audio thread; set before the stream starts
+    unsigned int cbBufferFrames_ = 0;
 
     // Driver error messages (not from the audio callback itself).
     std::mutex messagesMutex_;

@@ -54,3 +54,21 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 
 - Run 41470756957: all jobs pass; 76/76 on Windows (MSVC, no compiler warnings) and Linux; both downloads present. The Windows-only code (`SHGetKnownFolderPath`, `_wfsopen`, `_commit`) builds with MSVC.
 - Next: P6c (real MIDI), then crosscheck #4.
+
+## 7. MIDI tested on the Linux VM (P6c, Linux part)
+> i added myself to the audio group, test MIDI now
+
+- The running shell does not have the new group yet (needs a new login); `sg audio -c ...` works without one.
+- No virtual keyboard installed; used ALSA's "Midi Through" port (14:0) and `aplaymidi` with a generated test file: 10 notes 500 ms apart, 100 ms long, plus one controller. Scripts in the session scratchpad (`miditest/make_mid.py`, `analyse.py`).
+- `--record-test`: all 21 messages recorded, 0 lost; with a 256-frame buffer note spacing within 1 ms. SMPTE timing and a note held at Stop work.
+- GUI (Xvfb): armed audio + MIDI track, Ctrl+R, both files written, MIDI activity shown.
+- Finding: with a 1024-frame buffer (the ALSA default device chose it) the spread grows to about ±10 ms, one note-off 21 ms early — within the Spec's "one buffer", but it comes from jitter of the audio callback time used as the anchor. Proposal: smooth the anchor (callbacks can only be late, so keep the smallest observed "clock − frame/rate" offset, letting it creep up slowly for clock drift). Waiting for the user's go.
+- Also seen: with direct ALSA (now that the user is in `audio`) the driver reports 0.0 ms latency.
+
+## 8. MIDI clock smoothing
+> yes do the timing fix
+
+- `ClockSmoother` (in `frame_clock.hpp`, audio thread only): smallest "callback time − frame/rate" of the last 0.5–1 s (two 0.5 s windows), raw time for the first 0.5 s after a start, restart on a dropout or a jump of > 50 ms / 3 buffers.
+- First idea (keep the minimum, let it creep up 200 ppm for drift) replaced before testing live: a start-up burst would pin it too low for about a minute. The windowed version still left the first note 16 ms late in a live run (burst remembered for up to 2 s) → 0.5 s warm-up and 0.5 s windows.
+- Result with a 1024-frame buffer: gaps within 0.52 ms instead of 9–16 ms; 256 frames: within about 1 ms. Unit tests with simulated jitter, burst, drift and dropout. Linux 78/78, Wine 77/77.
+- Next: commit; Windows MIDI tests by the user; crosscheck #4.
