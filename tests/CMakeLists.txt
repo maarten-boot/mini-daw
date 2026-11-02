@@ -15,7 +15,8 @@ add_executable(minidaw_tests
     test_track.cpp
     test_monitor.cpp
     test_log.cpp
-    test_player.cpp)
+    test_player.cpp
+    test_project.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)
 

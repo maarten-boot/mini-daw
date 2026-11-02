@@ -21,6 +21,10 @@
 //   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
 //   latency_correction_ms = 0 ; overdub: shift new audio takes earlier by this much more
 //
+//   [project]
+//   last = "D:\Music\mini-daw\projects\Jam"   ; reopened at start; empty = none
+//   recent1 = "..." ... recent8                 ; File > Recent projects
+//
 // Default location:
 //   Windows: %APPDATA%\mini-daw\config.ini
 //   macOS:   ~/Library/Application Support/mini-daw/config.ini
@@ -75,11 +79,23 @@ std::filesystem::path defaultRecordingFolder();
 // The folder from the settings, or the default when it is empty.
 std::filesystem::path recordingFolder(const RecordingSettings& settings);
 
+// Projects (SPEC-PRJ-02a): the project open when mini-daw last closed, and
+// the recently used ones (newest first, at most kMaxRecentProjects).
+inline constexpr std::size_t kMaxRecentProjects = 8;
+struct ProjectSettings {
+    std::string last;                  // folder (UTF-8); empty = none
+    std::vector<std::string> recent;
+    friend bool operator==(const ProjectSettings&, const ProjectSettings&) = default;
+};
+// Put `folder` first in the recent list (no duplicates, at most kMaxRecentProjects).
+void rememberProject(ProjectSettings& settings, const std::string& folder);
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
     AudioSettings audio;
     RecordingSettings recording;
+    ProjectSettings project;
 };
 
 struct ConfigLoadResult {

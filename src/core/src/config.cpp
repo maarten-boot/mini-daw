@@ -232,6 +232,11 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             } else {
                 cfg.recording.latencyCorrectionMs = static_cast<int>(v);
             }
+        } else if (section == "project" && key == "last") {
+            cfg.project.last = value;
+        } else if (section == "project" && key.size() >= 7 && key.compare(0, 6, "recent") == 0 &&
+                   key.find_first_not_of("0123456789", 6) == std::string::npos) {
+            if (!value.empty() && cfg.project.recent.size() < kMaxRecentProjects) cfg.project.recent.push_back(value);
         } else {
             warn("unknown setting '" + key + "' in section [" + section + "]");
         }
@@ -331,6 +336,14 @@ std::string defaultConfigText()
            "latency_correction_ms = 0\n";
 }
 
+void rememberProject(ProjectSettings& settings, const std::string& folder)
+{
+    auto& r = settings.recent;
+    r.erase(std::remove(r.begin(), r.end(), folder), r.end());
+    r.insert(r.begin(), folder);
+    if (r.size() > kMaxRecentProjects) r.resize(kMaxRecentProjects);
+}
+
 std::filesystem::path defaultConfigPath()
 {
     namespace fs = std::filesystem;
@@ -413,6 +426,11 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "recording", "midi_timing", midiTimingName(config.recording.midiTiming));
     text = setConfigValue(text, "recording", "latency_correction_ms",
                           std::to_string(config.recording.latencyCorrectionMs));
+    text = setConfigValue(text, "project", "last", quoteConfigString(config.project.last));
+    for (std::size_t i = 0; i < kMaxRecentProjects; ++i) {
+        const std::string v = i < config.project.recent.size() ? config.project.recent[i] : std::string();
+        text = setConfigValue(text, "project", "recent" + std::to_string(i + 1), quoteConfigString(v));
+    }
 
     std::error_code ec;
     if (path.has_parent_path()) {

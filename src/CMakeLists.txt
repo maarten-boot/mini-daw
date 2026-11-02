@@ -12,6 +12,7 @@ add_library(minidaw_core STATIC
     core/src/meter.cpp
     core/src/monitor.cpp
     core/src/player.cpp
+    core/src/project.cpp
     core/src/recorder.cpp
     core/src/midi_input.cpp
     core/src/midi_player.cpp
@@ -26,7 +27,7 @@ target_include_directories(minidaw_core PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(minidaw_core
     PUBLIC  minidaw_rtaudio minidaw_rtmidi
-    PRIVATE minidaw_warnings)
+    PRIVATE minidaw_warnings nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
 endif()

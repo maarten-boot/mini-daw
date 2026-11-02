@@ -31,6 +31,11 @@ FetchContent_Declare(glfw
     GIT_TAG        3.4
     GIT_SHALLOW    TRUE)
 
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.12.0
+    GIT_SHALLOW    TRUE)
+
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        v3.16.1
@@ -40,6 +45,11 @@ FetchContent_Declare(catch2
 # RtAudio — compiled directly, with only the backends we want.
 # Windows: WASAPI only (no DirectSound, no ASIO; see SPEC-LIC-03).
 # ---------------------------------------------------------------------------
+# nlohmann/json — project files (P9). Header-only; its own tests are not built.
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(nlohmann_json)
+
 FetchContent_MakeAvailable(rtaudio rtmidi)
 
 add_library(minidaw_rtaudio STATIC ${rtaudio_SOURCE_DIR}/RtAudio.cpp)

@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.19 (2026-11-02, crosscheck #6 fixes). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.20 (2026-11-02, P9 projects). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -78,6 +78,8 @@ A small desktop program that records MIDI and audio input on several tracks at o
 ### 3.6 Project
 - **SPEC-PRJ-01** A project is a folder containing a project file (JSON) and the take files.
 - **SPEC-PRJ-02** Projects can be saved and reopened.
+- **SPEC-PRJ-01a** Implementation (P9): the project folder holds `project.json` and `takes/`; while a project is open, new takes are recorded into `<project>/takes/take-…`. Takes from outside (recorded before the project existed, opened with File → Open take folder, or from another project on Save as) are copied into `takes/imported/<take folder>/` (a copy already there with the same size is reused), so a project folder is complete on its own and can be moved or backed up as one folder. Copying runs on the GUI thread (a big take makes the window wait). `project.json`: format name and version (1), the stream sample rate, and per track: number, name, kind, input channels / MIDI input and channel, MIDI output, arm, monitor, volume, mute, solo, take (relative to the folder, `/` separators, UTF-8) and its timeline position. Not in the project: audio devices (they belong to the computer, `config.ini`), the play position.
+- **SPEC-PRJ-02a** File → New project… (name and parent folder; default `<recording folder>/projects`; starts empty), Open project… (the projects in that folder, or any folder typed in), Recent projects (the last 8), Save project as… (the current tracks into a new folder, takes copied), Close project. Not while recording. Every change is saved automatically within about a second (written to `project.json.tmp`, forced to disk and renamed over the old file, so a crash leaves the old or the new file); a save error is shown in the status line and logged, and retried with the next change. The project open when mini-daw closes is reopened at the next start (`last` in `[project]` of `config.ini`; recent ones as `recent1`…`recent8`); if it is gone, a note says so. The title bar and the status line show the project. Opening: a damaged file or a newer format version gives a clear error and nothing changes; bad fields give warnings and defaults (the rest loads); missing takes are reported; a different sample rate is noted. Without a project, mini-daw works as before (takes in the recording folder, tracks in memory). Two mini-daw windows on one project are not detected (the last save wins).
 
 ## 4. UI accessibility requirements (GUI)
 - **SPEC-UI-01** Default theme is a white background with black text.
@@ -99,7 +101,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 
 ## 6. Licensing
 - **SPEC-LIC-01** The project is released under the MIT licence (copyright Maarten Boot): free for anyone to use and modify.
-- **SPEC-LIC-02** Every bundled or fetched dependency has an MIT-compatible licence, and `THIRD_PARTY.md` lists each one with its licence. Checked so far: RtAudio and RtMidi (MIT-style), Dear ImGui (MIT), GLFW (zlib), VST3 SDK (MIT, its LICENSE file on GitHub checked 2026-11-01), Catch2 (Boost).
+- **SPEC-LIC-02** Every bundled or fetched dependency has an MIT-compatible licence, and `THIRD_PARTY.md` lists each one with its licence. Checked so far: RtAudio and RtMidi (MIT-style), Dear ImGui (MIT), GLFW (zlib), nlohmann/json (MIT), VST3 SDK (MIT, its LICENSE file on GitHub checked 2026-11-01), Catch2 (Boost).
 - **SPEC-LIC-03** ASIO support is an optional build setting `MINIDAW_WITH_ASIO`, off by default. The ASIO SDK is never put in the repository; whoever builds with ASIO downloads it. Steinberg offers it under GPLv3 or a proprietary licence (https://www.steinberg.net/developers/asiosdk-open/). A program built with ASIO under GPLv3 is itself GPLv3, and the README says so.
 - **SPEC-LIC-04** The ASIO name and logo are Steinberg trademarks and are not covered by the GPLv3. If we use them:
   - the logo is only shown unaltered, and only in product-related places (splash screen, About box, website, documentation);

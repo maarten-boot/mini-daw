@@ -25,6 +25,7 @@
 #include "minidaw/midi_player.hpp"
 #include "minidaw/monitor.hpp"
 #include "minidaw/path_util.hpp"
+#include "minidaw/project.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
@@ -53,6 +54,7 @@ extern char** environ;
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -132,6 +134,18 @@ struct AppState {
     std::vector<std::string> lastTake;     // summary of the last recording
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
+
+    // Project (P9, SPEC-PRJ-01/02): empty folder = no project open.
+    std::filesystem::path projectFolder;
+    std::string projectSavedText;          // the JSON last written (autosave writes only changes)
+    double projectCheckAt = 0.0;
+    std::string projectError;              // last save error (shown, logged once)
+    std::vector<std::string> projectNotes; // warnings from opening / copying takes
+    enum class ProjectDialog { None, New, Open, SaveAs } projectDialog = ProjectDialog::None;
+    std::string projectNameInput;
+    std::string projectFolderInput;
+    std::string projectDialogError;
+    std::string windowTitle;               // shown in the title bar
 
     // Playback (P8). Declared last: destroyed first (its thread reads `audio`).
     minidaw::MidiPlayer midiPlayer;
@@ -543,13 +557,34 @@ void openAudioSettings(AppState& app)
     app.showAudioSettings = true;
 }
 
+// Projects (defined further down, with the playback code they use).
+void showProjectDialog(AppState& app, AppState::ProjectDialog kind);
+bool openProject(AppState& app, const std::filesystem::path& folder);
+void closeProject(AppState& app);
+std::filesystem::path activeTakesFolder(const AppState& app);
+
 void drawMenuBar(AppState& app, bool& quit)
 {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
+        const bool rec = app.session.recording();
+        if (ImGui::MenuItem("New project...", nullptr, false, !rec)) showProjectDialog(app, AppState::ProjectDialog::New);
+        if (ImGui::MenuItem("Open project...", nullptr, false, !rec)) showProjectDialog(app, AppState::ProjectDialog::Open);
+        if (ImGui::BeginMenu("Recent projects", !rec && !app.config.project.recent.empty())) {
+            const auto recent = app.config.project.recent;  // a copy: opening changes the list
+            for (const auto& r : recent) {
+                if (ImGui::MenuItem(r.c_str())) openProject(app, minidaw::pathFromUtf8(r));
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Save project as...", nullptr, false, !rec)) {
+            showProjectDialog(app, AppState::ProjectDialog::SaveAs);
+        }
+        if (ImGui::MenuItem("Close project", nullptr, false, !rec && !app.projectFolder.empty())) closeProject(app);
+        ImGui::Separator();
         if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
             app.showTakeBrowser = true;
-            app.takeFolders = minidaw::listTakeFolders(minidaw::recordingFolder(app.config.recording));
+            app.takeFolders = minidaw::listTakeFolders(activeTakesFolder(app));
             app.takeBrowserError.clear();
         }
         ImGui::Separator();
@@ -955,6 +990,237 @@ void syncMidiPorts(AppState& app, bool force = false)
     }
 }
 
+// --- Projects (P9) ---------------------------------------------------------
+// Where projects are proposed: <recording folder>/projects.
+std::filesystem::path projectsBase(const AppState& app)
+{
+    return minidaw::recordingFolder(app.config.recording) / "projects";
+}
+
+// Takes go into the open project, else into the recording folder (SPEC-PRJ-01).
+std::filesystem::path activeTakesFolder(const AppState& app)
+{
+    return app.projectFolder.empty() ? minidaw::recordingFolder(app.config.recording) : app.projectFolder / "takes";
+}
+
+minidaw::ProjectData currentProject(const AppState& app)
+{
+    minidaw::ProjectData d;
+    d.tracks = app.tracks;
+    d.sampleRate = app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+    return d;
+}
+
+// Writes the project if anything changed (autosave, SPEC-PRJ-02a).
+void saveProjectNow(AppState& app)
+{
+    if (app.projectFolder.empty()) return;
+    const minidaw::ProjectData d = currentProject(app);
+    const std::string text = minidaw::projectToJson(d, app.projectFolder);
+    if (text == app.projectSavedText) return;
+    std::string err;
+    if (minidaw::saveProject(app.projectFolder, d, err)) {
+        app.projectSavedText = text;
+        if (!app.projectError.empty()) app.log.info("Project saved again.");
+        app.projectError.clear();
+    } else if (err != app.projectError) {
+        app.projectError = err;
+        app.log.error("Project not saved: " + err);
+    }
+}
+
+void autosaveProject(AppState& app)
+{
+    const double now = ImGui::GetTime();
+    if (now < app.projectCheckAt) return;
+    app.projectCheckAt = now + 0.5;
+    saveProjectNow(app);
+}
+
+// Copy takes from outside into the project (the user's choice: a project
+// folder is complete on its own).
+void importIntoProject(AppState& app)
+{
+    if (app.projectFolder.empty()) return;
+    std::vector<std::string> copied;
+    for (const auto& e : minidaw::importTakes(app.projectFolder, app.tracks, copied)) {
+        app.log.warning(e);
+        app.projectNotes.push_back(e);
+    }
+    for (const auto& c : copied) app.log.info("Copied into the project: " + c);
+}
+
+void rememberProjectInConfig(AppState& app)
+{
+    const std::string folder = minidaw::pathToUtf8(app.projectFolder);
+    app.config.project.last = folder;
+    if (!folder.empty()) minidaw::rememberProject(app.config.project, folder);
+    saveConfig(app);
+}
+
+void stopPlayback(AppState& app);
+void refreshTakeLength(AppState& app, minidaw::Track& t);
+
+bool openProject(AppState& app, const std::filesystem::path& folder)
+{
+    if (app.session.recording()) {
+        app.projectDialogError = "Stop the recording first.";
+        return false;
+    }
+    minidaw::ProjectData d;
+    std::vector<std::string> warnings;
+    std::string err;
+    if (!minidaw::loadProject(folder, d, warnings, err)) {
+        app.projectDialogError = err;
+        app.log.error("Open project: " + err);
+        return false;
+    }
+    saveProjectNow(app);  // the current one first
+    stopPlayback(app);
+    app.projectFolder = folder;
+    app.tracks = std::move(d.tracks);
+    app.tracksCreated = true;
+    app.midiPortsDirty = true;
+    app.audio.player().locate(0);
+    app.projectNotes = warnings;
+    app.projectError.clear();
+    for (const auto& w : warnings) app.log.warning("Project: " + w);
+    importIntoProject(app);  // a project saved with outside takes (should not happen, but repairable)
+    for (auto& t : app.tracks) refreshTakeLength(app, t);
+    app.projectSavedText = minidaw::projectToJson(currentProject(app), folder);
+    const unsigned int rate = app.audio.info().sampleRate;
+    if (d.sampleRate && rate && d.sampleRate != rate) {
+        const std::string note = "The project was saved at " + std::to_string(d.sampleRate) + " Hz; the stream runs at " +
+                                 std::to_string(rate) + " Hz, so takes at the other rate are not played.";
+        app.projectNotes.push_back(note);
+        app.log.warning(note);
+    }
+    rememberProjectInConfig(app);
+    app.log.info("Opened project " + minidaw::pathToUtf8(folder) + ": " + std::to_string(app.tracks.size()) +
+                 " track(s)");
+    return true;
+}
+
+// New: an empty project. Save as: the current tracks, with their takes copied in.
+bool createProject(AppState& app, const std::filesystem::path& folder, bool keepTracks)
+{
+    if (app.session.recording()) {
+        app.projectDialogError = "Stop the recording first.";
+        return false;
+    }
+    std::string err;
+    if (!minidaw::createProjectFolder(folder, err)) {
+        app.projectDialogError = err;
+        return false;
+    }
+    saveProjectNow(app);
+    stopPlayback(app);
+    app.projectFolder = folder;
+    app.projectNotes.clear();
+    app.projectError.clear();
+    if (keepTracks) {
+        importIntoProject(app);
+    } else {
+        app.tracks.clear();
+        app.tracksCreated = false;  // the default track comes back
+        app.midiPortsDirty = true;
+        app.audio.player().locate(0);
+    }
+    app.projectSavedText.clear();
+    saveProjectNow(app);
+    rememberProjectInConfig(app);
+    app.log.info(std::string(keepTracks ? "Saved as project " : "New project ") + minidaw::pathToUtf8(folder));
+    return true;
+}
+
+void closeProject(AppState& app)
+{
+    if (app.session.recording() || app.projectFolder.empty()) return;
+    saveProjectNow(app);
+    stopPlayback(app);
+    app.log.info("Closed project " + minidaw::pathToUtf8(app.projectFolder));
+    app.projectFolder.clear();
+    app.projectSavedText.clear();
+    app.projectNotes.clear();
+    app.projectError.clear();
+    app.tracks.clear();
+    app.tracksCreated = false;
+    app.midiPortsDirty = true;
+    app.audio.player().locate(0);
+    rememberProjectInConfig(app);
+}
+
+void showProjectDialog(AppState& app, AppState::ProjectDialog kind)
+{
+    app.projectDialog = kind;
+    app.projectDialogError.clear();
+    app.projectNameInput = kind == AppState::ProjectDialog::SaveAs && !app.projectFolder.empty()
+                               ? minidaw::pathToUtf8(app.projectFolder.filename()) + " copy"
+                               : std::string();
+    app.projectFolderInput = minidaw::pathToUtf8(projectsBase(app));
+}
+
+void drawProjectDialog(AppState& app)
+{
+    using D = AppState::ProjectDialog;
+    if (app.projectDialog == D::None) return;
+    const float em = ImGui::GetFontSize();
+    const char* title = app.projectDialog == D::New    ? "New project###project"
+                        : app.projectDialog == D::Open ? "Open project###project"
+                                                       : "Save project as###project";
+    bool open = true;
+    // Grows with its content (the folder line, an error), so the buttons stay visible.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(46 * em, 0), ImVec2(46 * em, FLT_MAX));
+    if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (app.session.recording()) ImGui::TextUnformatted("Recording: stop it first.");
+        ImGui::BeginDisabled(app.session.recording());
+        if (app.projectDialog == D::Open) {
+            ImGui::TextWrapped("Projects in %s (click one), or type the folder of a project:",
+                               minidaw::pathToUtf8(projectsBase(app)).c_str());
+            const auto projects = minidaw::listProjects(projectsBase(app));
+            if (ImGui::BeginChild("list", ImVec2(0, 8 * ImGui::GetTextLineHeightWithSpacing()), ImGuiChildFlags_Borders)) {
+                if (projects.empty()) ImGui::TextUnformatted("No projects there yet.");
+                for (const auto& p : projects) {
+                    if (ImGui::Selectable(minidaw::pathToUtf8(p.filename()).c_str())) {
+                        app.projectFolderInput = minidaw::pathToUtf8(p);
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::SetNextItemWidth(36 * em);
+            ImGui::InputText("Folder", &app.projectFolderInput);
+            if (ImGui::Button("Open") && openProject(app, minidaw::pathFromUtf8(app.projectFolderInput))) {
+                app.projectDialog = D::None;
+            }
+        } else {
+            ImGui::SetNextItemWidth(20 * em);
+            ImGui::InputText("Name", &app.projectNameInput);
+            ImGui::SetNextItemWidth(36 * em);
+            ImGui::InputText("In folder", &app.projectFolderInput);
+            const std::string name = minidaw::safeFileName(app.projectNameInput);
+            const std::filesystem::path target = minidaw::pathFromUtf8(app.projectFolderInput) / minidaw::pathFromUtf8(name);
+            if (!app.projectNameInput.empty()) ImGui::TextWrapped("Project folder: %s", minidaw::pathToUtf8(target).c_str());
+            if (app.projectDialog == D::SaveAs) {
+                ImGui::TextWrapped("The current tracks are saved there; their takes are copied into the new folder.");
+            } else {
+                ImGui::TextWrapped("Starts with an empty track list; new takes are recorded into the project folder.");
+            }
+            ImGui::BeginDisabled(app.projectNameInput.empty());
+            if (ImGui::Button(app.projectDialog == D::New ? "Create" : "Save") &&
+                createProject(app, target, app.projectDialog == D::SaveAs)) {
+                app.projectDialog = D::None;
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) app.projectDialog = D::None;
+        if (!app.projectDialogError.empty()) ImGui::TextWrapped("%s", app.projectDialogError.c_str());
+    }
+    ImGui::End();
+    if (!open) app.projectDialog = D::None;
+}
+
 // --- Playback (P8) ------------------------------------------------------------
 minidaw::LatencyEstimate latencyNow(const AppState& app)
 {
@@ -1121,7 +1387,9 @@ void toggleRecording(AppState& app)
     app.recordError.clear();
     // The playback run gives the timeline (and plays the other takes: overdub).
     startPlayback(app, true);
-    if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) {
+    minidaw::RecordingSettings recSettings = app.config.recording;
+    recSettings.folder = minidaw::pathToUtf8(activeTakesFolder(app));  // into the project, if one is open
+    if (!app.session.start(app.tracks, recSettings, app.audio, app.midi, app.recordError)) {
         app.log.error("Not recording: " + app.recordError);
         stopPlayback(app);
         return;
@@ -1257,7 +1525,7 @@ void drawTransport(AppState& app)
             app.pendingRecording = app.config.recording;
             app.showRecordingSettings = true;
         }
-        ImGui::TextWrapped("Stopped. Takes go to %s", minidaw::pathToUtf8(minidaw::recordingFolder(app.config.recording)).c_str());
+        ImGui::TextWrapped("Stopped. Takes go to %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     }
     if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
     if (!app.lastTake.empty()) {
@@ -1653,6 +1921,8 @@ void openTakeFolder(AppState& app, const std::filesystem::path& folder)
     app.midiPortsDirty = true;    // MIDI tracks of the old list may have had ports open
     app.audio.player().locate(0);
     app.showTakeBrowser = false;
+    importIntoProject(app);  // a project keeps its own copy of the takes
+    for (auto& t : app.tracks) refreshTakeLength(app, t);
     app.log.info("Opened take folder " + minidaw::pathToUtf8(folder) + ": " + std::to_string(app.tracks.size()) +
                  " track(s)");
 }
@@ -1664,7 +1934,7 @@ void drawTakeBrowser(AppState& app)
     ImGui::SetNextWindowSize(ImVec2(44 * em, 26 * em), ImGuiCond_Appearing);
     if (ImGui::Begin("Open take folder", &app.showTakeBrowser)) {
         ImGui::TextWrapped("Takes in %s (newest first). Opening a take replaces the track list.",
-                           minidaw::pathToUtf8(minidaw::recordingFolder(app.config.recording)).c_str());
+                           minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
         const bool rec = app.session.recording();
         if (rec) ImGui::TextUnformatted("Recording: stop it before opening a take folder.");
         ImGui::BeginDisabled(rec);
@@ -1702,6 +1972,13 @@ void drawStatusLine(const AppState& app)
     const auto lowest = minidaw::lowestContrast(app.palette);
     ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change. Text: %d px (Ctrl+= / Ctrl+-).",
                 describeContrast(app.config.contrast).c_str(), lowest.ratio, static_cast<int>(app.config.fontSize));
+    if (app.projectFolder.empty()) {
+        ImGui::TextUnformatted("Project: none (File > New project / Save project as to keep this session)");
+    } else {
+        ImGui::Text("Project: %s (%s)", minidaw::pathToUtf8(app.projectFolder).c_str(),
+                    app.projectError.empty() ? "saved automatically" : "NOT SAVED - see the log");
+    }
+    for (const auto& n : app.projectNotes) ImGui::TextWrapped("Project note: %s", n.c_str());
     ImGui::Text("Config: %s", minidaw::pathToUtf8(app.configPath).c_str());
     ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (Ctrl+L)", app.rendererName.c_str(),
                 static_cast<unsigned long long>(app.log.warningCount()),
@@ -1762,6 +2039,16 @@ int runGui(AppState& app)
     app.scan = minidaw::scanDevices();
     logScan(app);
     applyAudioSettings(app, app.config.audio, false);
+    if (!app.config.project.last.empty()) {  // reopen the last project (SPEC-PRJ-02a)
+        const std::filesystem::path last = minidaw::pathFromUtf8(app.config.project.last);
+        if (minidaw::isProjectFolder(last)) {
+            openProject(app, last);
+        } else {
+            const std::string note = "The last project " + app.config.project.last + " was not found.";
+            app.projectNotes.push_back(note);
+            app.log.warning(note);
+        }
+    }
 
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {
@@ -1792,6 +2079,15 @@ int runGui(AppState& app)
         syncMidiPorts(app);
         updateMeters(app);
         updateTransport(app);
+        autosaveProject(app);
+        {
+            const std::string t = std::string(minidaw::kProductName) + " " + minidaw::kVersion +
+                                  (app.projectFolder.empty() ? std::string() : " - " + minidaw::pathToUtf8(app.projectFolder.filename()));
+            if (t != app.windowTitle) {
+                glfwSetWindowTitle(window, t.c_str());
+                app.windowTitle = t;
+            }
+        }
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1817,6 +2113,7 @@ int runGui(AppState& app)
         drawContrastReportWindow(app);
         drawLogWindow(app);
         drawTakeBrowser(app);
+        drawProjectDialog(app);
 
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
@@ -1826,6 +2123,7 @@ int runGui(AppState& app)
 
     if (app.session.recording()) app.session.stop();  // finish the files before the stream closes
     stopPlayback(app);
+    saveProjectNow(app);
     app.midi.closeAll();
     app.audio.close();
     minidaw::app::rendererShutdown();

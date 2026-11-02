@@ -126,8 +126,12 @@ Status column in the Results section at the end.
 ## Project
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
-| T-PRJ-01 | SPEC-PRJ-01/02 | A | Save a project with 3 tracks, reopen it | Tracks, takes and settings identical |
-| T-PRJ-02 | SPEC-PRJ-02 | A | Open a project with a missing take file | Clear message; the rest loads |
+| T-PRJ-01 | SPEC-PRJ-01/02, 01a | A | Save a project (audio + MIDI track, non-ASCII names, a take with a negative start), move the folder, reopen; save again; create over an existing project | Every setting identical; take path stored relative with '/'; opens after the move; replaced in one step (no .tmp left); creating over a project refused |
+| T-PRJ-02 | SPEC-PRJ-02, 02a | A | Open a project with a missing take file | Clear message; the rest loads |
+| T-PRJ-03 | SPEC-PRJ-02a | A | Not JSON, another format, a newer version, no track list; bad fields (wrong type, too many channels, duplicate number, channel 40, unknown kind, not an object) | Clear errors; warnings with defaults, the rest loaded |
+| T-PRJ-04 | SPEC-PRJ-01a | A | Takes outside the project (one, one inside, one missing); import again; list projects | Copied into takes/imported/<take folder>; inside untouched; missing reported, path kept; not copied twice; a folder without project.json is not listed |
+| T-PRJ-05 | SPEC-PRJ-02a | A | Recent list (10 added, one again) and last project in the config (quotes, trailing backslash) | 8 newest, no duplicates; saved and read back |
+| T-PRJ-06 | SPEC-PRJ-01a, 02a | M | GUI: New project, record, change the volume, quit, start again, Save project as | Folder with project.json and takes/; take recorded into it; volume in the file within a second; the project reopens with take and volume; Save as copies the take; title shows the project |
 
 ## Text size
 | ID | Spec | Type | Description | Expected result |
@@ -245,3 +249,7 @@ Status column in the Results section at the end.
 | 2026-11-02 | T-CI-02 | GitHub Actions run 41521684543 (`42e3402`, crosscheck #5 fixes) | pass | windows 5m19s (99/99, MSVC, no warnings), linux 1m53s (99/99), licence |
 | 2026-11-02 | T-CI-02 | GitHub Actions run 41532845975 (`2892d9e`, P8) | **FAIL** | windows 107/108: T-PLAY-11 "Gitaar Ã©" (test created the file through the ANSI code page; crosscheck #6 M0); linux 108/108; MSVC no warnings |
 | 2026-11-02 | crosscheck #6 fixes (M0–M12): T-PLAY-05, 11, 14–17 | Linux 113/113 ctest; MinGW build under Wine 112/112 Catch2 cases (1532 assertions); T-PLAY-14 30 times in a row; ThreadSanitizer build: 23 threaded test cases (player, session, ring), no race reported | pass | First version of T-PLAY-15 made a 3-channel file with WavWriter, which only writes 1 or 2 channels: file written by hand instead |
+| 2026-11-02 | T-CI-02 | GitHub Actions run 41536134085 (`5122c25`, crosscheck #6 fixes) | pass | windows 5m33s (113/113, MSVC, no warnings; T-PLAY-11 passes again: M0), linux 2m15s (113/113), licence |
+| 2026-11-02 | (Linux test build) | `ubuntu:24.04` container (podman) | pass | 113/113; the binary needs at most GLIBC_2.38, so it runs on Ubuntu 24.04 (the VM's own build needs 2.43) |
+| 2026-11-02 | T-PRJ-01..05, licence check with nlohmann/json | Linux 117/117 ctest; MinGW build under Wine 116/116 Catch2 cases (1608 assertions) | pass | Two test mistakes of mine: a project created but never saved is (rightly) not listed; under Wine the test kept project.json open in an ifstream, so Windows could not replace it — stream closed in the test (real use: a save error is shown and retried) |
+| 2026-11-02 | T-PRJ-06 | Linux VM, GUI on Xvfb | pass | New project "Jam 1" (title "mini-daw 0.1.0 - Jam 1"), take recorded into Jam 1/takes, volume −6 dB in project.json within 1.5 s, File > Quit and start again: reopened with take and −6 dB, Save as "Jam 1 copy" copied the take to takes/imported/. Fixed on the way: the project dialog did not grow, hiding Create (now resizes to its content) |

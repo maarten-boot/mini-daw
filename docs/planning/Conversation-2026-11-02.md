@@ -176,3 +176,15 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - M1–M12 as in `Crosscheck-2026-11-02.md`; placement rule moved into the core (`placeRecordedTake`) so it is tested.
 - One test of mine wrong at first (3-channel file via WavWriter, which only writes 1–2 channels).
 - Spec v0.19; tests T-PLAY-14..17. Linux 113/113, Wine 112/112, ThreadSanitizer clean. `dist/windows` refreshed.
+
+## 21. Linux test build, CI, P9 projects
+> can you also build a linux ? ./dist/linux/mini-daw
+- Built in an `ubuntu:24.04` container (podman): 113/113, needs GLIBC ≤ 2.38, so it runs on the user's Ubuntu 24.04. Method in `CLAUDE.md`.
+> pushed it, check the CI run
+- Run 41536134085 (`5122c25`): green, 113/113 on both; M0 fixed the Windows failure.
+> start P9
+- User's choices: takes inside the project, outside takes copied in; autosave; reopen the last project at start.
+- New dependency nlohmann/json v3.12.0 (MIT) for the project file; THIRD_PARTY.md and the licence check updated.
+- Core `project.hpp`: JSON with format/version, relative take paths, tmp + sync + rename, tolerant loading, `importTakes`, `listProjects`; config `[project] last, recent1..8`.
+- GUI: File → New / Open / Recent / Save as / Close project, autosave every 0.5 s when changed, reopen at start, title + status line, takes into `<project>/takes`, Open take folder copies into the project.
+- Spec v0.20 (PRJ-01a, 02a); tests T-PRJ-01..06. Linux 117/117, Wine 116/116; live GUI test passed (dialog resize fixed). Two test mistakes of mine (see Tests.md).

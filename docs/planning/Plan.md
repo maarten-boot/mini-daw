@@ -17,7 +17,7 @@
 | P7 | Monitoring and meters | MON-01..02, 01a, 02a, UI-07 | done (2026-11-02) on Linux; Windows (WASAPI) to be tested by the user |
 | P7b | MIDI hot-plug and diagnostics log (from the user's Windows test) | REC-01b, LOG-01 | done (2026-11-02) on Linux and Wine; Windows with a USB keyboard to be tested by the user |
 | P8 | Transport and playback: streamed audio playback, MIDI playback to outputs, volume/mute/solo, overdub with latency estimate, open take folder, stream watchdog | PLAY-01..06, 01a..04a, DEV-05 | done (2026-11-02) on Linux; Windows (WASAPI, MIDI out) and the overdub loopback measurement to be tested by the user |
-| P9 | Project save/load | PRJ-01..02 | pending |
+| P9 | Projects: project folder with project.json and takes, autosave, open/new/save as/recent, reopen last, takes copied in | PRJ-01..02, 01a, 02a | done (2026-11-02) on Linux and Wine; Windows by the user |
 | P9b | Windows packaging: GUI subsystem (no console window; `--list-devices` still prints), icon, installer | — | pending |
 | — | **Milestone v1: record and play back MIDI and audio on Windows 10** | | |
 | P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | pending |

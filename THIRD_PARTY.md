@@ -10,6 +10,7 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 | rtmidi | 6.0.0 | MIT | https://github.com/thestk/rtmidi | MIDI input/output |
 | imgui | v1.92.9 | MIT | https://github.com/ocornut/imgui | GUI |
 | glfw | 3.4 | Zlib | https://github.com/glfw/glfw | Window, OpenGL context, input |
+| nlohmann_json | v3.12.0 | MIT | https://github.com/nlohmann/json | Project files (JSON), header-only |
 | catch2 | v3.16.1 | BSL-1.0 | https://github.com/catchorg/Catch2 | Unit tests (not part of the program) |
 
 RtAudio and RtMidi use the MIT licence text with one extra non-binding request: that changes be sent back to the author.
