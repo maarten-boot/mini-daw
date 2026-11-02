@@ -16,3 +16,9 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - Cause: `_wfopen_s` (introduced in crosscheck #3 to avoid MSVC's C4996 on `_wfopen`) opens the file without sharing, so nobody else can read a take while it is being recorded. Wine does not enforce this, so the Wine run passed.
 - Fix: `_wfsopen(path, mode, _SH_DENYWR)` — others may read, not write. The tests now show the error text on failure.
 - Linux 65/65; MinGW under Wine 64/64 (Wine cannot show the problem, so CI on real Windows is the check).
+
+## 3. CI green
+> pushed it, check the CI run
+
+- Run 41432521646: all jobs pass; 65/65 on Windows (both T-REC-07 cases now pass) and Linux; no MSVC warnings; both downloads present. Crosscheck #3 is closed.
+- Still waiting for the user: T-REC-10 (`--record-test` with a working input on Windows), T-UI-03/04 on Windows. Next step: P6.
