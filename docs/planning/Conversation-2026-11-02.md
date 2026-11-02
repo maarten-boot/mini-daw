@@ -48,3 +48,9 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - On the way: a `pkill -f` pattern matched its own shell and killed it; use `pkill -x mini-daw`.
 - Results: Linux 76/76; Wine 75/75 Catch2 cases; GUI recording under Xvfb works (audio).
 - Next: P6c with real MIDI (needs `sudo usermod -aG audio mboot` + re-login on the VM; Windows: USB keyboard / virtual port). Then crosscheck #4.
+
+## 6. CI after P6a/P6b
+> pushed it, check the CI run
+
+- Run 41470756957: all jobs pass; 76/76 on Windows (MSVC, no compiler warnings) and Linux; both downloads present. The Windows-only code (`SHGetKnownFolderPath`, `_wfsopen`, `_commit`) builds with MSVC.
+- Next: P6c (real MIDI), then crosscheck #4.
