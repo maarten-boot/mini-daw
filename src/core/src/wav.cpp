@@ -8,6 +8,7 @@
 
 #if defined(_WIN32)
 #include <io.h>
+#include <share.h>
 #else
 #include <unistd.h>
 #endif
@@ -67,8 +68,9 @@ constexpr std::uint64_t kHeaderBytes = 44;
 std::FILE* openFile(const std::filesystem::path& path, bool update)
 {
 #if defined(_WIN32)
-    std::FILE* f = nullptr;
-    return _wfopen_s(&f, path.c_str(), update ? L"r+b" : L"wb") == 0 ? f : nullptr;
+    // Others may read a take while it is recorded (SPEC-REC-05a), but not
+    // write to it. _wfopen_s would lock the file against readers as well.
+    return _wfsopen(path.c_str(), update ? L"r+b" : L"wb", _SH_DENYWR);
 #else
     return std::fopen(path.c_str(), update ? "r+b" : "wb");
 #endif

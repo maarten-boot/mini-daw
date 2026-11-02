@@ -205,3 +205,11 @@
 - On the way: `/dev/full` could not be used to simulate a full disk (the open already fails), so a test hook makes the next write fail; MSVC would warn about `_wfopen` → `_wfopen_s`.
 - Results: Linux 65/65; MinGW build under Wine 64/64 Catch2 cases; `--record-test` on Linux with sync on and off: 0 lost.
 - Next: user pushes; Claude checks CI. Then P6.
+
+## 29. CI after crosscheck #3 — Windows test failure (stopped for the night)
+> pushed it, check the CI run
+> and stop; bedtime;
+
+- Run 41357305545: linux ✓, licence ✓, windows ✗ at Test: 63/65. Both T-REC-07 tests fail. They read the WAV file while it is still open for writing.
+- Likely cause (not yet confirmed from the full log): `_wfopen_s` opens the file without sharing, so a second open fails on Windows. `std::ofstream` allowed shared reading before. This also matters to users (looking at a take while it is being recorded).
+- Next: open with `_wfsopen(path, mode, _SH_DENYWR)` (others may read, not write), confirm with `gh run view 41357305545 --log-failed`, and check whether the MSVC build had warnings.

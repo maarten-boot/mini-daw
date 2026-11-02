@@ -141,8 +141,10 @@ TEST_CASE("T-REC-07: the header is valid while the file is still being written",
     REQUIRE(w.write(block.data(), 4800, err));  // not yet in the header
 
     // Another reader (or the user after a crash) sees a valid file with the
-    // audio up to the last header update.
+    // audio up to the last header update. On Windows this also checks that
+    // the writer lets others read the file (_SH_DENYWR).
     WavData d;
+    INFO(err);
     REQUIRE(readWav(path, d, err));
     CHECK(d.frames() == 4800);
     REQUIRE(w.close(err));
@@ -161,6 +163,7 @@ TEST_CASE("T-REC-07: header refresh with a hard sync to disk", "[wav][T-REC-07]"
     REQUIRE(w.write(block.data(), 1000, err));
     REQUIRE(w.updateHeader(err, true));
     WavData d;
+    INFO(err);
     REQUIRE(readWav(path, d, err));
     CHECK(d.frames() == 1000);
     REQUIRE(w.close(err));

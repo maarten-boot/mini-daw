@@ -159,3 +159,4 @@ Status column in the Results section at the end.
 | 2026-11-01 | T-CI-02 | GitHub Actions run 41354630677 | pass | windows 3m11s, linux 1m35s, licence; 58/58 on both; no MSVC warnings |
 | 2026-11-01 | crosscheck #3 fixes (H1–H9) | Linux 65/65 ctest; MinGW build under Wine 64/64 Catch2 cases (669 assertions) | pass | New: T-REC-11..15; T-REC-09 now expects the silence; T-REC-07 also with hard sync |
 | 2026-11-01 | T-REC-10 | Linux VM (PulseAudio, no real input) | pass (Linux only) | 2 s with `sync_to_disk` on: 96 256 frames, 24-bit stereo 48 kHz; 1 s with it off: 48 128 frames; 0 lost, 0 dropouts, exit code 0. New output wording "lost frames" / "dropouts (xruns)" |
+| 2026-11-01 | T-REC-07 | GitHub Actions run 41357305545 (windows) | **FAIL** | Both T-REC-07 cases: the take could not be read while being written (`_wfopen_s` opens without sharing). Linux, licence pass. Wine did not show it → `_wfsopen(..., _SH_DENYWR)` |
