@@ -328,4 +328,66 @@ bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& erro
     return true;
 }
 
+std::vector<MidiEvent> smfToFrames(const SmfData& data, unsigned int sampleRate, std::uint64_t* endFrame)
+{
+    // Tempo map (PPQ only): (tick, microseconds per quarter).
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> tempos;
+    for (const auto& track : data.tracks) {
+        for (const auto& e : track) {
+            if (e.meta && e.metaType == 0x51 && e.bytes.size() == 3) {
+                const std::uint32_t us = (static_cast<std::uint32_t>(e.bytes[0]) << 16) |
+                                         (static_cast<std::uint32_t>(e.bytes[1]) << 8) | e.bytes[2];
+                if (us > 0) tempos.emplace_back(e.tick, us);
+            }
+        }
+    }
+    std::stable_sort(tempos.begin(), tempos.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    double smpteTicksPerSecond = 0.0;
+    if (data.division < 0) {
+        const int fps = -static_cast<int>(static_cast<std::int8_t>((static_cast<std::uint16_t>(data.division) >> 8) & 0xFF));
+        const int sub = static_cast<std::uint16_t>(data.division) & 0xFF;
+        smpteTicksPerSecond = (fps == 29 ? 29.97 : static_cast<double>(fps)) * sub;
+    }
+    const double ppq = data.division > 0 ? static_cast<double>(data.division) : 960.0;
+
+    auto seconds = [&](std::uint32_t tick) {
+        if (smpteTicksPerSecond > 0.0) return tick / smpteTicksPerSecond;
+        double t = 0.0;
+        std::uint32_t lastTick = 0;
+        double us = kSmfTempoUsPerQuarter;  // default 120 BPM until the first tempo event
+        for (const auto& [tt, tempo] : tempos) {
+            if (tt >= tick) break;
+            t += (tt - lastTick) * us / (ppq * 1e6);
+            lastTick = tt;
+            us = tempo;
+        }
+        return t + (tick - lastTick) * us / (ppq * 1e6);
+    };
+    auto toFrame = [&](std::uint32_t tick) {
+        return static_cast<std::uint64_t>(std::llround(seconds(tick) * sampleRate));
+    };
+
+    std::vector<MidiEvent> out;
+    std::uint64_t end = 0;
+    for (const auto& track : data.tracks) {
+        for (const auto& e : track) {
+            if (e.meta) {
+                if (e.metaType == 0x2F) end = std::max(end, toFrame(e.tick));
+                continue;
+            }
+            if (e.bytes.empty() || e.bytes.size() > 3) continue;
+            MidiEvent m;
+            m.frame = toFrame(e.tick);
+            m.size = static_cast<std::uint8_t>(e.bytes.size());
+            for (std::size_t i = 0; i < e.bytes.size(); ++i) m.data[i] = e.bytes[i];
+            out.push_back(m);
+            end = std::max(end, m.frame);
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.frame < b.frame; });
+    if (endFrame) *endFrame = end;
+    return out;
+}
+
 } // namespace minidaw

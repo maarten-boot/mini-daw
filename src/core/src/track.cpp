@@ -1,7 +1,10 @@
 #include "minidaw/track.hpp"
 #include "minidaw/path_util.hpp"
+#include "minidaw/smf.hpp"
+#include "minidaw/wav_reader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <system_error>
 
@@ -79,6 +82,86 @@ int nextTrackNumber(const std::vector<Track>& tracks)
     int n = 1;
     while (std::any_of(tracks.begin(), tracks.end(), [n](const Track& t) { return t.number == n; })) ++n;
     return n;
+}
+
+float trackGain(const Track& track, bool soloActive)
+{
+    if (track.mute || (soloActive && !track.solo) || track.volumeDb <= kMinVolumeDb) return 0.0f;
+    return static_cast<float>(std::pow(10.0, std::min(track.volumeDb, kMaxVolumeDb) / 20.0));
+}
+
+bool anySolo(const std::vector<Track>& tracks)
+{
+    return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return t.solo; });
+}
+
+std::uint64_t takeLengthFrames(const Track& track, unsigned int sampleRate)
+{
+    if (track.take.empty()) return 0;
+    std::string err;
+    if (track.kind == TrackKind::Audio) {
+        WavReader r;
+        return r.open(track.take, err) ? r.frames() : 0;
+    }
+    SmfData d;
+    if (!readSmf(track.take, d, err)) return 0;
+    std::uint64_t end = 0;
+    smfToFrames(d, sampleRate, &end);
+    return end;
+}
+
+std::vector<std::filesystem::path> listTakeFolders(const std::filesystem::path& base)
+{
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory(ec)) continue;
+        const std::string name = pathToUtf8(it->path().filename());
+        if (name.rfind("take-", 0) == 0) out.push_back(it->path());
+    }
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+        return pathToUtf8(a.filename()) > pathToUtf8(b.filename());
+    });
+    return out;
+}
+
+std::vector<Track> tracksFromTakeFolder(const std::filesystem::path& folder, std::string& error)
+{
+    std::vector<Track> tracks;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::string file = pathToUtf8(it->path().filename());
+        const std::string ext = pathToUtf8(it->path().extension());
+        const bool wav = ext == ".wav" || ext == ".WAV";
+        const bool mid = ext == ".mid" || ext == ".MID";
+        if (!wav && !mid) continue;
+        // "NN-name.ext"
+        std::size_t digits = 0;
+        while (digits < file.size() && file[digits] >= '0' && file[digits] <= '9') ++digits;
+        if (digits == 0 || digits > 4 || digits >= file.size() || file[digits] != '-') continue;
+        Track t;
+        t.number = std::stoi(file.substr(0, digits));
+        t.name = pathToUtf8(it->path().stem()).substr(digits + 1);
+        t.kind = wav ? TrackKind::Audio : TrackKind::Midi;
+        t.take = it->path();
+        if (wav) {
+            WavReader reader;  // the channel count, and whether it is a WAV we can play at all
+            std::string err;
+            if (!reader.open(it->path(), err)) continue;
+            t.channels = reader.channels() >= 2 ? std::vector<unsigned int>{0, 1} : std::vector<unsigned int>{0};
+        }
+        tracks.push_back(std::move(t));
+    }
+    std::sort(tracks.begin(), tracks.end(), [](const Track& a, const Track& b) { return a.number < b.number; });
+    // Numbers must be unique (a folder edited by hand): renumber clashes.
+    for (std::size_t i = 1; i < tracks.size(); ++i) {
+        if (tracks[i].number <= tracks[i - 1].number) tracks[i].number = tracks[i - 1].number + 1;
+    }
+    if (tracks.empty()) {
+        error = "No takes (NN-name.wav or .mid) found in " + pathToUtf8(folder) + ".";
+    }
+    return tracks;
 }
 
 } // namespace minidaw

@@ -11,7 +11,7 @@
 // one MIDI track: channel filter, start/end of the take, note-offs for notes
 // still held at the end.
 //
-// readSmf() is a small reader for the tests (and later for playback, P8).
+// readSmf() reads a file; smfToFrames() turns it into timeline events for playback (P8).
 
 #include <array>
 #include <cstdint>
@@ -84,5 +84,12 @@ struct SmfData {
 };
 
 bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& error);
+
+// Playback (SPEC-PLAY-03): all channel messages of all tracks, placed on the
+// audio timeline at `sampleRate` (frame 0 = tick 0), sorted (stable: the
+// order in the file is kept for equal times). Follows tempo changes (any
+// track) for PPQ files; SMPTE files use their fixed ticks per second
+// (-29 = 29.97 fps). `endFrame` gets the latest end-of-track or event.
+std::vector<MidiEvent> smfToFrames(const SmfData& data, unsigned int sampleRate, std::uint64_t* endFrame = nullptr);
 
 } // namespace minidaw

@@ -11,13 +11,16 @@ add_library(minidaw_core STATIC
     core/src/log.cpp
     core/src/meter.cpp
     core/src/monitor.cpp
+    core/src/player.cpp
     core/src/recorder.cpp
     core/src/midi_input.cpp
+    core/src/midi_player.cpp
     core/src/recording_session.cpp
     core/src/smf.cpp
     core/src/track.cpp
     core/src/theme.cpp
-    core/src/wav.cpp)
+    core/src/wav.cpp
+    core/src/wav_reader.cpp)
 target_include_directories(minidaw_core PUBLIC
     core/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)

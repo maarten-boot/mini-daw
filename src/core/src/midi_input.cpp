@@ -66,6 +66,11 @@ std::string midiPortBaseName(std::string_view name, MidiNaming naming)
     return std::string(name.substr(0, j - 1));
 }
 
+bool isOwnMidiPort(std::string_view name)
+{
+    return name.rfind("RtMidi Input Client:mini-daw", 0) == 0 || name.rfind("RtMidi Output Client:mini-daw", 0) == 0;
+}
+
 std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted,
                                          MidiNaming naming)
 {
@@ -187,7 +192,7 @@ std::vector<std::string> MidiInputs::availablePorts()
         const unsigned int n = s->getPortCount();
         for (unsigned int i = 0; i < n; ++i) {
             std::string name = s->getPortName(i);
-            if (!name.empty()) names.push_back(std::move(name));
+            if (!name.empty() && !isOwnMidiPort(name)) names.push_back(std::move(name));
         }
     } catch (const RtMidiError&) {
     }

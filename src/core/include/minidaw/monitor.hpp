@@ -32,14 +32,16 @@ MonitorGains monitorGains(const std::vector<Track>& tracks, unsigned int inputCh
 // Audio thread: adds the monitored input to `out` (interleaved, `outChannels`
 // 1 or 2; with one output channel left and right are averaged). The gains
 // move linearly from `current` to `target` over the block, then `current`
-// becomes `target`. The output is limited to -1..1, and a sample that is not
-// a number (a driver glitch) becomes silence. Returns the highest absolute
-// output value before limiting; `channelPeaks` (if given, `outChannels`
-// values) gets it per output channel, for the output meter, so it can show
-// how far the mix went over 0 dBFS (crosscheck #5, K7). Both are 0 when
-// nothing was mixed. No locks, no allocation.
-float mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, float* out,
-                 unsigned int outChannels, MonitorGains& current, const MonitorGains& target,
-                 float* channelPeaks = nullptr);
+// becomes `target`. No locks, no allocation.
+void mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, float* out,
+                unsigned int outChannels, MonitorGains& current, const MonitorGains& target);
+
+// Audio thread, after everything was mixed (playback + monitoring): a sample
+// that is not a number (a driver glitch) becomes silence (crosscheck #5, K4),
+// and the output is limited to -1..1. Returns the highest absolute value
+// before limiting; `channelPeaks` (if given, `outChannels` values) gets it per
+// output channel, for the output meter, so it can show how far the mix went
+// over 0 dBFS (K7).
+float limitOutput(float* out, unsigned int frames, unsigned int outChannels, float* channelPeaks = nullptr);
 
 } // namespace minidaw

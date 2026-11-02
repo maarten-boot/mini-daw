@@ -16,7 +16,7 @@
 | P6c | Manual tests with real MIDI: Linux VM (virtual keyboard, `audio` group), Windows (USB keyboard, virtual port) | REC-01, 04 | Linux done (2026-11-02, Midi Through + aplaymidi); Windows pending |
 | P7 | Monitoring and meters | MON-01..02, 01a, 02a, UI-07 | done (2026-11-02) on Linux; Windows (WASAPI) to be tested by the user |
 | P7b | MIDI hot-plug and diagnostics log (from the user's Windows test) | REC-01b, LOG-01 | done (2026-11-02) on Linux and Wine; Windows with a USB keyboard to be tested by the user |
-| P8 | Transport and playback | PLAY-01..04 | pending |
+| P8 | Transport and playback: streamed audio playback, MIDI playback to outputs, volume/mute/solo, overdub with latency estimate, open take folder, stream watchdog | PLAY-01..06, 01a..04a, DEV-05 | done (2026-11-02) on Linux; Windows (WASAPI, MIDI out) and the overdub loopback measurement to be tested by the user |
 | P9 | Project save/load | PRJ-01..02 | pending |
 | P9b | Windows packaging: GUI subsystem (no console window; `--list-devices` still prints), icon, installer | — | pending |
 | — | **Milestone v1: record and play back MIDI and audio on Windows 10** | | |

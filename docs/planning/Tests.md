@@ -88,10 +88,20 @@ Status column in the Results section at the end.
 ## Playback
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
-| T-PLAY-01 | SPEC-PLAY-01 | M | Play / Stop / Record / return to start | Transport state and position behave correctly |
-| T-PLAY-02 | SPEC-PLAY-02 | M | Play back 2 recorded audio tracks | In sync, with no drift after 10 min |
-| T-PLAY-03 | SPEC-PLAY-03 | M | Play back a MIDI take to an external MIDI output | Notes heard with correct timing |
-| T-PLAY-04 | SPEC-PLAY-04 | M | Mute track 1, solo track 2 | Only the expected tracks are heard |
+| T-PLAY-01 | SPEC-PLAY-01, 01a | M | Play / Stop (Space) / Record (Ctrl+R) / return to start (Home); position slider while stopped; play to the end | State as text, position and length right; Stop keeps the position; playback stops at the end of the last take |
+| T-PLAY-02 | SPEC-PLAY-02, 02a | M | Play back 2 recorded audio tracks | In sync, with no drift after 10 min |
+| T-PLAY-03 | SPEC-PLAY-03, 03a | M | Play back a MIDI take to a MIDI output (Linux: Midi Through + `aseqdump`; Windows: a synth or loopMIDI) | Notes with correct timing (gaps within a few ms); Stop sends note-offs / All Notes Off |
+| T-PLAY-04 | SPEC-PLAY-04, 04a | A+M | Mute track 1, solo track 2; volume; track gain logic | Only the expected tracks are heard; mute wins over solo; −60 dB = silent |
+| T-PLAY-05 | SPEC-PLAY-02a | A | WAV reader: 24-bit stereo, seek, end of data, header never refreshed (crash), 16-bit and float files with an extra chunk, not a WAV, missing file | Right samples at the right frames; data to the end of the file; clear errors |
+| T-PLAY-06 | SPEC-PLAY-03a | A | MIDI file to timeline frames: own PPQ and SMPTE files, other sample rate, a file with a tempo change | Frames within one tick; 44.1 kHz frames scaled; tempo followed (0.5 s and 2 s) |
+| T-PLAY-07 | SPEC-PLAY-05 | A | Latency estimate (256 frames, 1000 reported, ±correction) | MIDI 2×256+500, audio 2×256+1000 (+/− the correction in frames) |
+| T-PLAY-08 | SPEC-PLAY-02a, 04a, 05, NF-01 | A | Player: clip starting later, mono on both sides, start in the middle, stereo + gains, negative start (overdub shift), anchor mapping, underrun then catch-up, wrong rate / missing file, no clips; with the reader thread and a fake audio thread | Silent before the clip and the right samples after; anchor maps stream → timeline; after an underrun the next block is the right part of the file; skipped with a message; position runs; 1000 blocks exact while streaming |
+| T-PLAY-09 | SPEC-PLAY-03a, 04a | A | MIDI player with a stand-in output: due times per port, missing output, start in the middle, mute and volume, stop | Sent when due; warning; earlier events skipped (and their note-offs); velocity scaled; mute releases held notes; stop releases notes, All Notes Off, sustain off |
+| T-PLAY-10 | SPEC-PLAY-05 | A | `latency_correction_ms` in `[recording]`: default, −12, bad values, save and load | 0; −12; warning and 0; kept |
+| T-PLAY-11 | SPEC-PLAY-06 | A | Take folders listed (newest first, "-2" folders); a folder with a stereo and a mono WAV, a MIDI file, other files, a damaged WAV, a non-ASCII name | Order right; 3 tracks numbered and named from the files; damaged WAV and other files skipped |
+| T-PLAY-12 | SPEC-PLAY-05 | M | Overdub alignment: play a take with clicks, record it back through a loopback (cable or "Stereo Mix"), compare the two takes | The new take lines up within about 1 ms after setting `latency_correction_ms` (note the value per driver) |
+| T-PLAY-13 | SPEC-PLAY-01..06 | M | Windows (WASAPI): record, play back, overdub along with a take, MIDI out to a synth, File → Open take folder | As on Linux; no clicks when muting; overdub sounds in time |
+| T-DEV-07 | SPEC-DEV-05 | M | Make the stream stop delivering callbacks (Linux VM: remove every link to mini-daw's input in PipeWire) | "ERROR: the audio stream has stopped" shown and logged within about 1 s; "callbacks arrive again" logged after relinking |
 
 ## VST3 (phase 2)
 | ID | Spec | Type | Description | Expected result |
@@ -222,3 +232,9 @@ Status column in the Results section at the end.
 | 2026-11-02 | T-UI-09 | Linux VM, screenshots of 2026-11-02 (P7, hot-plug) | pass (Linux) | Levels readable without colour: dBFS text beside every bar, CLIP as a labelled button, "armed", "on"/"off", "receiving", "DISCONNECTED - waiting for it" as text. Windows with the user's next test |
 | 2026-11-02 | crosscheck #5 fixes (K1–K8): T-REC-31, T-REC-33, T-MON-04, T-LOG-05 | Linux 99/99 ctest; MinGW build under Wine 98/98 Catch2 cases (1088 assertions) | pass | First version of the NaN test expected input 3 to survive in the NaN frame; the NaN is summed into both sides first, so that sample is silence as specified: test corrected |
 | 2026-11-02 | T-REC-32 (regression), T-LOG-01 | Linux VM, vkeys + `--record-test 10` | pass | Disconnect, reconnect, disconnect; "disconnected 2 time(s)"; the log now also has the device scan and the audio stream line in this mode (K3) |
+| 2026-11-02 | T-PLAY-04..11 (P8, automated) | Linux 108/108 ctest; MinGW build under Wine 107/107 Catch2 cases (1293 assertions) | pass | Two test expectations of mine were wrong at first (the prefill reads whole 4096-frame chunks: 24 576 frames, not 24 000); tests corrected, code right |
+| 2026-11-02 | T-PLAY-01, 02 (single take), 04 | Linux VM, GUI on Xvfb, PipeWire, −6 dBFS sine recorded 4 s | pass | Play: output −6.0 dBFS; Stop, Home, position slider; mute: −inf while PLAYING; stops by itself at 4.0 / 4.0 |
+| 2026-11-02 | Overdub, SPEC-PLAY-05 (MIDI part; alignment itself is T-PLAY-12) + T-PLAY-11 | same, vkeys as keyboard, then File → Open take folder | pass | Audio take played while the MIDI track recorded ("Overdub" shown); MIDI take placed at −0.011 s (moved earlier by 2×256 + 512 frames); take folder list newest first, double-click opens it as tracks |
+| 2026-11-02 | T-PLAY-03 | same, MIDI take → "Midi Through", captured with `aseqdump` + timestamps | pass | 16 notes, gaps 497.9–503.5 ms (recorded 500 ms apart; max 3.5 ms off); Stop sent All Notes Off + sustain off |
+| 2026-11-02 | T-DEV-07 | same | pass | Error shown and logged ~1 s after the input lost its links; "arrive again" after relinking |
+| 2026-11-02 | (found during P8 tests) | Linux VM | fixed | Playback stopped at once when the play position was past the end of the audio takes but inside a MIDI take (end check used the audio clips only) → end of all takes; mini-daw's own RtMidi ports were offered as MIDI in/out (loop) → hidden; table too wide for the window → narrower columns, 1280×760 window. Test-tool artefacts (not bugs): xdotool `key ctrl+r` right after another key is not seen as a chord (holding Ctrl with keydown/keyup works); a click in the same instant as a mouse move is missed by ImGui; PipeWire stops an ALSA capture stream with no links (that is what the watchdog now reports) |

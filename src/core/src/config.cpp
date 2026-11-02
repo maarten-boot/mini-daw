@@ -224,6 +224,14 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.recording.midiTiming = MidiTiming::Ppq;
                 warn("midi_timing '" + value + "' must be ppq or smpte. Using ppq.");
             }
+        } else if (section == "recording" && key == "latency_correction_ms") {
+            char* end = nullptr;
+            const long v = std::strtol(value.c_str(), &end, 10);
+            if (value.empty() || end == value.c_str() || *end != '\0' || v < -500 || v > 500) {
+                warn("latency_correction_ms '" + value + "' must be a whole number from -500 to 500. Using 0.");
+            } else {
+                cfg.recording.latencyCorrectionMs = static_cast<int>(v);
+            }
         } else {
             warn("unknown setting '" + key + "' in section [" + section + "]");
         }
@@ -316,7 +324,11 @@ std::string defaultConfigText()
            "; (folder = \\\\server\\takes). Inside quotes, \\\\ stands for one \\.\n"
            "folder = \"\"\n"
            "; MIDI file timing: ppq (960 ticks per quarter at 120 BPM) or smpte (1 ms ticks).\n"
-           "midi_timing = ppq\n";
+           "midi_timing = ppq\n"
+           "; Overdub: new audio takes are moved earlier by the estimated round-trip\n"
+           "; latency plus this many ms (-500 to 500), so they line up with what you\n"
+           "; heard. Raise it if overdubs land late, lower it if they land early.\n"
+           "latency_correction_ms = 0\n";
 }
 
 std::filesystem::path defaultConfigPath()
@@ -399,6 +411,8 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "recording", "sync_to_disk", config.recording.syncToDisk ? "true" : "false");
     text = setConfigValue(text, "recording", "folder", quoteConfigString(config.recording.folder));
     text = setConfigValue(text, "recording", "midi_timing", midiTimingName(config.recording.midiTiming));
+    text = setConfigValue(text, "recording", "latency_correction_ms",
+                          std::to_string(config.recording.latencyCorrectionMs));
 
     std::error_code ec;
     if (path.has_parent_path()) {

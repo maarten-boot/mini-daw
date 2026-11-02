@@ -212,6 +212,7 @@ TEST_CASE("T-REC-23: audio and MIDI tracks record together on one timeline", "[s
     CHECK_FALSE(res.lostData());
     CHECK(res.seconds > 0.0999);
     CHECK(res.seconds < 0.1001);
+    CHECK(res.startFrame == std::optional<std::uint64_t>(1000));  // stream frame of the takes' frame 0 (P8)
 
     REQUIRE(res.audio.takes.size() == 1);
     CHECK(res.audio.takes[0].frames == 4800);
@@ -269,6 +270,7 @@ TEST_CASE("T-REC-24: a MIDI-only recording uses the stream clock", "[session][T-
     CHECK(n[1].tick == 14);  // 340 frames = 13.6 ticks, rounded
     CHECK(endTick(d) == 192);
     CHECK(res.seconds > 0.0999);
+    CHECK(res.startFrame == std::optional<std::uint64_t>(2000));
 }
 
 TEST_CASE("T-REC-25: a recording that cannot start leaves nothing behind", "[session][T-REC-25]")

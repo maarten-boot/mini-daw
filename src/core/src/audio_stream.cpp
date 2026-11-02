@@ -95,6 +95,7 @@ AudioStream::~AudioStream()
 
 void AudioStream::close()
 {
+    player_.stop();  // after this the callback no longer touches the run
     if (rtaudio_ && rtaudio_->isStreamOpen()) {
         if (rtaudio_->isStreamRunning()) rtaudio_->stopStream();
         rtaudio_->closeStream();
@@ -312,6 +313,9 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
         std::memset(output, 0, sizeof(float) * frames * self->cbOutputChannels_);
     }
 
+    // Playback (SPEC-PLAY-02): also without an output, so the timeline runs.
+    self->player_.process(static_cast<float*>(output), frames, output ? self->cbOutputChannels_ : 0, blockFrame);
+
     // Input monitoring (SPEC-MON-01). Each gain is read on its own; a change
     // that is half visible in one block is complete in the next.
     if (output != nullptr && self->cbOutputChannels_ > 0) {
@@ -323,8 +327,9 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
         auto* out = static_cast<float*>(output);
         const unsigned int outCh = self->cbOutputChannels_;  // at most kMaxOutputChannels
         float peaks[kMaxOutputChannels] = {};
-        if (mixMonitor(static_cast<const float*>(input), frames, self->cbInputChannels_, out, outCh,
-                       self->monitorCurrent_, target, peaks) > 0.0f) {
+        mixMonitor(static_cast<const float*>(input), frames, self->cbInputChannels_, out, outCh,
+                   self->monitorCurrent_, target);
+        if (limitOutput(out, frames, outCh, peaks) > 0.0f) {
             for (unsigned int ch = 0; ch < outCh && ch < kMaxOutputChannels; ++ch) {
                 const float peak = peaks[ch];  // before limiting, so the meter shows an overload (K7)
                 auto& slot = self->outPeaks_[ch];

@@ -150,3 +150,14 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - One test expectation of mine was wrong (NaN frame: the whole sample is silence, as specified); test corrected, not the code.
 - Spec v0.17; tests T-REC-33, T-LOG-05, T-MON-04 extended; T-UI-09 recorded.
 - Linux 99/99, Wine 98/98, live hot-plug regression. `dist/windows` refreshed.
+
+## 18. P8: transport and playback
+> start P8
+
+- User's choices: each track plays its last take, plus File → Open take folder; overdub in P8 with latency compensation and a manual correction; MIDI output per track, none until chosen.
+- Timing model worked out first: MIDI is sent 2 × buffer + output latency after its block; overdub takes move earlier by that (MIDI) or by 2 × buffer + round trip (audio) + `latency_correction_ms`.
+- Core: `WavReader` (streaming), `smfToFrames` (tempo map, SMPTE), `Player` (reader thread → SPSC rings → callback mix, gains ramped, underrun skip keeps sync, hazard pointer for stop), `MidiPlayer` (sender thread, sink interface for tests), `limitOutput` split from monitoring, `estimateLatency`, `SessionResult::startFrame`, track gain / take folder helpers.
+- GUI: transport row, position slider, Mix and Take columns (MIDI out per track), take browser, Space/Home, overdub placement, stream watchdog.
+- Found while testing live: end-of-playback check ignored MIDI takes; own RtMidi ports were offered (loop); table too wide → all fixed. Test-tool artefacts noted in `CLAUDE.md`.
+- Spec v0.18 (PLAY-01a..06, DEV-05 watchdog), tests T-PLAY-01..13, T-DEV-07. Linux 108/108, Wine 107/107; live on the VM: playback −6.0 dBFS, mute, MIDI gaps within 3.5 ms, overdub placement, take browser, watchdog.
+- Open: Windows (T-PLAY-13), overdub loopback measurement (T-PLAY-12), 2 tracks for 10 min (T-PLAY-02).

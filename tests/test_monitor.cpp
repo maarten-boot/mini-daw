@@ -74,7 +74,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
     {
         MonitorGains current = on;
         std::vector<float> out(frames * 2, 0.0f);
-        const float peak = mixMonitor(in.data(), frames, inCh, out.data(), 2, current, on);
+        mixMonitor(in.data(), frames, inCh, out.data(), 2, current, on);
+        const float peak = limitOutput(out.data(), frames, 2);
         for (unsigned int f = 0; f < frames; ++f) {
             CHECK(out[f * 2] == Approx(0.15f));
             CHECK(out[f * 2 + 1] == Approx(0.25f));
@@ -100,7 +101,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
         CHECK(out[1] == Approx(0.25f * 0.75f));
         CHECK(out[7] == Approx(0.0f).margin(1e-7));
         std::vector<float> next(frames * 2, 0.0f);
-        CHECK(mixMonitor(in.data(), frames, inCh, next.data(), 2, current, MonitorGains{}) == 0.0f);
+        mixMonitor(in.data(), frames, inCh, next.data(), 2, current, MonitorGains{});
+        CHECK(limitOutput(next.data(), frames, 2) == 0.0f);
         for (float v : next) CHECK(v == 0.0f);
     }
     SECTION("one output channel: left and right averaged")
@@ -119,7 +121,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
         for (unsigned int f = 0; f < frames; ++f) loud.insert(loud.end(), {0.9f, 0.8f, 0.0f});
         MonitorGains current = all;
         std::vector<float> out(frames * 2, 0.0f);
-        const float peak = mixMonitor(loud.data(), frames, inCh, out.data(), 2, current, all);
+        mixMonitor(loud.data(), frames, inCh, out.data(), 2, current, all);
+        const float peak = limitOutput(out.data(), frames, 2);
         CHECK(peak == Approx(1.7f));
         for (float v : out) CHECK(v == 1.0f);
     }
@@ -132,7 +135,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
         MonitorGains current = left;
         std::vector<float> out(frames * 2, 0.0f);
         float peaks[2] = {-1.0f, -1.0f};
-        mixMonitor(loud.data(), frames, inCh, out.data(), 2, current, left, peaks);
+        mixMonitor(loud.data(), frames, inCh, out.data(), 2, current, left);
+        limitOutput(out.data(), frames, 2, peaks);
         CHECK(peaks[0] == Approx(1.5f));  // +3.5 dBFS shown, although the output is limited
         CHECK(peaks[1] == 0.0f);
         CHECK(out[0] == 1.0f);
@@ -144,7 +148,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
         MonitorGains current = on;
         std::vector<float> out(frames * 2, 0.0f);
         float peaks[2] = {};
-        const float peak = mixMonitor(bad.data(), frames, inCh, out.data(), 2, current, on, peaks);
+        mixMonitor(bad.data(), frames, inCh, out.data(), 2, current, on);
+        const float peak = limitOutput(out.data(), frames, 2, peaks);
         for (float v : out) CHECK(v == v);
         CHECK(out[2] == 0.0f);  // frame 1: the NaN was summed into both sides, so that sample is silence
         CHECK(out[3] == 0.0f);
@@ -155,7 +160,8 @@ TEST_CASE("T-MON-04: mixing monitored input to the output", "[monitor][T-MON-04]
     {
         MonitorGains current = on;
         std::vector<float> out(frames * 2, 0.0f);
-        CHECK(mixMonitor(nullptr, frames, 0, out.data(), 2, current, on) == 0.0f);
+        mixMonitor(nullptr, frames, 0, out.data(), 2, current, on);
+        CHECK(limitOutput(out.data(), frames, 2) == 0.0f);
         for (float v : out) CHECK(v == 0.0f);
     }
 }

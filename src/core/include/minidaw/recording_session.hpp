@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -38,6 +39,7 @@ struct SessionResult {
     RecordingResult audio;
     std::vector<MidiTakeResult> midi;
     double seconds = 0.0;
+    std::optional<std::uint64_t> startFrame;  // stream frame of the takes' frame 0 (for the timeline, P8)
     std::string error;                // first MIDI file error, empty if none
     bool lostData() const;
 };

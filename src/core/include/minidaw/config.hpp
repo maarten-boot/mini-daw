@@ -19,6 +19,7 @@
 //   folder = "D:\Takes"         ; empty = Documents\mini-daw (Windows), ~/Music/mini-daw
 //                               ; network path: folder = \\server\takes (no quotes)
 //   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
+//   latency_correction_ms = 0 ; overdub: shift new audio takes earlier by this much more
 //
 // Default location:
 //   Windows: %APPDATA%\mini-daw\config.ini
@@ -62,6 +63,9 @@ struct RecordingSettings {
     bool syncToDisk = true;
     std::string folder;                     // empty = defaultRecordingFolder()
     MidiTiming midiTiming = MidiTiming::Ppq;
+    // Overdub (SPEC-PLAY-05): added to the estimated round-trip latency by
+    // which a new audio take is moved earlier. Whole ms, -500..500.
+    int latencyCorrectionMs = 0;
     friend bool operator==(const RecordingSettings&, const RecordingSettings&) = default;
 };
 

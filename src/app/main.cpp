@@ -22,6 +22,7 @@
 #include "minidaw/log.hpp"
 #include "minidaw/meter.hpp"
 #include "minidaw/midi_input.hpp"
+#include "minidaw/midi_player.hpp"
 #include "minidaw/monitor.hpp"
 #include "minidaw/path_util.hpp"
 #include "minidaw/recording_session.hpp"
@@ -79,6 +80,11 @@ struct AppState {
     std::vector<std::string> configWarnings;
     std::string saveError;
 
+    // Audio stream watchdog (P8): callbacks that stop arriving.
+    std::uint64_t lastCallbacks = 0;
+    double callbacksChangedAt = 0.0;
+    bool streamStalled = false;
+
     // Diagnostics log (SPEC-LOG-01).
     minidaw::Log log;
     bool showLog = false;
@@ -126,6 +132,16 @@ struct AppState {
     std::vector<std::string> lastTake;     // summary of the last recording
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
+
+    // Playback (P8). Declared last: destroyed first (its thread reads `audio`).
+    minidaw::MidiPlayer midiPlayer;
+    bool playbackForRecording = false;     // the run was started by Record (timeline for the takes)
+    bool overdub = false;                  // takes were playing while recording: shift the new ones
+    std::vector<std::string> playWarnings;
+    bool showTakeBrowser = false;
+    std::string takeFolderInput;
+    std::vector<std::filesystem::path> takeFolders;
+    std::string takeBrowserError;
 };
 
 void saveConfig(AppState& app)
@@ -222,12 +238,20 @@ std::string describeContrast(const ContrastSetting& s)
 
 // Open the audio stream with the given settings. On success the settings are
 // kept (and saved if `save`); on failure the previous settings are reopened.
+void stopPlayback(AppState& app)
+{
+    app.midiPlayer.stop();      // first: its thread reads the player's run
+    app.audio.player().stop();  // keeps the position where it stopped
+    app.playbackForRecording = false;
+}
+
 void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
 {
     if (app.session.recording()) {
         app.audioError = "Stop the recording before changing the audio devices.";
         return;
     }
+    stopPlayback(app);  // the MIDI thread reads the stream; the run does not survive a reopen
     const minidaw::AudioSettings previous = app.config.audio;
     minidaw::OpenResult r = app.audio.open(settings, app.scan);
     logOpenResult(app, r);
@@ -514,6 +538,12 @@ void drawMenuBar(AppState& app, bool& quit)
 {
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
+            app.showTakeBrowser = true;
+            app.takeFolders = minidaw::listTakeFolders(minidaw::recordingFolder(app.config.recording));
+            app.takeBrowserError.clear();
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Alt+F4")) quit = true;
         ImGui::EndMenu();
     }
@@ -749,7 +779,7 @@ void drawMeter(AppState& app, const std::vector<minidaw::LevelMeter*>& meters, f
     const std::string value = minidaw::formatDbfs(text);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value.c_str());
-    const float pad = 6.5f * ImGui::GetFontSize() - ImGui::CalcTextSize(value.c_str()).x;
+    const float pad = 5.5f * ImGui::GetFontSize() - ImGui::CalcTextSize(value.c_str()).x;
     if (pad > 0.0f) {
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::Dummy(ImVec2(pad, 1.0f));
@@ -769,6 +799,19 @@ void updateMeters(AppState& app)
 {
     const auto& info = app.audio.info();
     const double now = ImGui::GetTime();
+    // Watchdog: a running stream whose callbacks stop (driver hang, device
+    // gone) would otherwise look normal but silent.
+    const std::uint64_t callbacks = app.audio.callbacks();
+    if (!info.running || callbacks != app.lastCallbacks) {
+        if (app.streamStalled) app.log.info("Audio callbacks arrive again.");
+        app.lastCallbacks = callbacks;
+        app.callbacksChangedAt = now;
+        app.streamStalled = false;
+    } else if (!app.streamStalled && now - app.callbacksChangedAt > 1.0) {
+        app.streamStalled = true;
+        app.log.error("The audio stream has stopped: no audio callback for more than 1 second. Playback, "
+                      "recording and the meters are stuck; try Settings > Audio devices > Apply.");
+    }
     if (info.running) {
         for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
             app.inputMeters[ch].update(app.audio.takeInputPeak(ch), now);
@@ -803,6 +846,10 @@ void drawAudioStatus(AppState& app)
     if (!info.running) {
         ImGui::TextWrapped("Stopped. %s", app.audioError.c_str());
     } else {
+        if (app.streamStalled) {
+            ImGui::TextWrapped("ERROR: the audio stream has stopped (no audio callback for more than 1 second). "
+                               "Try Settings > Audio devices > Apply.");
+        }
         ImGui::Text("Running: %s, %u Hz, %u frames (%.1f ms per buffer), reported latency %.1f ms", info.api.c_str(),
                     info.sampleRate, info.bufferFrames, 1000.0 * info.bufferFrames / info.sampleRate,
                     info.reportedLatencyMs);
@@ -899,6 +946,131 @@ void syncMidiPorts(AppState& app, bool force = false)
     }
 }
 
+// --- Playback (P8) ------------------------------------------------------------
+minidaw::LatencyEstimate latencyNow(const AppState& app)
+{
+    const auto& info = app.audio.info();
+    const auto reported = static_cast<unsigned int>(std::lround(info.reportedLatencyMs * info.sampleRate / 1000.0));
+    return minidaw::estimateLatency(info.bufferFrames, reported, app.config.recording.latencyCorrectionMs,
+                                    info.sampleRate);
+}
+
+// Track volume, mute and solo to both players, every frame (SPEC-PLAY-04).
+void applyGains(AppState& app)
+{
+    const bool solo = minidaw::anySolo(app.tracks);
+    for (const auto& t : app.tracks) {
+        const float g = minidaw::trackGain(t, solo);
+        app.audio.player().setGain(t.number, g, g);
+        app.midiPlayer.setGain(t.number, g);
+    }
+}
+
+void refreshTakeLength(AppState& app, minidaw::Track& t)
+{
+    const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+    t.takeFrames = minidaw::takeLengthFrames(t, rate);
+}
+
+// End of the last take on the timeline.
+std::uint64_t songLength(const AppState& app)
+{
+    std::int64_t end = 0;
+    for (const auto& t : app.tracks) {
+        if (!t.take.empty()) end = std::max(end, t.takeStart + static_cast<std::int64_t>(t.takeFrames));
+    }
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(end, 0));
+}
+
+// Play the takes from the play position (SPEC-PLAY-01..03). `forRecording`:
+// started by Record; the armed tracks are left out (they are recorded now).
+bool startPlayback(AppState& app, bool forRecording)
+{
+    const std::uint64_t position = app.audio.player().position();
+    stopPlayback(app);
+    app.audio.player().locate(position);
+    const auto& info = app.audio.info();
+    app.playWarnings.clear();
+    if (!info.running) {
+        app.playWarnings.push_back("The audio stream is not running.");
+        return false;
+    }
+    std::vector<minidaw::PlaybackClip> clips;
+    std::vector<minidaw::MidiPlaybackTrack> midiTracks;
+    for (const auto& t : app.tracks) {
+        if (t.take.empty() || (forRecording && t.armed)) continue;
+        if (t.kind == minidaw::TrackKind::Audio) {
+            clips.push_back({t.number, t.take, t.takeStart});
+        } else if (!t.midiOut.empty()) {
+            minidaw::SmfData d;
+            std::string err;
+            if (!minidaw::readSmf(t.take, d, err)) {
+                app.playWarnings.push_back("Track " + std::to_string(t.number) + ": " + err);
+                continue;
+            }
+            midiTracks.push_back({t.number, t.midiOut, minidaw::smfToFrames(d, info.sampleRate), t.takeStart});
+        }
+    }
+    applyGains(app);
+    app.audio.player().start(clips, position, info.sampleRate, app.playWarnings);
+    const std::int64_t midiDelay = latencyNow(app).midiFrames;
+    app.midiPlayer.start(midiTracks, static_cast<std::int64_t>(position),
+                         [&app, midiDelay]() -> std::optional<std::int64_t> {
+                             // MIDI thread: the timeline as heard now (stopPlayback() stops this first).
+                             const auto frame = app.audio.currentFrame();
+                             if (!frame) return std::nullopt;
+                             const auto t = app.audio.player().timelineAt(*frame);
+                             if (!t) return std::nullopt;
+                             return *t - midiDelay;
+                         },
+                         app.playWarnings);
+    app.overdub = !clips.empty() || !midiTracks.empty();
+    app.playbackForRecording = forRecording;
+    for (const auto& w : app.playWarnings) app.log.warning("Playback: " + w);
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%s from %.3f s: %zu audio and %zu MIDI take(s)",
+                  forRecording ? "Recording timeline started" : "Playback started",
+                  static_cast<double>(position) / info.sampleRate, clips.size(), midiTracks.size());
+    app.log.info(buf);
+    return true;
+}
+
+void togglePlay(AppState& app)
+{
+    if (app.session.recording()) return;  // Stop the recording with Ctrl+R
+    if (app.audio.player().playing()) {
+        stopPlayback(app);
+        app.log.info("Playback stopped");
+    } else {
+        startPlayback(app, false);
+    }
+}
+
+void returnToStart(AppState& app)
+{
+    if (app.session.recording()) return;
+    const bool wasPlaying = app.audio.player().playing();
+    stopPlayback(app);
+    app.audio.player().locate(0);
+    if (wasPlaying) startPlayback(app, false);
+}
+
+// Every frame: gains, end of playback, reader errors.
+void updateTransport(AppState& app)
+{
+    applyGains(app);
+    auto& player = app.audio.player();
+    // The end of all takes, MIDI included (the player only knows the audio clips).
+    if (player.playing() && !app.playbackForRecording && player.position() >= songLength(app)) {
+        stopPlayback(app);
+        app.log.info("Playback reached the end");
+    }
+    for (const auto& e : player.takeErrors()) {
+        app.log.error(e);
+        app.playWarnings.push_back(e);
+    }
+}
+
 void toggleRecording(AppState& app)
 {
     if (app.session.recording()) {
@@ -909,12 +1081,38 @@ void toggleRecording(AppState& app)
             if (res.lostData()) app.log.warning("Take: " + line);
             else app.log.info("Take: " + line);
         }
+        // Each armed track now plays its new take, placed where it was
+        // recorded on the timeline; during an overdub moved earlier by the
+        // latency estimate, so it lines up with what was heard (SPEC-PLAY-05).
+        const auto timeline = res.startFrame ? app.audio.player().timelineAt(*res.startFrame) : std::nullopt;
+        const auto lat = latencyNow(app);
+        for (auto& t : app.tracks) {
+            if (!t.armed) continue;
+            const std::filesystem::path file = res.folder / minidaw::pathFromUtf8(minidaw::takeFileName(t));
+            std::error_code ec;
+            if (res.folder.empty() || !std::filesystem::exists(file, ec)) continue;
+            const std::int64_t shift =
+                app.overdub ? (t.kind == minidaw::TrackKind::Audio ? lat.audioFrames : lat.midiFrames) : 0;
+            t.take = file;
+            t.takeStart = (timeline ? *timeline : 0) - shift;
+            refreshTakeLength(app, t);
+            char buf[200];
+            std::snprintf(buf, sizeof buf, "Track %d plays %s from %.3f s%s", t.number,
+                          minidaw::pathToUtf8(file.filename()).c_str(),
+                          static_cast<double>(t.takeStart) / app.audio.info().sampleRate,
+                          app.overdub ? " (overdub: moved earlier by the latency estimate)" : "");
+            app.log.info(buf);
+        }
+        stopPlayback(app);
         return;
     }
     syncMidiPorts(app, true);
     app.recordError.clear();
+    // The playback run gives the timeline (and plays the other takes: overdub).
+    startPlayback(app, true);
     if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) {
         app.log.error("Not recording: " + app.recordError);
+        stopPlayback(app);
         return;
     }
     app.log.info("Recording into " + minidaw::pathToUtf8(app.session.folder()));
@@ -981,15 +1179,56 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
     return changed;
 }
 
+std::string clockText(double seconds)
+{
+    if (seconds < 0) seconds = 0;
+    const int m = static_cast<int>(seconds / 60);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%02d:%04.1f", m, seconds - 60.0 * m);
+    return buf;
+}
+
 void drawTransport(AppState& app)
 {
-    ImGui::SeparatorText("Recording");
+    ImGui::SeparatorText("Transport");
     const bool rec = app.session.recording();
-    ImGui::BeginDisabled(!rec && !app.audio.info().running);
-    if (ImGui::Button(rec ? "Stop (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
+    const bool running = app.audio.info().running;
+    auto& player = app.audio.player();
+    const bool playing = player.playing() && !app.playbackForRecording;
+    const unsigned int rate = running ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+    const std::uint64_t length = songLength(app);
+
+    ImGui::BeginDisabled(rec || !running);
+    if (ImGui::Button("|< Start (Home)")) returnToStart(app);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!playing && length == 0);
+    if (ImGui::Button(playing ? "Stop (Space)" : "Play (Space)")) togglePlay(app);
+    ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::BeginDisabled(!rec && !running);
+    if (ImGui::Button(rec ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    const double pos = rate ? static_cast<double>(player.position()) / rate : 0.0;
+    ImGui::Text("%s  %s / %s", rec ? "RECORDING" : playing ? "PLAYING" : "STOPPED", clockText(pos).c_str(),
+                clockText(rate ? static_cast<double>(length) / rate : 0.0).c_str());
+    if (!rec && !playing && length > 0 && rate > 0) {
+        // Position slider, while stopped.
+        float seconds = static_cast<float>(pos);
+        ImGui::SetNextItemWidth(30 * ImGui::GetFontSize());
+        const float rateF = static_cast<float>(rate);
+        if (ImGui::SliderFloat("Position (s)", &seconds, 0.0f, static_cast<float>(length) / rateF, "%.1f s")) {
+            player.locate(static_cast<std::uint64_t>(std::max(0.0f, seconds) * rateF));
+        }
+    }
+    if (player.underrunFrames() > 0 && player.playing()) {
+        ImGui::TextWrapped("Note: the disk was too slow for playback (%llu frames played as silence).",
+                           static_cast<unsigned long long>(player.underrunFrames()));
+    }
+    for (const auto& w : app.playWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     if (rec) {
+        if (app.overdub) ImGui::TextUnformatted("Overdub: the other takes play while the armed tracks record.");
         const double s = app.session.elapsedSeconds();
         const int m = static_cast<int>(s / 60);
         ImGui::Text("RECORDING  %02d:%04.1f   lost frames: %llu   MIDI messages: %zu (lost: %llu)", m, s - 60.0 * m,
@@ -1061,7 +1300,7 @@ void drawTracksPanel(AppState& app)
     int removeIndex = -1;
     const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
     bool monitoring = false;
-    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 7, flags)) {
+    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 9, flags)) {
         // Fixed widths, so the columns do not jump when the state text changes.
         const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TableSetupColumn("#");
@@ -1069,8 +1308,10 @@ void drawTracksPanel(AppState& app)
         ImGui::TableSetupColumn("Monitor", ImGuiTableColumnFlags_WidthFixed,
                                 box + ImGui::CalcTextSize("on when armed").x);
         ImGui::TableSetupColumn("Name");
-        ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Input");
         ImGui::TableSetupColumn("Level / activity");
+        ImGui::TableSetupColumn("Volume, mute, solo");
+        ImGui::TableSetupColumn("Take (plays)", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("");
         ImGui::TableHeadersRow();
         for (std::size_t i = 0; i < app.tracks.size(); ++i) {
@@ -1106,16 +1347,16 @@ void drawTracksPanel(AppState& app)
             }
             ImGui::BeginDisabled(rec);
             ImGui::TableNextColumn();
-            ImGui::SetNextItemWidth(12 * em);
+            ImGui::SetNextItemWidth(8 * em);
             ImGui::InputText("##name", &t.name);
             ImGui::TableNextColumn();
             if (t.kind == minidaw::TrackKind::Audio) {
-                ImGui::SetNextItemWidth(14 * em);
+                ImGui::SetNextItemWidth(9.5f * em);
                 audioInputCombo(t, inputs);
             } else {
                 // The port list takes what the channel list leaves, so both stay visible.
                 const float chWidth = kMidiChannelBoxEm * em + ImGui::GetStyle().ItemSpacing.x;
-                ImGui::SetNextItemWidth(std::max(8 * em, ImGui::GetContentRegionAvail().x - chWidth));
+                ImGui::SetNextItemWidth(std::max(9.5f * em, ImGui::GetContentRegionAvail().x - chWidth));
                 if (midiPortCombo(t, app.scan) && t.armed) app.midiPortsDirty = true;
             }
             ImGui::EndDisabled();
@@ -1128,7 +1369,7 @@ void drawTracksPanel(AppState& app)
                 if (meters.empty()) {
                     ImGui::TextUnformatted("no input");
                 } else {
-                    drawMeter(app, meters, 10 * em);
+                    drawMeter(app, meters, 7 * em);
                 }
             } else if (t.armed && app.midi.isBlocked(t.midiPort)) {
                 ImGui::TextUnformatted("CLOSED - arm off and on");
@@ -1148,9 +1389,52 @@ void drawTracksPanel(AppState& app)
             } else {
                 ImGui::TextUnformatted(t.armed ? "port not open" : "port opens when armed");
             }
+            // Mix (SPEC-PLAY-04): may change at any time.
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(6.5f * em);
+            ImGui::SliderFloat("##vol", &t.volumeDb, minidaw::kMinVolumeDb, minidaw::kMaxVolumeDb,
+                               t.volumeDb <= minidaw::kMinVolumeDb ? "silent" : "%+.1f dB");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback volume. Ctrl+click to type a value.");
+            ImGui::SameLine();
+            ImGui::Checkbox("M##mute", &t.mute);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mute: this track is not played.");
+            ImGui::SameLine();
+            ImGui::Checkbox("S##solo", &t.solo);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solo: only soloed tracks are played.");
+            // Take, and for MIDI the output it plays to (SPEC-PLAY-03).
+            ImGui::TableNextColumn();
+            if (t.kind == minidaw::TrackKind::Midi) {
+                // Leave room for the take name beside it.
+                const float nameW = t.take.empty() ? ImGui::CalcTextSize("-").x
+                                                   : ImGui::CalcTextSize(minidaw::pathToUtf8(t.take.filename()).c_str()).x;
+                ImGui::SetNextItemWidth(std::max(7 * em, ImGui::GetContentRegionAvail().x - nameW -
+                                                             ImGui::GetStyle().ItemSpacing.x));
+                const std::string out = t.midiOut.empty() ? std::string("(no MIDI output)") : t.midiOut;
+                if (ImGui::BeginCombo("##out", out.c_str())) {
+                    if (ImGui::Selectable("(no MIDI output)", t.midiOut.empty())) t.midiOut.clear();
+                    for (const auto& name : app.midiPlayer.outputPorts()) {
+                        if (ImGui::Selectable(name.c_str(), t.midiOut == name)) t.midiOut = name;
+                    }
+                    ImGui::EndCombo();
+                } else if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("MIDI output this track plays to: %s", out.c_str());
+                }
+                ImGui::SameLine();
+            }
+            if (t.take.empty()) {
+                ImGui::TextUnformatted("-");
+            } else {
+                ImGui::TextUnformatted(minidaw::pathToUtf8(t.take.filename()).c_str());
+                if (ImGui::IsItemHovered()) {
+                    const unsigned int r = app.audio.info().sampleRate ? app.audio.info().sampleRate : 48000;
+                    ImGui::SetTooltip("%s\nstarts at %.3f s, %.1f s long", minidaw::pathToUtf8(t.take).c_str(),
+                                      static_cast<double>(t.takeStart) / r, static_cast<double>(t.takeFrames) / r);
+                }
+            }
             ImGui::TableNextColumn();
             ImGui::BeginDisabled(rec);
-            if (ImGui::SmallButton("Remove")) removeIndex = static_cast<int>(i);
+            if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove this track");
             ImGui::EndDisabled();
             ImGui::PopID();
         }
@@ -1326,6 +1610,63 @@ void drawLogWindow(AppState& app)
     ImGui::End();
 }
 
+// File > Open take folder (P8): the take folders in the recording folder,
+// newest first, or any folder typed in. Opening replaces the track list.
+void openTakeFolder(AppState& app, const std::filesystem::path& folder)
+{
+    std::string err;
+    std::vector<minidaw::Track> tracks = minidaw::tracksFromTakeFolder(folder, err);
+    if (tracks.empty()) {
+        app.takeBrowserError = err;
+        app.log.warning("Open take folder: " + err);
+        return;
+    }
+    stopPlayback(app);
+    app.tracks = std::move(tracks);
+    for (auto& t : app.tracks) refreshTakeLength(app, t);
+    app.tracksCreated = true;     // no default track on top of these
+    app.midiPortsDirty = true;    // MIDI tracks of the old list may have had ports open
+    app.audio.player().locate(0);
+    app.showTakeBrowser = false;
+    app.log.info("Opened take folder " + minidaw::pathToUtf8(folder) + ": " + std::to_string(app.tracks.size()) +
+                 " track(s)");
+}
+
+void drawTakeBrowser(AppState& app)
+{
+    if (!app.showTakeBrowser) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(44 * em, 26 * em), ImGuiCond_Appearing);
+    if (ImGui::Begin("Open take folder", &app.showTakeBrowser)) {
+        ImGui::TextWrapped("Takes in %s (newest first). Opening a take replaces the track list.",
+                           minidaw::pathToUtf8(minidaw::recordingFolder(app.config.recording)).c_str());
+        if (ImGui::BeginChild("folders", ImVec2(0, -4 * ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_Borders)) {
+            if (app.takeFolders.empty()) ImGui::TextUnformatted("No take folders found.");
+            for (const auto& f : app.takeFolders) {
+                if (ImGui::Selectable(minidaw::pathToUtf8(f.filename()).c_str(), false,
+                                      ImGuiSelectableFlags_AllowDoubleClick) &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    openTakeFolder(app, f);
+                } else if (ImGui::IsItemClicked()) {
+                    app.takeFolderInput = minidaw::pathToUtf8(f);
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::SetNextItemWidth(34 * em);
+        ImGui::InputText("Folder", &app.takeFolderInput);
+        if (ImGui::Button("Open") && !app.takeFolderInput.empty()) {
+            openTakeFolder(app, minidaw::pathFromUtf8(app.takeFolderInput));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) app.showTakeBrowser = false;
+        ImGui::SameLine();
+        ImGui::TextUnformatted("(double-click a take to open it)");
+        if (!app.takeBrowserError.empty()) ImGui::TextWrapped("%s", app.takeBrowserError.c_str());
+    }
+    ImGui::End();
+}
+
 void drawStatusLine(const AppState& app)
 {
     ImGui::Separator();
@@ -1360,7 +1701,7 @@ int runGui(AppState& app)
     minidaw::app::rendererWindowHints();
 
     const std::string title = std::string(minidaw::kProductName) + " " + minidaw::kVersion;
-    GLFWwindow* window = glfwCreateWindow(1100, 700, title.c_str(), nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 760, title.c_str(), nullptr, nullptr);
     if (window == nullptr) {
         const std::string fatal = "The main window could not be created: " + g_lastGlfwError;
         app.log.error(fatal);
@@ -1414,9 +1755,14 @@ int runGui(AppState& app)
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) setFontSize(app, minidaw::kDefaultFontSize, true);
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) toggleRecording(app);
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_L)) app.showLog = !app.showLog;
+        if (!ImGui::GetIO().WantTextInput) {  // not while typing a name
+            if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) togglePlay(app);
+            if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) returnToStart(app);
+        }
         ensureDefaultTracks(app);
         syncMidiPorts(app);
         updateMeters(app);
+        updateTransport(app);
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1441,6 +1787,7 @@ int runGui(AppState& app)
         drawCustomContrastWindow(app);
         drawContrastReportWindow(app);
         drawLogWindow(app);
+        drawTakeBrowser(app);
 
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
@@ -1449,6 +1796,7 @@ int runGui(AppState& app)
     }
 
     if (app.session.recording()) app.session.stop();  // finish the files before the stream closes
+    stopPlayback(app);
     app.midi.closeAll();
     app.audio.close();
     minidaw::app::rendererShutdown();

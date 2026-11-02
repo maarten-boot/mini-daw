@@ -147,6 +147,12 @@ TEST_CASE("T-REC-31: MIDI ports are found again under a new number", "[midi][T-R
     CHECK_FALSE(matchMidiPort({"Synth 2"}, "Synth 1", P).has_value());
     CHECK(matchMidiPort({"Synth 2", "Synth 1"}, "Synth 1", P) == 1u);
 
+    // mini-daw's own RtMidi ports are not offered (they would loop MIDI back in).
+    CHECK(isOwnMidiPort("RtMidi Input Client:mini-daw 130:0"));
+    CHECK(isOwnMidiPort("RtMidi Output Client:mini-daw 132:0"));
+    CHECK_FALSE(isOwnMidiPort("Midi Through:Midi Through Port-0 14:0"));
+    CHECK_FALSE(isOwnMidiPort("loopMIDI Port 1"));
+
     // Two devices of the same kind: only an exact name is trusted.
     const std::vector<std::string> twins = {"Keys 0", "Keys 1"};
     CHECK(matchMidiPort(twins, "Keys 1", W) == 1u);

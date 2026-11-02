@@ -51,6 +51,11 @@ MidiNaming nativeMidiNaming();
 // when the name does not end in that backend's kind of number).
 std::string midiPortBaseName(std::string_view name, MidiNaming naming = nativeMidiNaming());
 
+// One of mini-daw's own RtMidi ports (ALSA lists them as
+// "RtMidi Input Client:mini-daw 130:0" / "RtMidi Output Client:mini-daw ...").
+// They are left out of the port lists: choosing one would loop MIDI back in.
+bool isOwnMidiPort(std::string_view name);
+
 // The port in `available` to use for `wanted`: the same name, else the only
 // port with the same base name. Empty if none (or several) match.
 std::optional<std::size_t> matchMidiPort(const std::vector<std::string>& available, const std::string& wanted,

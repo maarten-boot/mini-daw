@@ -23,25 +23,20 @@ MonitorGains monitorGains(const std::vector<Track>& tracks, unsigned int inputCh
     return g;
 }
 
-float mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, float* out,
-                 unsigned int outChannels, MonitorGains& current, const MonitorGains& target, float* channelPeaks)
+void mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, float* out,
+                unsigned int outChannels, MonitorGains& current, const MonitorGains& target)
 {
-    if (channelPeaks != nullptr) {
-        for (unsigned int c = 0; c < outChannels; ++c) channelPeaks[c] = 0.0f;
-    }
     if (out == nullptr || outChannels == 0 || frames == 0) {
         current = target;
-        return 0.0f;
+        return;
     }
     const unsigned int channels = std::min(inChannels, kMonitorMaxChannels);
     const float step = 1.0f / static_cast<float>(frames);
-    bool any = false;
     if (in != nullptr) {
         for (unsigned int ch = 0; ch < channels; ++ch) {
             const float l0 = current.left[ch], l1 = target.left[ch];
             const float r0 = current.right[ch], r1 = target.right[ch];
             if (l0 == 0.0f && l1 == 0.0f && r0 == 0.0f && r1 == 0.0f) continue;
-            any = true;
             for (unsigned int f = 0; f < frames; ++f) {
                 const float t = static_cast<float>(f + 1) * step;  // reaches the target on the last frame
                 const float s = in[f * inChannels + ch];
@@ -57,8 +52,14 @@ float mixMonitor(const float* in, unsigned int frames, unsigned int inChannels, 
         }
     }
     current = target;
-    if (!any) return 0.0f;
+}
 
+float limitOutput(float* out, unsigned int frames, unsigned int outChannels, float* channelPeaks)
+{
+    if (channelPeaks != nullptr) {
+        for (unsigned int c = 0; c < outChannels; ++c) channelPeaks[c] = 0.0f;
+    }
+    if (out == nullptr) return 0.0f;
     float peak = 0.0f;
     for (unsigned int f = 0; f < frames; ++f) {
         for (unsigned int c = 0; c < outChannels; ++c) {

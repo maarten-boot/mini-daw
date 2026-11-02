@@ -289,6 +289,7 @@ SessionResult RecordingSession::stop()
             writeMidiFiles(endFrame, true, &result.midi);
         }
     }
+    result.startFrame = start;
     if (sampleRate_ > 0 && start) result.seconds = static_cast<double>(endFrame - std::min(endFrame, *start)) / sampleRate_;
     {
         std::lock_guard<std::mutex> lock(errorMutex_);

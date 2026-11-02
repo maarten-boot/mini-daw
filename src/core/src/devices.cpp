@@ -1,4 +1,5 @@
 #include "minidaw/devices.hpp"
+#include "minidaw/midi_input.hpp"
 
 #include "console_capture.hpp"
 
@@ -24,7 +25,8 @@ std::vector<MidiPortInfo> listMidiPorts(const char* direction, std::vector<std::
         RtMidiT midi;
         const unsigned int count = midi.getPortCount();
         for (unsigned int i = 0; i < count; ++i) {
-            ports.push_back({i, midi.getPortName(i)});
+            std::string name = midi.getPortName(i);
+            if (!isOwnMidiPort(name)) ports.push_back({i, std::move(name)});
         }
     } catch (const RtMidiError& e) {
         found.push_back(e.getMessage());

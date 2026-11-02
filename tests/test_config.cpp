@@ -252,3 +252,19 @@ TEST_CASE("quoteConfigString escapes quotes and backslashes", "[config]")
 {
     CHECK(quoteConfigString("a\"b\\c") == "\"a\\\"b\\\\c\"");
 }
+
+TEST_CASE("T-PLAY-10: latency_correction_ms in [recording]", "[config][T-PLAY-10]")
+{
+    CHECK(parseConfig(defaultConfigText()).config.recording.latencyCorrectionMs == 0);
+    CHECK(parseConfig("[recording]\nlatency_correction_ms = -12\n").config.recording.latencyCorrectionMs == -12);
+    for (const char* bad : {"600", "1.5", "x", ""}) {
+        const auto r = parseConfig(std::string("[recording]\nlatency_correction_ms = ") + bad + "\n");
+        CHECK(r.config.recording.latencyCorrectionMs == 0);
+        CHECK(r.warnings.size() == 1);
+    }
+    TempDir dir;
+    AppConfig cfg;
+    cfg.recording.latencyCorrectionMs = 25;
+    REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
+    CHECK(loadConfigFile(dir.path / "c.ini").config.recording.latencyCorrectionMs == 25);
+}

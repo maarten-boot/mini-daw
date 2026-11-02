@@ -10,6 +10,7 @@
 #include "minidaw/devices.hpp"
 #include "minidaw/frame_clock.hpp"
 #include "minidaw/monitor.hpp"
+#include "minidaw/player.hpp"
 #include "minidaw/recorder.hpp"
 #include "minidaw/session_io.hpp"
 
@@ -95,6 +96,10 @@ public:
     // its next block on. Any thread; kept when the stream is reopened.
     void setMonitor(const MonitorGains& gains);
 
+    // Playback (SPEC-PLAY-02). Start/stop it on the GUI thread; close() stops it.
+    Player& player() { return player_; }
+    const Player& player() const { return player_; }
+
     std::uint64_t xruns() const { return xruns_.load(std::memory_order_relaxed); }
     std::uint64_t callbacks() const { return callbacks_.load(std::memory_order_relaxed); }
 
@@ -141,6 +146,7 @@ private:
     std::array<std::atomic<float>, kMaxInputChannels> monitorLeft_{};
     std::array<std::atomic<float>, kMaxInputChannels> monitorRight_{};
     MonitorGains monitorCurrent_;  // audio thread only: gains of the last block
+    Player player_;
     std::atomic<std::uint64_t> xruns_{0};
     std::atomic<std::uint64_t> callbacks_{0};
     FrameClock clock_;
