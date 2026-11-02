@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -66,6 +67,8 @@ public:
     // 0 = silent (mute, not soloed); else velocities are scaled (1 = as recorded).
     void setGain(int track, float gain);
     std::uint64_t sent() const { return sent_.load(std::memory_order_relaxed); }
+    // Tracks that play (their output opened) since the last start().
+    std::size_t trackCount() const { return gains_.size(); }
     std::vector<std::string> outputPorts() { return sink_->ports(); }
 
     // Tests: no thread; step() sends what is due at `now`.
@@ -96,8 +99,9 @@ private:
     std::vector<std::unique_ptr<std::atomic<float>>> gainStore_;
     std::map<int, float> lastGain_;                      // sender: to notice a mute
     std::map<int, float> requested_;                     // GUI: gains for the next start
-    // Held notes: (handle, channel, note) -> track.
-    std::map<std::tuple<int, int, int>, int> held_;
+    // Held notes: (handle, channel, note, track); per track, so two tracks on
+    // one port and channel do not release each other's notes (M8).
+    std::set<std::tuple<int, int, int, int>> held_;
     std::map<int, std::uint16_t> channelsUsed_;          // handle -> channel bits
     std::thread thread_;
     std::atomic<bool> run_{false};

@@ -368,3 +368,143 @@ TEST_CASE("T-PLAY-09: MIDI playback: timing, start position, mute, stop", "[play
         CHECK(log.size() == 2);  // its own note-off and the next note are not sent
     }
 }
+
+TEST_CASE("T-PLAY-14: player stop and start while the audio thread runs", "[play][T-PLAY-14]")
+{
+    // The hazard pointer under load: the audio thread never sees a freed run.
+    test::TempDir dir;
+    const fs::path take = makeTake(dir.path(), "t.wav", 48000, 2);
+    Player p;
+    std::atomic<bool> run{true};
+    std::atomic<std::uint64_t> blocks{0};
+    std::thread audio([&] {
+        std::vector<float> out(512);
+        std::uint64_t frame = 0;
+        while (run) {
+            std::fill(out.begin(), out.end(), 0.0f);
+            p.process(out.data(), 256, 2, frame);
+            frame += 256;
+            ++blocks;
+        }
+    });
+    std::vector<std::string> warnings;
+    for (int i = 0; i < 200; ++i) {
+        CHECK(p.start({{1, take, 0}}, static_cast<std::uint64_t>(i) * 100, 48000, warnings) == 1);
+        std::this_thread::yield();
+        if (i % 3 == 0) p.setGain(1, 0.5f, 0.5f);
+        p.stop();
+    }
+    run = false;
+    audio.join();
+    CHECK(blocks > 0);
+    CHECK(warnings.empty());
+}
+
+TEST_CASE("T-PLAY-15: player edge cases: one output, three channels, big blocks, no output", "[play][T-PLAY-15]")
+{
+    test::TempDir dir;
+    const fs::path stereo = makeTake(dir.path(), "s.wav", 30000, 2);
+    // Three channels, 16-bit, written by hand (WavWriter only writes 1 or 2): sample n of channel c = (n*3+c)/32768.
+    const fs::path three = dir.path() / "3.wav";
+    {
+        std::ofstream o(three, std::ios::binary);
+        auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) o.put(static_cast<char>((v >> (8 * i)) & 0xFF)); };
+        auto put16 = [&](std::uint16_t v) { o.put(static_cast<char>(v & 0xFF)); o.put(static_cast<char>(v >> 8)); };
+        const std::uint32_t frames = 1000;
+        o.write("RIFF", 4); put32(36 + frames * 6); o.write("WAVE", 4);
+        o.write("fmt ", 4); put32(16); put16(1); put16(3); put32(48000); put32(48000 * 6); put16(6); put16(16);
+        o.write("data", 4); put32(frames * 6);
+        for (std::uint32_t n = 0; n < frames; ++n) for (std::uint16_t c = 0; c < 3; ++c) put16(static_cast<std::uint16_t>(n * 3 + c));
+    }
+    Player p;
+    std::vector<std::string> warnings;
+
+    SECTION("one output channel: left and right averaged")
+    {
+        p.startForTest({{1, stereo, 0}}, 10, 48000, warnings);
+        p.fillForTest();
+        std::vector<float> out(4, 0.0f);
+        p.process(out.data(), 4, 1, 0);
+        CHECK(out[0] == Approx(0.5f * (value(10, 0) + value(10, 1))).margin(1e-6));
+    }
+    SECTION("a three-channel file plays its first two channels")
+    {
+        p.startForTest({{1, three, 0}}, 0, 48000, warnings);
+        CHECK(warnings.empty());
+        const auto out = play(p, 64, 1);
+        CHECK(out[2 * 5] == Approx(15.0f / 32768.0f).margin(1e-7));      // frame 5, channel 1
+        CHECK(out[2 * 5 + 1] == Approx(16.0f / 32768.0f).margin(1e-7));  // channel 2 (channel 3 not played)
+    }
+    SECTION("a block larger than kMaxBlock is played in parts, in order")
+    {
+        p.startForTest({{1, stereo, 0}}, 0, 48000, warnings);
+        for (int i = 0; i < 10; ++i) p.fillForTest();
+        const unsigned int n = Player::kMaxBlock + 1000;
+        std::vector<float> out(n * 2, 0.0f);
+        p.process(out.data(), n, 2, 0);
+        CHECK(out[(Player::kMaxBlock + 10) * 2] == Approx(value(Player::kMaxBlock + 10, 0)).margin(1e-6));
+        CHECK(p.position() == n);
+    }
+    SECTION("no output: the timeline still moves and stays in step after an underrun (M7)")
+    {
+        p.startForTest({{1, stereo, 0}}, 0, 48000, warnings);
+        p.process(nullptr, 26000, 0, 0);  // more than was read ahead: a deficit
+        for (int i = 0; i < 10; ++i) p.fillForTest();
+        std::vector<float> out(2 * 2, 0.0f);
+        p.process(out.data(), 2, 2, 26000);
+        CHECK(out[0] == Approx(value(26000, 0)).margin(1e-6));
+    }
+}
+
+TEST_CASE("T-PLAY-16: where a new take goes on the timeline (overdub)", "[play][T-PLAY-16]")
+{
+    LatencyEstimate lat;
+    lat.audioFrames = 1000;
+    lat.midiFrames = 600;
+    CHECK(placeRecordedTake(48000, 0, false, true, lat) == 48000);   // no overdub: where it was recorded
+    CHECK(placeRecordedTake(48000, 0, true, true, lat) == 47000);    // audio: earlier by the round trip
+    CHECK(placeRecordedTake(48000, 0, true, false, lat) == 47400);   // MIDI: earlier by the output side
+    CHECK(placeRecordedTake(std::nullopt, 96000, false, true, lat) == 96000);  // no anchor: where Record began
+    CHECK(placeRecordedTake(500, 0, true, true, lat) == -500);       // may start before 0
+}
+
+TEST_CASE("T-PLAY-17: MIDI playback: muted tracks keep controllers; tracks do not share held notes",
+          "[play][T-PLAY-17]")
+{
+    std::vector<Sent> log;
+    MidiPlayer mp(std::make_unique<FakeSink>(&log));
+    std::vector<std::string> warnings;
+    MidiPlaybackTrack a{1, "Synth 0", {{0, {0x90, 60, 100}, 3}, {100, {0xB0, 64, 127}, 3}, {200, {0xC0, 7, 0}, 2}}, 0};
+    MidiPlaybackTrack b{2, "Synth 0", {{0, {0x90, 60, 90}, 3}, {300, {0x80, 60, 0}, 3}}, 0};
+    mp.startForTest({a, b}, 0, warnings);
+    mp.step(0);
+    REQUIRE(log.size() == 2);  // both note-ons
+    mp.setGain(1, 0.0f);       // mute track 1: its note is released ...
+    mp.step(50);
+    REQUIRE(log.size() == 3);
+    CHECK(log[2].bytes == std::vector<std::uint8_t>{0x80, 60, 0});
+    mp.step(250);              // ... but its sustain and program change still go out (M5)
+    REQUIRE(log.size() == 5);
+    CHECK(log[3].bytes == std::vector<std::uint8_t>{0xB0, 64, 127});
+    CHECK(log[4].bytes == std::vector<std::uint8_t>{0xC0, 7});
+    mp.step(300);              // track 2 still held its note: its note-off is sent (M8)
+    REQUIRE(log.size() == 6);
+    CHECK(log[5].bytes == std::vector<std::uint8_t>{0x80, 60, 0});
+}
+
+TEST_CASE("T-PLAY-05: a WAV header with too many channels is refused", "[play][T-PLAY-05]")
+{
+    test::TempDir dir;
+    const fs::path q = dir.path() / "many.wav";
+    std::ofstream o(q, std::ios::binary);
+    auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) o.put(static_cast<char>((v >> (8 * i)) & 0xFF)); };
+    auto put16 = [&](std::uint16_t v) { o.put(static_cast<char>(v & 0xFF)); o.put(static_cast<char>(v >> 8)); };
+    o.write("RIFF", 4); put32(36); o.write("WAVE", 4);
+    o.write("fmt ", 4); put32(16); put16(1); put16(16000); put32(48000); put32(48000u * 32000); put16(32000); put16(16);
+    o.write("data", 4); put32(0);
+    o.close();
+    WavReader r;
+    std::string err;
+    CHECK_FALSE(r.open(q, err));
+    CHECK(err.find("channels") != std::string::npos);
+}

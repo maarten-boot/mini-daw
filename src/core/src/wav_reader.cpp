@@ -106,6 +106,11 @@ bool WavReader::open(const std::filesystem::path& path, std::string& error)
                 close();
                 return false;
             }
+            if (channels_ == 0 || channels_ > 64) {  // a damaged header must not make us allocate hugely (M9)
+                error = name + ": " + std::to_string(channels_) + " channels is not supported (1 to 64).";
+                close();
+                return false;
+            }
             haveFmt = true;
         } else if (std::memcmp(hdr, "data", 4) == 0) {
             if (!haveFmt || channels_ == 0 || blockAlign != channels_ * (bits_ / 8)) {

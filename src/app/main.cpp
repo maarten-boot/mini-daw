@@ -137,6 +137,8 @@ struct AppState {
     minidaw::MidiPlayer midiPlayer;
     bool playbackForRecording = false;     // the run was started by Record (timeline for the takes)
     bool overdub = false;                  // takes were playing while recording: shift the new ones
+    std::uint64_t recordStartPosition = 0; // play position when Record was pressed (placement fallback, M6)
+    std::int64_t midiDelayFrames = 0;      // MIDI output delay of the current run (end check, M3)
     std::vector<std::string> playWarnings;
     bool showTakeBrowser = false;
     std::string takeFolderInput;
@@ -238,6 +240,12 @@ std::string describeContrast(const ContrastSetting& s)
 
 // Open the audio stream with the given settings. On success the settings are
 // kept (and saved if `save`); on failure the previous settings are reopened.
+void refreshTakeLength(AppState& app, minidaw::Track& t)
+{
+    const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+    t.takeFrames = minidaw::takeLengthFrames(t, rate);
+}
+
 void stopPlayback(AppState& app)
 {
     app.midiPlayer.stop();      // first: its thread reads the player's run
@@ -260,6 +268,7 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
     if (r.error.empty()) {
         app.config.audio = settings;
         if (save) saveConfig(app);
+        for (auto& t : app.tracks) refreshTakeLength(app, t);  // MIDI lengths depend on the rate (M9)
     } else if (!(previous == settings)) {
         minidaw::OpenResult back = app.audio.open(previous, app.scan);
         logOpenResult(app, back);
@@ -966,12 +975,6 @@ void applyGains(AppState& app)
     }
 }
 
-void refreshTakeLength(AppState& app, minidaw::Track& t)
-{
-    const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
-    t.takeFrames = minidaw::takeLengthFrames(t, rate);
-}
-
 // End of the last take on the timeline.
 std::uint64_t songLength(const AppState& app)
 {
@@ -986,7 +989,9 @@ std::uint64_t songLength(const AppState& app)
 // started by Record; the armed tracks are left out (they are recorded now).
 bool startPlayback(AppState& app, bool forRecording)
 {
-    const std::uint64_t position = app.audio.player().position();
+    std::uint64_t position = app.audio.player().position();
+    // Play at (or past) the end starts from the beginning again (crosscheck #6, M2).
+    if (!forRecording && position >= songLength(app)) position = 0;
     stopPlayback(app);
     app.audio.player().locate(position);
     const auto& info = app.audio.info();
@@ -1012,8 +1017,9 @@ bool startPlayback(AppState& app, bool forRecording)
         }
     }
     applyGains(app);
-    app.audio.player().start(clips, position, info.sampleRate, app.playWarnings);
+    const std::size_t audioStarted = app.audio.player().start(clips, position, info.sampleRate, app.playWarnings);
     const std::int64_t midiDelay = latencyNow(app).midiFrames;
+    app.midiDelayFrames = midiDelay;
     app.midiPlayer.start(midiTracks, static_cast<std::int64_t>(position),
                          [&app, midiDelay]() -> std::optional<std::int64_t> {
                              // MIDI thread: the timeline as heard now (stopPlayback() stops this first).
@@ -1024,13 +1030,15 @@ bool startPlayback(AppState& app, bool forRecording)
                              return *t - midiDelay;
                          },
                          app.playWarnings);
-    app.overdub = !clips.empty() || !midiTracks.empty();
+    // Only takes that really play make it an overdub (a skipped clip does not, M6).
+    app.overdub = audioStarted > 0 || app.midiPlayer.trackCount() > 0;
+    if (forRecording) app.recordStartPosition = position;
     app.playbackForRecording = forRecording;
     for (const auto& w : app.playWarnings) app.log.warning("Playback: " + w);
     char buf[160];
     std::snprintf(buf, sizeof buf, "%s from %.3f s: %zu audio and %zu MIDI take(s)",
                   forRecording ? "Recording timeline started" : "Playback started",
-                  static_cast<double>(position) / info.sampleRate, clips.size(), midiTracks.size());
+                  static_cast<double>(position) / info.sampleRate, audioStarted, app.midiPlayer.trackCount());
     app.log.info(buf);
     return true;
 }
@@ -1061,7 +1069,11 @@ void updateTransport(AppState& app)
     applyGains(app);
     auto& player = app.audio.player();
     // The end of all takes, MIDI included (the player only knows the audio clips).
-    if (player.playing() && !app.playbackForRecording && player.position() >= songLength(app)) {
+    // MIDI is sent `midiDelay` later than the audio position: let its tail out (M3).
+    const std::uint64_t rate = app.audio.info().sampleRate;
+    const std::uint64_t end = songLength(app) + static_cast<std::uint64_t>(std::max<std::int64_t>(app.midiDelayFrames, 0)) +
+                              rate / 10;
+    if (player.playing() && !app.playbackForRecording && player.position() >= end) {
         stopPlayback(app);
         app.log.info("Playback reached the end");
     }
@@ -1091,10 +1103,9 @@ void toggleRecording(AppState& app)
             const std::filesystem::path file = res.folder / minidaw::pathFromUtf8(minidaw::takeFileName(t));
             std::error_code ec;
             if (res.folder.empty() || !std::filesystem::exists(file, ec)) continue;
-            const std::int64_t shift =
-                app.overdub ? (t.kind == minidaw::TrackKind::Audio ? lat.audioFrames : lat.midiFrames) : 0;
             t.take = file;
-            t.takeStart = (timeline ? *timeline : 0) - shift;
+            t.takeStart = minidaw::placeRecordedTake(timeline, app.recordStartPosition, app.overdub,
+                                                     t.kind == minidaw::TrackKind::Audio, lat);
             refreshTakeLength(app, t);
             char buf[200];
             std::snprintf(buf, sizeof buf, "Track %d plays %s from %.3f s%s", t.number,
@@ -1432,7 +1443,7 @@ void drawTracksPanel(AppState& app)
                 }
             }
             ImGui::TableNextColumn();
-            ImGui::BeginDisabled(rec);
+            ImGui::BeginDisabled(rec || app.audio.player().playing());  // its take would keep playing (M4)
             if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove this track");
             ImGui::EndDisabled();
@@ -1479,6 +1490,16 @@ void drawRecordingSettingsWindow(AppState& app)
             ImGui::EndCombo();
         }
         ImGui::Checkbox("Force takes to disk every second (survives power loss)", &p.syncToDisk);
+        // Overdub calibration (SPEC-PLAY-05, crosscheck #6 M11).
+        ImGui::SetNextItemWidth(8 * em);
+        if (ImGui::InputInt("Overdub latency correction (ms)", &p.latencyCorrectionMs, 1, 10)) {
+            p.latencyCorrectionMs = std::clamp(p.latencyCorrectionMs, -500, 500);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("New audio takes recorded while others play are moved earlier by the estimated\n"
+                              "round-trip latency plus this value. Raise it if overdubs land late, lower it if\n"
+                              "they land early. -500 to 500.");
+        }
         ImGui::BeginDisabled(app.session.recording());
         if (ImGui::Button("Apply")) {
             app.config.recording = p;
@@ -1614,6 +1635,10 @@ void drawLogWindow(AppState& app)
 // newest first, or any folder typed in. Opening replaces the track list.
 void openTakeFolder(AppState& app, const std::filesystem::path& folder)
 {
+    if (app.session.recording()) {  // the recording owns the track list and the timeline (M1)
+        app.takeBrowserError = "Stop the recording first.";
+        return;
+    }
     std::string err;
     std::vector<minidaw::Track> tracks = minidaw::tracksFromTakeFolder(folder, err);
     if (tracks.empty()) {
@@ -1640,6 +1665,9 @@ void drawTakeBrowser(AppState& app)
     if (ImGui::Begin("Open take folder", &app.showTakeBrowser)) {
         ImGui::TextWrapped("Takes in %s (newest first). Opening a take replaces the track list.",
                            minidaw::pathToUtf8(minidaw::recordingFolder(app.config.recording)).c_str());
+        const bool rec = app.session.recording();
+        if (rec) ImGui::TextUnformatted("Recording: stop it before opening a take folder.");
+        ImGui::BeginDisabled(rec);
         if (ImGui::BeginChild("folders", ImVec2(0, -4 * ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_Borders)) {
             if (app.takeFolders.empty()) ImGui::TextUnformatted("No take folders found.");
             for (const auto& f : app.takeFolders) {
@@ -1658,6 +1686,7 @@ void drawTakeBrowser(AppState& app)
         if (ImGui::Button("Open") && !app.takeFolderInput.empty()) {
             openTakeFolder(app, minidaw::pathFromUtf8(app.takeFolderInput));
         }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) app.showTakeBrowser = false;
         ImGui::SameLine();

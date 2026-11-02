@@ -50,6 +50,13 @@ struct LatencyEstimate {
 LatencyEstimate estimateLatency(unsigned int bufferFrames, unsigned int reportedFrames, double correctionMs,
                                 unsigned int sampleRate);
 
+// Where a new take goes on the timeline (SPEC-PLAY-05): at the timeline
+// position of its first frame (or, if that is unknown because the recording
+// stopped before the first block, where recording started), moved earlier
+// during an overdub by the audio or MIDI latency estimate.
+std::int64_t placeRecordedTake(std::optional<std::int64_t> timelineOfFirstFrame, std::uint64_t recordStartPosition,
+                               bool overdub, bool audio, const LatencyEstimate& latency);
+
 class Player {
 public:
     static constexpr double kAheadSeconds = 2.0;     // ring size per clip
@@ -65,8 +72,9 @@ public:
     // next audio block. Clips whose sample rate differs from `sampleRate`, or
     // that cannot be opened, are skipped with a message in `warnings`.
     // An empty clip list is allowed (the position still runs: recording).
-    bool start(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
-               std::vector<std::string>& warnings);
+    // Returns how many clips are playing.
+    std::size_t start(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
+                      std::vector<std::string>& warnings);
     void stop();
     bool playing() const { return run_.load(std::memory_order_acquire) != nullptr; }
     // While stopped: where the next start() would begin (return to start, position slider).
@@ -102,8 +110,8 @@ public:
 private:
     struct Clip;
     struct Run;
-    bool startRun(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
-                  std::vector<std::string>& warnings, bool thread);
+    std::size_t startRun(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
+                         std::vector<std::string>& warnings, bool thread);
     static void fill(Run& run);   // reader: top up every ring
     void readerLoop(Run* run);
 

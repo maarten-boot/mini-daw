@@ -60,8 +60,16 @@ Player::~Player()
     stop();
 }
 
-bool Player::start(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
-                   std::vector<std::string>& warnings)
+std::int64_t placeRecordedTake(std::optional<std::int64_t> timelineOfFirstFrame, std::uint64_t recordStartPosition,
+                               bool overdub, bool audio, const LatencyEstimate& latency)
+{
+    const std::int64_t at = timelineOfFirstFrame ? *timelineOfFirstFrame : static_cast<std::int64_t>(recordStartPosition);
+    if (!overdub) return at;
+    return at - (audio ? latency.audioFrames : latency.midiFrames);
+}
+
+std::size_t Player::start(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
+                          std::vector<std::string>& warnings)
 {
     return startRun(clips, position, sampleRate, warnings, true);
 }
@@ -77,8 +85,8 @@ void Player::fillForTest()
     if (owned_) fill(*owned_);
 }
 
-bool Player::startRun(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,
-                      std::vector<std::string>& warnings, bool thread)
+std::size_t Player::startRun(const std::vector<PlaybackClip>& clips, std::uint64_t position,
+                             unsigned int sampleRate, std::vector<std::string>& warnings, bool thread)
 {
     stop();
     auto run = std::make_unique<Run>();
@@ -137,7 +145,7 @@ bool Player::startRun(const std::vector<PlaybackClip>& clips, std::uint64_t posi
         readerRun_.store(true);
         reader_ = std::thread(&Player::readerLoop, this, owned_.get());
     }
-    return true;
+    return owned_->clips.size();
 }
 
 void Player::stop()
@@ -321,10 +329,18 @@ void Player::process(float* out, unsigned int frames, unsigned int outChannels, 
         // No output: keep the rings moving so the timeline stays right.
         for (auto& cp : r->clips) {
             Clip& c = *cp;
+            while (c.deficit > 0) {  // as with output: owed frames first (M7)
+                const std::size_t avail = c.ring->readAvailable() / c.channels;
+                if (avail == 0) break;
+                const std::size_t drop = std::min<std::size_t>({avail, static_cast<std::size_t>(c.deficit), kMaxBlock});
+                c.ring->read(c.scratch.data(), drop * c.channels);
+                c.deficit -= drop;
+            }
             std::size_t left = static_cast<std::size_t>(frames);
             while (left > 0) {
                 const std::size_t n = std::min<std::size_t>(left, kMaxBlock);
-                const std::size_t got = c.ring->read(c.scratch.data(), n * c.channels) / c.channels;
+                const std::size_t got =
+                    c.deficit == 0 ? c.ring->read(c.scratch.data(), n * c.channels) / c.channels : 0;
                 if (got < n) c.deficit += n - got;
                 left -= n;
             }

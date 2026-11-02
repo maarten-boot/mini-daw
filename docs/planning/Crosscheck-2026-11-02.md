@@ -96,3 +96,58 @@ Scope: Spec v0.16, Plan, Tests, README, code at commit `bc3d8e5` (changes since 
 | K9, K10 | No change (see above). |
 
 Result: Linux 99/99 ctest; MinGW build under Wine 98/98 Catch2 cases (1088 assertions); live hot-plug regression on the VM.
+
+---
+
+# Crosscheck #6 — 2026-11-02 (after P8)
+
+Scope: Spec v0.18, Plan, Tests, code at commit `2892d9e` (P8: changes since `42e3402`), CI run 41532845975. Spec ↔ Plan ↔ Tests ↔ code by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). M1, M2, M5 and the CI failure were checked again in the code.
+
+| Area | Verdict |
+|------|---------|
+| CI | ❌ run 41532845975: Windows 107/108 — T-PLAY-11 fails → **M0** (test bug); Linux 108/108; MSVC no warnings |
+| NF-01 (audio callback) | ✅ `Player::process`, `limitOutput`: no locks, allocation or I/O; blocks above 8192 frames split |
+| Player stop / MIDI thread | ✅ hazard pointer correct (store, re-check, seq_cst); every path that frees the run stops the MIDI sender first; `AppState` destroys `midiPlayer` first |
+| PLAY-02a (streaming, sync) | ✅ deficit/skip keeps sync, negative starts, >2 channels; ⚠️ no-output path does not pay back the deficit → **M7** |
+| PLAY-01a (transport) | ❌ Play at the end does nothing → **M2**; ⚠️ MIDI tail cut by the end check → **M3**; Remove during playback → **M4** |
+| PLAY-03a / 04a (MIDI, mix) | ⚠️ mute drops controllers too → **M5**; two tracks on one port/channel share held notes → **M8** |
+| PLAY-05 (overdub) | ✅ signs and kinds of shift right; ⚠️ overdub decided on offered, not started clips; fallback start 0 → **M6** |
+| PLAY-06 (take folder) | ❌ can be opened during a recording → **M1** |
+| Spec ↔ tests | ⚠️ T-DEV-07 used twice → **M10**; ✅ otherwise every Spec item has a test or is a design rule / sub-item |
+| Docs ↔ code | ✅ latency formulas, output chain, Space guard as specified; ⚠️ `latency_correction_ms` only in the config file → **M11** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| M0 | high (CI) | T-PLAY-11 fails on real Windows: "Gitaar Ã©" instead of "Gitaar é". The test built the file name from a narrow `std::string`, which Windows converts with the ANSI code page, so the file on disk had the wrong name. mini-daw's own reading (`pathToUtf8`) is right; Wine did not show it (UTF-8 code page). | Create the test files through `pathFromUtf8` (as T-REC-28 does). |
+| M1 | medium | The take browser window stays usable during a recording (only the menu item is disabled): Open or double-click calls `stopPlayback()` (ends the timeline run mid-take) and replaces the track list, so the new takes are placed at the wrong time on the wrong tracks. | Refuse in `openTakeFolder` while recording; disable the list and Open meanwhile. |
+| M2 | medium | Play when the position is at or past the end (after playing to the end, or after a recording) starts and stops in the same frame: nothing is heard until Home. | Play from 0 when the position is at or past the end. |
+| M3 | low-medium | The end check compares the audio position with the end of the takes; MIDI is sent `midiDelay` (tens of ms) later, so the last events of a MIDI take are not sent (Stop's note-offs cover the notes). | Stop at the end + the MIDI delay + 0.1 s. |
+| M4 | low-medium | Remove is only disabled while recording; a track removed while playing keeps playing (and cannot be muted) until the next start. | Disable Remove while playing too. |
+| M5 | low | A muted MIDI track drops all messages, also program changes, controllers, pitch bend and sustain-off; after unmuting the patch can be wrong or the pedal stuck. | When muted, drop only note-ons. |
+| M6 | low | `overdub` is set from the clips offered, not from those that actually started (a clip skipped for its sample rate still causes a shift). If no timeline anchor exists at Stop (Stop before the first block), the take is placed at 0 instead of the play position where recording started. | `Player::start` returns how many clips started; remember the start position as the fallback. |
+| M7 | low | `Player::process` with no output channels reads the rings without paying back an earlier deficit. Not audible (no output), but the rings get out of step. | Pay back the deficit first, as with output. |
+| M8 | low | Held notes are keyed by (port, channel, note): two tracks playing to the same port and channel release or mute each other's notes. | Key held notes by track too. |
+| M9 | low | Robustness: a WAV header claiming thousands of channels makes the reader allocate hundreds of MB (cap at 64); take lengths are not recomputed after a sample rate change (MIDI positions stale); `takeStart` < 0 parts can never be heard (position starts at 0) — acceptable, noted. | Cap channels; recompute take lengths after the audio settings change. |
+| M10 | docs | T-DEV-07 is used twice (the `--audio-test` on Windows test and the new watchdog test). | Rename the watchdog test to T-DEV-08 (definition, result row, conversation log). |
+| M11 | low (UI) | `latency_correction_ms` (overdub calibration) can only be changed in `config.ini`. | Add it to Settings → Recording…. |
+| M12 | test gap | No test stops/starts the player while a fake audio thread runs (the hazard pointer is only exercised sequentially); none for one output channel, >2-channel files or blocks above 8192 frames; overdub placement lives in `main.cpp` and has no unit test. | Add the player tests; move the placement rule into a core function with a test. |
+
+## Actions taken (user: "yes fix M0–M12, M0 first")
+| # | Done |
+|---|------|
+| M0 | T-PLAY-11 creates the non-ASCII file through `pathFromUtf8` (the only such test; T-REC-28 already did). |
+| M1 | `openTakeFolder` refuses while recording; the browser's list and Open are disabled with a note. |
+| M2 | Play at or after the end starts from 0. |
+| M3 | Playback stops at the end + the MIDI delay + 0.1 s. |
+| M4 | Remove (X) is disabled while playing. |
+| M5 | A muted MIDI track drops only note-ons; T-PLAY-17. |
+| M6 | `Player::start` returns the clips started; overdub only when audio clips or MIDI tracks really play; placement in the new core function `placeRecordedTake` with the Record position as fallback; T-PLAY-16. |
+| M7 | No-output path pays back the deficit first; T-PLAY-15. |
+| M8 | Held notes keyed by track as well; T-PLAY-17. |
+| M9 | WAV reader refuses more than 64 channels (T-PLAY-05); take lengths recomputed after the audio settings change. `takeStart` < 0 parts stay unheard (noted, by design). |
+| M10 | Watchdog test renamed T-DEV-08 (definition, result, log). |
+| M11 | Settings → Recording… has "Overdub latency correction (ms)". |
+| M12 | T-PLAY-14 (stop/start under a running audio thread, also with ThreadSanitizer), T-PLAY-15 (one output, 3 channels, big blocks, no output), T-PLAY-16 (placement), T-PLAY-17 (MIDI). |
+
+Result: Linux 113/113 ctest; MinGW build under Wine 112/112 Catch2 cases; ThreadSanitizer clean on the threaded tests.

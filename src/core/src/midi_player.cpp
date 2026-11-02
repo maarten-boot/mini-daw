@@ -189,7 +189,7 @@ void MidiPlayer::sendItem(const Item& it)
     std::array<std::uint8_t, 3> d = it.data;
     const std::uint8_t kind = d[0] & 0xF0;
     const int channel = d[0] & 0x0F;
-    const auto key = std::make_tuple(it.handle, channel, static_cast<int>(d[1]));
+    const auto key = std::make_tuple(it.handle, channel, static_cast<int>(d[1]), it.track);
     const float gain = gains_.count(it.track) ? gains_.at(it.track)->load(std::memory_order_relaxed) : 1.0f;
     const bool noteOn = kind == 0x90 && d[2] > 0;
     const bool noteOff = kind == 0x80 || (kind == 0x90 && d[2] == 0);
@@ -197,12 +197,12 @@ void MidiPlayer::sendItem(const Item& it)
         if (gain <= 0.0f) return;  // muted: no new notes
         const long v = std::lround(d[2] * std::min(gain, 2.0f));
         d[2] = static_cast<std::uint8_t>(std::clamp(v, 1L, 127L));
-        held_[key] = it.track;
+        held_.insert(key);
     } else if (noteOff) {
         if (!held_.erase(key)) return;  // released already (mute) or never sent
-    } else if (gain <= 0.0f) {
-        return;  // a muted track sends nothing else either
     }
+    // Other messages (program change, controllers, pitch bend, sustain) are
+    // sent also while muted, so the sound is right when the track is unmuted (M5).
     sink_->send(it.handle, d.data(), it.size);
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -210,8 +210,8 @@ void MidiPlayer::sendItem(const Item& it)
 void MidiPlayer::releaseTrack(int track)
 {
     for (auto it = held_.begin(); it != held_.end();) {
-        if (it->second != track) { ++it; continue; }
-        const auto [handle, channel, note] = it->first;
+        const auto [handle, channel, note, owner] = *it;
+        if (owner != track) { ++it; continue; }
         const std::uint8_t off[3] = {static_cast<std::uint8_t>(0x80 | channel), static_cast<std::uint8_t>(note), 0};
         sink_->send(handle, off, 3);
         it = held_.erase(it);
@@ -220,8 +220,8 @@ void MidiPlayer::releaseTrack(int track)
 
 void MidiPlayer::releaseAll()
 {
-    for (const auto& [key, track] : held_) {
-        const auto [handle, channel, note] = key;
+    for (const auto& [handle, channel, note, track] : held_) {
+        (void)track;
         const std::uint8_t off[3] = {static_cast<std::uint8_t>(0x80 | channel), static_cast<std::uint8_t>(note), 0};
         sink_->send(handle, off, 3);
     }

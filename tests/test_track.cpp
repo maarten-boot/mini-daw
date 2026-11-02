@@ -1,5 +1,6 @@
 // Tracks and take names (SPEC-REC-01a, SPEC-REC-07): T-REC-19.
 
+#include "minidaw/path_util.hpp"
 #include "minidaw/smf.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
@@ -109,7 +110,8 @@ TEST_CASE("T-PLAY-11: take folders listed and opened as tracks", "[track][T-PLAY
     std::string err;
     {
         WavWriter w;
-        REQUIRE(w.open(take / "01-Gitaar \xc3\xa9.wav", 48000, 2, err));
+        // UTF-8 -> path explicitly: a narrow string would go through the ANSI code page on Windows (M0).
+        REQUIRE(w.open(take / pathFromUtf8("01-Gitaar \xc3\xa9.wav"), 48000, 2, err));
         REQUIRE(w.close(err));
         WavWriter m;
         REQUIRE(m.open(take / "03-Mic.wav", 48000, 1, err));

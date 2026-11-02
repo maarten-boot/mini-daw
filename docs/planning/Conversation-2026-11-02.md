@@ -159,5 +159,20 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - Core: `WavReader` (streaming), `smfToFrames` (tempo map, SMPTE), `Player` (reader thread → SPSC rings → callback mix, gains ramped, underrun skip keeps sync, hazard pointer for stop), `MidiPlayer` (sender thread, sink interface for tests), `limitOutput` split from monitoring, `estimateLatency`, `SessionResult::startFrame`, track gain / take folder helpers.
 - GUI: transport row, position slider, Mix and Take columns (MIDI out per track), take browser, Space/Home, overdub placement, stream watchdog.
 - Found while testing live: end-of-playback check ignored MIDI takes; own RtMidi ports were offered (loop); table too wide → all fixed. Test-tool artefacts noted in `CLAUDE.md`.
-- Spec v0.18 (PLAY-01a..06, DEV-05 watchdog), tests T-PLAY-01..13, T-DEV-07. Linux 108/108, Wine 107/107; live on the VM: playback −6.0 dBFS, mute, MIDI gaps within 3.5 ms, overdub placement, take browser, watchdog.
+- Spec v0.18 (PLAY-01a..06, DEV-05 watchdog), tests T-PLAY-01..13, T-DEV-07 (renumbered T-DEV-08 in crosscheck #6, M10). Linux 108/108, Wine 107/107; live on the VM: playback −6.0 dBFS, mute, MIDI gaps within 3.5 ms, overdub placement, take browser, watchdog.
 - Open: Windows (T-PLAY-13), overdub loopback measurement (T-PLAY-12), 2 tracks for 10 min (T-PLAY-02).
+
+## 19. CI after P8 and crosscheck #6
+> pushed it, check the CI run
+> do the crosscheck #6
+
+- CI run 41521684543 (`42e3402`) green (99/99). Run 41532845975 (`2892d9e`): Windows 107/108, T-PLAY-11 fails ("Gitaar Ã©"): the test made the file name through the ANSI code page; the code is right (M0).
+- Crosscheck #6 in `Crosscheck-2026-11-02.md` (Claude + independent reviewer). M1 (take folder opened during a recording) and M2 (Play at the end does nothing) medium; M3–M9 low; M10 duplicate test ID; M11 calibration field in the GUI; M12 test gaps. Waiting for the user's go.
+
+## 20. Crosscheck #6 fixes
+> yes fix M0–M12, M0 first
+
+- M0 (CI): the test built the non-ASCII file name through the ANSI code page; now `pathFromUtf8`.
+- M1–M12 as in `Crosscheck-2026-11-02.md`; placement rule moved into the core (`placeRecordedTake`) so it is tested.
+- One test of mine wrong at first (3-channel file via WavWriter, which only writes 1–2 channels).
+- Spec v0.19; tests T-PLAY-14..17. Linux 113/113, Wine 112/112, ThreadSanitizer clean. `dist/windows` refreshed.
