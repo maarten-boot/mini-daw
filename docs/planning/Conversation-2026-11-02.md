@@ -122,3 +122,14 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 - Real gap found in the current code too: an open MIDI port that is unplugged is not noticed, and the port list is only read at start. Proposed: MIDI hot-plug (rescan every 2 s) and a log file viewable from the menu. Waiting for the user's go.
 - `/tmp/` added to `.gitignore` (the user's test folder, 16 MB WAV).
 - User's answers: MIDI hot-plug as proposed (rescan every 2 s, disconnect shown on the track, automatic reopen, also while recording with the gap noted in the take summary); log file `mini-daw.log` next to `config.ini`, fresh per run, previous run kept as `mini-daw.old.log`, View → Log and "Open log folder"; commit P7 first, then hot-plug + log, crosscheck #5 after that.
+
+## 15. MIDI hot-plug and diagnostics log
+- P7 committed as `d17e9f0` (not pushed yet).
+> ok best clear old builds when you start a new one so i always have only onel location to look at
+- `dist/linux` (P5) and `dist/linux-ubuntu24` (pre-P6 CI download) removed; rule in `CLAUDE.md` and in memory: empty `dist/` before every new build.
+- Log (`log.hpp`): file per run + `.old.log`, 2000 lines in memory, 5 MB cap, View → Log (Ctrl+L) with filter, copy, open folder; warnings/errors counted in the status line. Logged: start, config, renderer, device scan, audio opens/errors, driver and MIDI messages, MIDI events, recording start/results/errors.
+- Hot-plug (`MidiInputs::checkConnections`, every 2 s, also while recording): a port that goes away is closed but kept (the session thread keeps reading its ring; the port list itself only changes outside recordings), reopened when it returns. Found while designing: RtMidi numbers port names (Windows index, ALSA client:port) and the number can change → match by exact name, else by base name if unique (`matchMidiPort`). Disconnects per take in the result; such a take counts as lost data.
+- GUI: "DISCONNECTED - waiting for it" on the track; port list refreshed; hint for Arm/Record and why *Add audio track* is disabled; MIDI port box no longer pushes the channel box out of view (channel box "All ch"/"Ch N", tooltip with the full port name).
+- Spec v0.16 (REC-01b, LOG-01); tests T-REC-30..32, T-LOG-01..04; `tools/midi_test/vkeys.c`.
+- Tests: Linux 97/97, Wine 96/96; live hot-plug headless and in the GUI on the VM; Windows build under Wine writes its log.
+- `dist/` now holds only the new Windows build.

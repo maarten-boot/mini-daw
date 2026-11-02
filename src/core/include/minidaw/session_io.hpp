@@ -38,6 +38,8 @@ public:
     virtual void setCapture(bool on) = 0;
     virtual std::size_t read(const std::string& port, RawMidi* out, std::size_t max) = 0;
     virtual std::uint64_t messagesLost(const std::string& port) const = 0;
+    // Times the port's device went away (SPEC-REC-01b).
+    virtual std::uint64_t disconnects(const std::string& /*port*/) const { return 0; }
 };
 
 } // namespace minidaw

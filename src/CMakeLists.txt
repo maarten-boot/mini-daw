@@ -8,6 +8,7 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
+    core/src/log.cpp
     core/src/meter.cpp
     core/src/monitor.cpp
     core/src/recorder.cpp
@@ -36,5 +37,8 @@ if(MINIDAW_BUILD_APP)
         target_sources(minidaw PRIVATE app/renderer_opengl.cpp)
     endif()
     set_target_properties(minidaw PROPERTIES OUTPUT_NAME "mini-daw")
+    if(WIN32)
+        target_link_libraries(minidaw PRIVATE shell32)  # ShellExecuteW: View > Log > Open log folder
+    endif()
     target_link_libraries(minidaw PRIVATE minidaw_core minidaw_imgui minidaw_warnings)
 endif()

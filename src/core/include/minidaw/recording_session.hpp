@@ -30,6 +30,7 @@ struct MidiTakeResult {
     std::string port;
     std::size_t events = 0;           // events in the file (incl. added note-offs)
     std::uint64_t lostMessages = 0;   // the port's ring was full, or the message could not be placed
+    std::uint64_t disconnects = 0;    // the device went away during the take (SPEC-REC-01b): MIDI is missing
 };
 
 struct SessionResult {
@@ -69,6 +70,7 @@ private:
     struct MidiTake {
         Track track;
         std::filesystem::path path;
+        std::uint64_t disconnectsAtStart = 0;
     };
     struct PortEvents {
         std::string port;

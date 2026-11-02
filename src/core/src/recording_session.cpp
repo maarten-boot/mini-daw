@@ -11,7 +11,7 @@ namespace minidaw {
 bool SessionResult::lostData() const
 {
     if (!error.empty() || audio.lostData()) return true;
-    return std::any_of(midi.begin(), midi.end(), [](const MidiTakeResult& m) { return m.lostMessages > 0; });
+    return std::any_of(midi.begin(), midi.end(), [](const MidiTakeResult& m) { return m.lostMessages > 0 || m.disconnects > 0; });
 }
 
 RecordingSession::~RecordingSession()
@@ -82,7 +82,7 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
         if (t->kind == TrackKind::Audio) {
             audioTakes.push_back({path, t->channels});
         } else {
-            midiTakes_.push_back({*t, path});
+            midiTakes_.push_back({*t, path, midi.disconnects(t->midiPort)});
             const bool known = std::any_of(portEvents_.begin(), portEvents_.end(),
                                            [&](const PortEvents& p) { return p.port == t->midiPort; });
             if (!known) portEvents_.push_back({t->midiPort, {}});
@@ -176,7 +176,8 @@ bool RecordingSession::writeMidiFiles(std::uint64_t endFrame, bool final, std::v
         }
         if (results) {
             results->push_back({mt.path, mt.track.midiPort, st.events.size(),
-                                midi_->messagesLost(mt.track.midiPort) + pe->unplaced});
+                                midi_->messagesLost(mt.track.midiPort) + pe->unplaced,
+                                midi_->disconnects(mt.track.midiPort) - mt.disconnectsAtStart});
         }
     }
     if (final) {

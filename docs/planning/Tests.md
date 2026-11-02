@@ -61,6 +61,17 @@ Status column in the Results section at the end.
 | T-REC-27 | SPEC-REC-04b | A | MIDI take builder edge cases: note-off without note-on, a note started twice, empty or reversed range, unsorted input, short message | Kept; two note-offs; nothing; sorted (stable); ignored |
 | T-REC-28 | SPEC-REC-07 | A | Track and folder names with non-ASCII characters ("Gitaar éè ♪", "Opnamen ü") | Files and folders get exactly these names (UTF-8 → path conversion; matters on Windows) |
 | T-REC-29 | SPEC-REC-01a, 02a | M | GUI: arm a MIDI track whose device is unplugged, plug it in; also add tracks while the audio stream is not running, then start it | The port opens within about 2 s (or at Record) without re-arming; the user's tracks stay, no default track is added |
+| T-REC-30 | SPEC-REC-01b | A | Session: a MIDI port is unplugged during a take (and once before it) | Take result: 1 disconnect for that port, 0 for the other; events that arrived are kept; take counts as lost data |
+| T-REC-31 | SPEC-REC-01b | A | Port matching: same name, new ALSA client number, Windows renumbering, missing port, two devices of the same kind | Found; found; found; not found; only the exact name |
+| T-REC-32 | SPEC-REC-01b | M | Arm a MIDI track; unplug the keyboard, plug it in again; also during a recording; plug in a new keyboard | "DISCONNECTED - waiting for it", then back to the message count without re-arming; take summary reports the disconnect; the new keyboard appears in the port list within about 2 s |
+
+## Diagnostics
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-LOG-01 | SPEC-LOG-01 | A | Open the log three times | New file each run with time + level + text, line breaks indented; the previous run is in `mini-daw.old.log` |
+| T-LOG-02 | SPEC-LOG-01 | A | Lines in memory, counts, more than 2000 lines, two threads writing | Order kept, oldest dropped, counts right, nothing lost between threads |
+| T-LOG-03 | SPEC-LOG-01 | A | The log file cannot be created | Error text returned; the log still works in memory |
+| T-LOG-04 | SPEC-LOG-01 | M | GUI: View → Log (Ctrl+L), "Only warnings and errors", "Copy all", "Open log folder"; unplug a MIDI keyboard | Lines shown with level as text; filter works; clipboard holds the lines; the file manager opens the folder; the disconnect appears in the log and the status line count |
 
 ## Monitoring
 | ID | Spec | Type | Description | Expected result |
@@ -201,3 +212,7 @@ Status column in the Results section at the end.
 | 2026-11-02 | `--audio-test 3 --monitor` | Linux VM | pass | "Monitoring: inputs 1+2 (stereo)", output peak printed, 0 dropouts; `--monitor` alone → exit code 2 |
 | 2026-11-02 | T-UI-03/04 | Windows, user, P5 build from `dist/windows` (2026-11-01) | pass | Contrast changes work |
 | 2026-11-02 | T-REC-10 | Windows, user, same P5 build, real audio input | pass, with a note | 56.5 s, 24-bit stereo 48 kHz, no gaps. The user hears a soft ticking in quiet parts. Analysis: square pulses of about −45 dBFS (noise floor −62 dBFS RMS), identical on both channels, bursts of about 3 ms every 60–69 ms, at random positions relative to every buffer size (128–1024, 480, 441): not from mini-daw's data path (that would show at block boundaries), most likely electrical interference into the input. To check: record the same input with another program, and with mini-daw's GUI closed (`--record-test`) |
+| 2026-11-02 | T-REC-30, T-REC-31, T-LOG-01..03 | Linux 97/97 ctest; MinGW build under Wine 96/96 Catch2 cases (1043 assertions) | pass | |
+| 2026-11-02 | T-REC-32 (headless) | Linux VM, `tools/midi_test/vkeys.c` as a keyboard that comes and goes, `--record-test 12` | pass | Disconnect noticed 0.1 s after the port went, reconnected at the next 2 s check, disconnected again at its end; summary "disconnected 2 time(s)", exit code 1; all in the log |
+| 2026-11-02 | T-REC-32, T-LOG-04 (GUI part) | Linux VM, Xvfb + xdotool + vkeys | pass | Track shows "DISCONNECTED - waiting for it", then the message count again without re-arming; the new port appears in the list; View → Log shows open / disconnect / connected again / list changes. Fixed on the way: MIDI port box pushed the channel box out of view (now fits; full name as tooltip) |
+| 2026-11-02 | T-LOG-01 (Windows build) | Wine, GUI | pass | `mini-daw.log` written next to the `--config` file: renderer D3D11, WASAPI devices, the expected WASAPI error under Wine |

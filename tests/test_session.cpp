@@ -88,11 +88,23 @@ public:
         return n;
     }
     std::uint64_t messagesLost(const std::string&) const override { return 0; }
+    std::uint64_t disconnects(const std::string& port) const override
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        const auto it = disconnects_.find(port);
+        return it == disconnects_.end() ? 0 : it->second;
+    }
 
     void openPort(const std::string& port)
     {
         std::lock_guard<std::mutex> lock(m_);
         open_[port] = true;
+    }
+    // The device goes away and (optionally) comes back, as MidiInputs reports it.
+    void unplug(const std::string& port)
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        ++disconnects_[port];
     }
     // A message "arriving" at clock time `ns` (= stream frame in this test).
     void send(const std::string& port, std::int64_t ns, std::uint8_t a, std::uint8_t b, std::uint8_t c)
@@ -110,6 +122,7 @@ private:
     mutable std::mutex m_;
     std::map<std::string, bool> open_;
     std::map<std::string, std::deque<RawMidi>> queues_;
+    std::map<std::string, std::uint64_t> disconnects_;
     bool capture_ = false;
 };
 
@@ -412,4 +425,30 @@ TEST_CASE("T-REC-28: track and folder names with non-ASCII characters", "[sessio
     CHECK(pathToUtf8(res.audio.takes[0].path.filename()) == "01-" + name + ".wav");
     CHECK(std::filesystem::is_regular_file(res.audio.takes[0].path));
     CHECK(pathToUtf8(res.folder.parent_path().filename()) == "Opnamen \xC3\xBC");
+}
+
+TEST_CASE("T-REC-30: a MIDI device unplugged during a take is reported", "[session][T-REC-30]")
+{
+    test::TempDir dir;
+    FakeAudio audio;
+    FakeMidi midi;
+    midi.openPort("Keys");
+    midi.openPort("Pads");
+    midi.unplug("Keys");  // before the take: does not count
+    RecordingSession session;
+    std::string err;
+    REQUIRE(session.start({audioTrack(1, "Gtr", {0}), midiTrack(2, "K", "Keys"), midiTrack(3, "P", "Pads")},
+                          settingsFor(dir), audio, midi, err));
+    audio.feed(480);
+    midi.send("Keys", 1200, 0x90, 60, 100);
+    midi.unplug("Keys");  // gone for a while, then back
+    midi.send("Keys", 1400, 0x80, 60, 0);
+    audio.feed(480);
+    const SessionResult res = session.stop();
+    REQUIRE(res.midi.size() == 2);
+    CHECK(res.midi[0].port == "Keys");
+    CHECK(res.midi[0].disconnects == 1);
+    CHECK(res.midi[0].events == 2);  // what did arrive is kept
+    CHECK(res.midi[1].disconnects == 0);
+    CHECK(res.lostData());           // --record-test exits with 1
 }

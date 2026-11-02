@@ -19,6 +19,7 @@
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/log.hpp"
 #include "minidaw/meter.hpp"
 #include "minidaw/midi_input.hpp"
 #include "minidaw/monitor.hpp"
@@ -33,6 +34,21 @@
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <spawn.h>
+#include <sys/wait.h>
+extern char** environ;
+#endif
 
 #include <algorithm>
 #include <array>
@@ -62,6 +78,13 @@ struct AppState {
     minidaw::AppConfig config;
     std::vector<std::string> configWarnings;
     std::string saveError;
+
+    // Diagnostics log (SPEC-LOG-01).
+    minidaw::Log log;
+    bool showLog = false;
+    bool logOnlyProblems = false;
+    std::uint64_t logLinesShown = 0;
+    std::string logError;
 
     minidaw::Palette palette;                    // after enforcement
     std::vector<minidaw::ColorPair> unresolved;  // should stay empty
@@ -95,8 +118,8 @@ struct AppState {
     bool tracksCreated = false;
     minidaw::MidiInputs midi;
     bool midiPortsDirty = true;            // armed MIDI tracks changed: reopen ports
-    double midiRetryAt = 0.0;              // when to retry a port that did not open (0 = no retry due)
-    std::vector<std::string> midiWarnings;
+    double midiCheckAt = 0.0;              // next MIDI port check (hot-plug, SPEC-REC-01b)
+    std::vector<std::string> midiWarnings; // the latest MIDI events, shown under the tracks
     minidaw::RecordingSession session;
     std::string recordError;
     std::vector<std::string> lastTake;     // summary of the last recording
@@ -107,6 +130,46 @@ struct AppState {
 void saveConfig(AppState& app)
 {
     app.saveError = minidaw::saveConfigFile(app.configPath, app.config);
+    if (!app.saveError.empty()) app.log.error("Could not save the config file: " + app.saveError);
+}
+
+// Start the log for this run, next to the config file in use (SPEC-LOG-01).
+void openLog(AppState& app, const char* mode)
+{
+    const std::filesystem::path file = app.configPath.parent_path() / "mini-daw.log";
+    app.logError = app.log.open(file);
+    app.log.info(std::string(minidaw::kProductName) + " " + minidaw::kVersion + " started (" + mode + ")");
+    app.log.info("Config file: " + minidaw::pathToUtf8(app.configPath));
+    if (!app.logError.empty()) std::fprintf(stderr, "warning: %s\n", app.logError.c_str());
+    for (const auto& w : app.configWarnings) app.log.warning("Config: " + w);
+}
+
+void logScan(AppState& app)
+{
+    app.log.info("Audio API: " + (app.scan.audioApi.empty() ? std::string("(none)") : app.scan.audioApi) + ", " +
+                 std::to_string(app.scan.audioDevices.size()) + " audio devices");
+    for (const auto& d : app.scan.audioDevices) {
+        app.log.info("  audio device \"" + d.name + "\": in " + std::to_string(d.inputChannels) + ", out " +
+                     std::to_string(d.outputChannels));
+    }
+    for (const auto& p : app.scan.midiInputs) app.log.info("  MIDI input \"" + p.name + "\"");
+    for (const auto& w : app.scan.warnings) app.log.warning(w);
+}
+
+void logOpenResult(AppState& app, const minidaw::OpenResult& r)
+{
+    for (const auto& w : r.warnings) app.log.warning("Audio: " + w);
+    if (!r.error.empty()) {
+        app.log.error("Audio: " + r.error);
+        return;
+    }
+    const auto& info = app.audio.info();
+    char buf[512];
+    std::snprintf(buf, sizeof buf, "Audio stream running: %s, %u Hz, %u frames; input \"%s\" (%u ch), output \"%s\" (%u ch)",
+                  info.api.c_str(), info.sampleRate, info.bufferFrames,
+                  info.inputName.empty() ? "(none)" : info.inputName.c_str(), info.inputChannels,
+                  info.outputName.empty() ? "(none)" : info.outputName.c_str(), info.outputChannels);
+    app.log.info(buf);
 }
 
 minidaw::EnforceResult buildPalette(const ContrastSetting& setting)
@@ -166,6 +229,7 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
     }
     const minidaw::AudioSettings previous = app.config.audio;
     minidaw::OpenResult r = app.audio.open(settings, app.scan);
+    logOpenResult(app, r);
     app.audioWarnings = r.warnings;
     app.audioError = r.error;
     if (r.error.empty()) {
@@ -173,6 +237,7 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
         if (save) saveConfig(app);
     } else if (!(previous == settings)) {
         minidaw::OpenResult back = app.audio.open(previous, app.scan);
+        logOpenResult(app, back);
         if (back.error.empty()) {
             app.audioWarnings.push_back("The previous audio settings are active again.");
         }
@@ -302,6 +367,13 @@ std::vector<std::string> describeResult(const minidaw::SessionResult& res)
                       minidaw::pathToUtf8(m.path.filename()).c_str(), m.events, m.port.c_str(),
                       static_cast<unsigned long long>(m.lostMessages));
         lines.emplace_back(buf);
+        if (m.disconnects > 0) {
+            std::snprintf(buf, sizeof buf,
+                          "%s: the MIDI device was disconnected %llu time(s) during the take; MIDI played while it "
+                          "was gone is missing",
+                          minidaw::pathToUtf8(m.path.filename()).c_str(), static_cast<unsigned long long>(m.disconnects));
+            lines.emplace_back(buf);
+        }
     }
     if (!res.audio.error.empty()) lines.push_back("error: " + res.audio.error);
     if (!res.error.empty()) lines.push_back("error: " + res.error);
@@ -311,6 +383,36 @@ std::vector<std::string> describeResult(const minidaw::SessionResult& res)
 // --record-test: record input 1 (and 2) and every MIDI input into a take
 // folder in `folder` (T-REC-10, SPEC-REC-06), through the same recording
 // session as the GUI.
+// Log a MIDI port event and return its text (SPEC-REC-01b, SPEC-LOG-01).
+std::string noteMidiEvent(AppState& app, const minidaw::MidiPortEvent& e, bool recording)
+{
+    using Kind = minidaw::MidiPortEvent::Kind;
+    const std::string port = "MIDI input \"" + e.port + "\"";
+    const std::string as = e.detail != e.port && !e.detail.empty() ? " (as \"" + e.detail + "\")" : "";
+    std::string text;
+    switch (e.kind) {
+    case Kind::Opened:
+        text = port + " opened" + as + ".";
+        app.log.info(text);
+        break;
+    case Kind::Reconnected:
+        text = port + " is connected again" + as + (recording ? "; recording from it goes on." : ".");
+        app.log.info(text);
+        break;
+    case Kind::Disconnected:
+        text = port + " was disconnected" +
+               (recording ? " during the recording: MIDI played while it is gone is missing." : ".") +
+               " It is opened again when it comes back.";
+        app.log.warning(text);
+        break;
+    case Kind::Failed:
+        text = e.detail + " Trying again every 2 seconds.";
+        app.log.warning(text);
+        break;
+    }
+    return text;
+}
+
 int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folder)
 {
     app.scan = minidaw::scanDevices();
@@ -334,7 +436,10 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
         tracks.push_back(t);
         ports.push_back(p.name);
     }
-    for (const auto& w : app.midi.setPorts(ports)) std::printf("warning: %s\n", w.c_str());
+    for (const auto& e : app.midi.setPorts(ports)) {
+        const std::string text = noteMidiEvent(app, e, false);
+        if (e.kind == minidaw::MidiPortEvent::Kind::Failed) std::printf("warning: %s\n", text.c_str());
+    }
     for (auto& t : tracks) t.armed = t.kind == minidaw::TrackKind::Audio || app.midi.isOpen(t.midiPort);
     if (std::none_of(tracks.begin(), tracks.end(), [](const minidaw::Track& t) { return t.armed; })) {
         std::printf("error: no audio input and no MIDI input is open, so there is nothing to record.\n");
@@ -358,17 +463,27 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
             std::printf("  track %d: MIDI \"%s\", all channels\n", t.number, t.midiPort.c_str());
         }
     }
+    app.log.info("Recording test into " + minidaw::pathToUtf8(app.session.folder()));
     for (int t = 0; t < seconds * 10; ++t) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!app.session.diskError().empty()) break;
+        if (t % 20 == 19) {  // hot-plug check every 2 s, as in the GUI
+            for (const auto& e : app.midi.checkConnections()) {
+                std::printf("%s\n", noteMidiEvent(app, e, true).c_str());
+            }
+        }
     }
     const minidaw::SessionResult res = app.session.stop();
     const std::uint64_t xruns = app.audio.xruns();
     app.midi.closeAll();
     app.audio.close();
 
-    for (const auto& line : describeResult(res)) std::printf("%s\n", line.c_str());
+    for (const auto& line : describeResult(res)) {
+        std::printf("%s\n", line.c_str());
+        app.log.info("Take: " + line);
+    }
     std::printf("dropouts (xruns): %llu\n", static_cast<unsigned long long>(xruns));
+    if (res.lostData()) app.log.warning("The recording test lost data.");
     return res.lostData() ? 1 : 0;
 }
 
@@ -423,6 +538,8 @@ void drawMenuBar(AppState& app, bool& quit)
             ImGui::EndMenu();
         }
         ImGui::MenuItem("Contrast report", nullptr, &app.showContrastReport);
+        ImGui::Separator();
+        ImGui::MenuItem("Log", "Ctrl+L", &app.showLog);
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
@@ -699,7 +816,10 @@ void drawAudioStatus(AppState& app)
         }
     }
     for (const auto& w : app.audioWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
-    for (const auto& m : app.audio.takeDriverMessages()) app.audioWarnings.push_back(m);
+    for (const auto& m : app.audio.takeDriverMessages()) {
+        app.log.warning("Audio driver: " + m);
+        app.audioWarnings.push_back(m);
+    }
 }
 
 // --- Tracks and recording (P6) ---------------------------------------------
@@ -721,32 +841,65 @@ void ensureDefaultTracks(AppState& app)
 // program open a port, so unarmed tracks do not hold it).
 // A port that does not open (unplugged, used by another program) is tried
 // again every 2 seconds, and right before Record (crosscheck #4, J2).
+void showMidiEvents(AppState& app, const std::vector<minidaw::MidiPortEvent>& events)
+{
+    for (const auto& e : events) {
+        app.midiWarnings.push_back(noteMidiEvent(app, e, app.session.recording()));
+        if (app.midiWarnings.size() > 4) app.midiWarnings.erase(app.midiWarnings.begin());
+    }
+}
+
+// Open the ports of armed MIDI tracks; every 2 s re-read the port list:
+// new devices appear in the lists, unplugged ones are noticed and opened
+// again when they return, also while recording (SPEC-REC-01a/01b).
 void syncMidiPorts(AppState& app, bool force = false)
 {
-    if (app.session.recording()) return;
     const double now = ImGui::GetTime();
-    const bool retryDue = app.midiRetryAt != 0.0 && now >= app.midiRetryAt;
-    if (!force && !app.midiPortsDirty && !retryDue) return;
-    std::vector<std::string> ports;
-    for (const auto& t : app.tracks) {
-        if (t.kind == minidaw::TrackKind::Midi && t.armed && !t.midiPort.empty()) ports.push_back(t.midiPort);
+    if (!app.session.recording() && (force || app.midiPortsDirty)) {
+        std::vector<std::string> ports;
+        for (const auto& t : app.tracks) {
+            if (t.kind == minidaw::TrackKind::Midi && t.armed && !t.midiPort.empty()) ports.push_back(t.midiPort);
+        }
+        showMidiEvents(app, app.midi.setPorts(ports));
+        app.midiPortsDirty = false;
     }
-    app.midiWarnings = app.midi.setPorts(ports);
-    app.midiPortsDirty = false;
-    const bool allOpen =
-        std::all_of(ports.begin(), ports.end(), [&](const std::string& p) { return app.midi.isOpen(p); });
-    app.midiRetryAt = allOpen ? 0.0 : now + 2.0;
+    if (!force && now < app.midiCheckAt) return;
+    app.midiCheckAt = now + 2.0;
+    showMidiEvents(app, app.midi.checkConnections());
+    const std::vector<std::string> names = app.midi.availablePorts();
+    std::vector<minidaw::MidiPortInfo> list;
+    for (unsigned int i = 0; i < names.size(); ++i) list.push_back({i, names[i]});
+    const bool same = list.size() == app.scan.midiInputs.size() &&
+                      std::equal(list.begin(), list.end(), app.scan.midiInputs.begin(),
+                                 [](const auto& a, const auto& b) { return a.name == b.name; });
+    if (!same) {
+        std::string text = "MIDI inputs now:";
+        for (const auto& n : names) text += " \"" + n + "\"";
+        if (names.empty()) text += " (none)";
+        app.log.info(text);
+        app.scan.midiInputs = std::move(list);
+    }
 }
 
 void toggleRecording(AppState& app)
 {
     if (app.session.recording()) {
-        app.lastTake = describeResult(app.session.stop());
+        const minidaw::SessionResult res = app.session.stop();
+        app.lastTake = describeResult(res);
+        app.log.info("Recording stopped");
+        for (const auto& line : app.lastTake) {
+            if (res.lostData()) app.log.warning("Take: " + line);
+            else app.log.info("Take: " + line);
+        }
         return;
     }
     syncMidiPorts(app, true);
     app.recordError.clear();
-    if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) return;
+    if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) {
+        app.log.error("Not recording: " + app.recordError);
+        return;
+    }
+    app.log.info("Recording into " + minidaw::pathToUtf8(app.session.folder()));
     app.lastTake.clear();
     for (auto& m : app.inputMeters) m.clearClip();  // CLIP then means: during this take
     for (auto& m : app.outputMeters) m.clearClip();
@@ -773,10 +926,16 @@ void audioInputCombo(minidaw::Track& t, unsigned int inputs)
     ImGui::EndCombo();
 }
 
+constexpr float kMidiChannelBoxEm = 6.0f;
+
 bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
 {
     bool changed = false;
-    const std::string preview = t.midiPort.empty() ? std::string("(choose a port)") : t.midiPort;
+    std::string preview = t.midiPort.empty() ? std::string("(choose a port)") : t.midiPort;
+    if (!t.midiPort.empty() && std::none_of(scan.midiInputs.begin(), scan.midiInputs.end(),
+                                            [&](const auto& p) { return p.name == t.midiPort; })) {
+        preview += "  (not found)";
+    }
     if (ImGui::BeginCombo("##port", preview.c_str())) {
         for (const auto& p : scan.midiInputs) {
             if (ImGui::Selectable(p.name.c_str(), t.midiPort == p.name)) {
@@ -786,11 +945,15 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
         }
         if (scan.midiInputs.empty()) ImGui::TextUnformatted("No MIDI inputs found.");
         ImGui::EndCombo();
+    } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !t.midiPort.empty()) {
+        ImGui::SetTooltip("%s", preview.c_str());  // the full name when the box is too narrow
     }
     ImGui::SameLine();
-    const std::string chText = t.midiChannel == 0 ? std::string("All channels") : "Channel " + std::to_string(t.midiChannel);
-    ImGui::SetNextItemWidth(9 * ImGui::GetFontSize());
-    if (ImGui::BeginCombo("##ch", chText.c_str())) {
+    const std::string chText = t.midiChannel == 0 ? std::string("All ch") : "Ch " + std::to_string(t.midiChannel);
+    ImGui::SetNextItemWidth(kMidiChannelBoxEm * ImGui::GetFontSize());
+    const bool open = ImGui::BeginCombo("##ch", chText.c_str());
+    if (!open && ImGui::IsItemHovered()) ImGui::SetTooltip("MIDI channel to record");
+    if (open) {
         if (ImGui::Selectable("All channels", t.midiChannel == 0)) t.midiChannel = 0;
         for (int c = 1; c <= 16; ++c) {
             if (ImGui::Selectable(("Channel " + std::to_string(c)).c_str(), t.midiChannel == c)) t.midiChannel = c;
@@ -859,7 +1022,17 @@ void drawTracksPanel(AppState& app)
         app.tracks.push_back(t);
     }
     ImGui::EndDisabled();
+    if (inputs == 0) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted("(audio tracks need an audio input device: Settings > Audio devices)");
+    }
     if (app.tracks.empty()) ImGui::TextUnformatted("No tracks. Add an audio or MIDI track.");
+    const bool anyArmed =
+        std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
+    if (!app.tracks.empty() && !anyArmed) {
+        ImGui::TextUnformatted("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI track's port "
+                               "opens when it is armed.");
+    }
 
     const float em = ImGui::GetFontSize();
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
@@ -918,7 +1091,9 @@ void drawTracksPanel(AppState& app)
                 ImGui::SetNextItemWidth(14 * em);
                 audioInputCombo(t, inputs);
             } else {
-                ImGui::SetNextItemWidth(18 * em);
+                // The port list takes what the channel list leaves, so both stay visible.
+                const float chWidth = kMidiChannelBoxEm * em + ImGui::GetStyle().ItemSpacing.x;
+                ImGui::SetNextItemWidth(std::max(8 * em, ImGui::GetContentRegionAvail().x - chWidth));
                 if (midiPortCombo(t, app.scan) && t.armed) app.midiPortsDirty = true;
             }
             ImGui::EndDisabled();
@@ -933,6 +1108,9 @@ void drawTracksPanel(AppState& app)
                 } else {
                     drawMeter(app, meters, 10 * em);
                 }
+            } else if (t.armed && app.midi.isWanted(t.midiPort) && !app.midi.isOpen(t.midiPort)) {
+                ImGui::TextUnformatted(app.midi.disconnects(t.midiPort) > 0 ? "DISCONNECTED - waiting for it"
+                                                                           : "not connected - waiting for it");
             } else if (app.midi.isOpen(t.midiPort)) {
                 // Activity as text (SPEC-MON-02, SPEC-UI-07): "receiving" for 0.3 s after a message.
                 const auto it = app.midiActivity.find(t.midiPort);
@@ -961,7 +1139,11 @@ void drawTracksPanel(AppState& app)
         app.tracks.erase(app.tracks.begin() + removeIndex);
     }
     for (const auto& w : app.midiWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
-    for (const auto& m : app.midi.takeMessages()) app.midiWarnings.push_back(m);
+    for (const auto& m : app.midi.takeMessages()) {
+        app.log.warning(m);
+        app.midiWarnings.push_back(m);
+        if (app.midiWarnings.size() > 4) app.midiWarnings.erase(app.midiWarnings.begin());
+    }
 }
 
 void drawRecordingSettingsWindow(AppState& app)
@@ -1041,14 +1223,84 @@ void drawDevicesPanel(minidaw::DeviceScan& scan)
     }
 }
 
+// Open a folder in the system's file manager.
+bool openFolder(const std::filesystem::path& folder)
+{
+#if defined(_WIN32)
+    const auto r = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    return r > 32;
+#else
+#if defined(__APPLE__)
+    const char* tool = "open";
+#else
+    const char* tool = "xdg-open";
+#endif
+    const std::string dir = folder.string();
+    char* args[] = {const_cast<char*>(tool), const_cast<char*>(dir.c_str()), nullptr};
+    pid_t pid = 0;
+    if (posix_spawnp(&pid, tool, nullptr, nullptr, args, environ) != 0) return false;
+    int status = 0;
+    waitpid(pid, &status, 0);  // xdg-open returns at once; the file manager keeps running
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
+}
+
+// View > Log (SPEC-LOG-01): the latest lines of this run, level as text.
+void drawLogWindow(AppState& app)
+{
+    if (!app.showLog) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(60 * em, 24 * em), ImGuiCond_Appearing);
+    if (ImGui::Begin("Log", &app.showLog)) {
+        const std::filesystem::path file = app.log.file();
+        if (file.empty()) {
+            ImGui::TextWrapped("No log file: %s", app.logError.c_str());
+        } else {
+            ImGui::TextWrapped("File: %s (the previous run: %s)", minidaw::pathToUtf8(file).c_str(),
+                               minidaw::pathToUtf8(minidaw::Log::oldFileFor(file).filename()).c_str());
+        }
+        ImGui::BeginDisabled(file.empty());
+        if (ImGui::Button("Open log folder")) {
+            if (!openFolder(file.parent_path())) app.log.warning("The log folder could not be opened.");
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        const std::vector<minidaw::LogEntry> lines = app.log.recent();
+        if (ImGui::Button("Copy all")) {
+            std::string all;
+            for (const auto& e : lines) all += minidaw::Log::formatLine(e);
+            ImGui::SetClipboardText(all.c_str());
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Only warnings and errors", &app.logOnlyProblems);
+        ImGui::Separator();
+        if (ImGui::BeginChild("lines", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar)) {
+            const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
+            for (const auto& e : lines) {
+                if (app.logOnlyProblems && e.level == minidaw::LogLevel::Info) continue;
+                const std::string line = minidaw::Log::formatLine(e);
+                ImGui::TextUnformatted(line.c_str(), line.c_str() + line.size() - 1);  // without the newline
+            }
+            const std::uint64_t count = app.log.lineCount();
+            if (count != app.logLinesShown && atBottom) ImGui::SetScrollHereY(1.0f);  // follow new lines
+            app.logLinesShown = count;
+        }
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
 void drawStatusLine(const AppState& app)
 {
     ImGui::Separator();
     const auto lowest = minidaw::lowestContrast(app.palette);
     ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change. Text: %d px (Ctrl+= / Ctrl+-).",
                 describeContrast(app.config.contrast).c_str(), lowest.ratio, static_cast<int>(app.config.fontSize));
-    ImGui::Text("Config: %s", app.configPath.string().c_str());
-    ImGui::Text("Graphics: %s", app.rendererName.c_str());
+    ImGui::Text("Config: %s", minidaw::pathToUtf8(app.configPath).c_str());
+    ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (Ctrl+L)", app.rendererName.c_str(),
+                static_cast<unsigned long long>(app.log.warningCount()),
+                static_cast<unsigned long long>(app.log.errorCount()));
     for (const auto& w : app.configWarnings) ImGui::TextWrapped("Config warning: %s", w.c_str());
     if (!app.saveError.empty()) ImGui::TextWrapped("Could not save config: %s", app.saveError.c_str());
     if (!app.unresolved.empty()) {
@@ -1065,7 +1317,9 @@ int runGui(AppState& app)
         g_lastGlfwError = text;
     });
     if (!glfwInit()) {
-        minidaw::app::showFatalError("The window system could not be initialised: " + g_lastGlfwError);
+        const std::string fatal = "The window system could not be initialised: " + g_lastGlfwError;
+        app.log.error(fatal);
+        minidaw::app::showFatalError(fatal);
         return 1;
     }
     minidaw::app::rendererWindowHints();
@@ -1073,7 +1327,9 @@ int runGui(AppState& app)
     const std::string title = std::string(minidaw::kProductName) + " " + minidaw::kVersion;
     GLFWwindow* window = glfwCreateWindow(1100, 700, title.c_str(), nullptr, nullptr);
     if (window == nullptr) {
-        minidaw::app::showFatalError("The main window could not be created: " + g_lastGlfwError);
+        const std::string fatal = "The main window could not be created: " + g_lastGlfwError;
+        app.log.error(fatal);
+        minidaw::app::showFatalError(fatal);
         glfwTerminate();
         return 1;
     }
@@ -1085,17 +1341,21 @@ int runGui(AppState& app)
 
     std::string error;
     if (!minidaw::app::rendererInit(window, error)) {
-        minidaw::app::showFatalError(error);
+        const std::string fatal = error;
+        app.log.error(fatal);
+        minidaw::app::showFatalError(fatal);
         ImGui::DestroyContext();
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
     app.rendererName = minidaw::app::rendererName();
+    app.log.info("Graphics: " + app.rendererName);
 
     setContrast(app, app.config.contrast, false);
     setFontSize(app, app.config.fontSize, false);
     app.scan = minidaw::scanDevices();
+    logScan(app);
     applyAudioSettings(app, app.config.audio, false);
 
     bool quit = false;
@@ -1118,6 +1378,7 @@ int runGui(AppState& app)
             setFontSize(app, app.config.fontSize - 2, true);
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) setFontSize(app, minidaw::kDefaultFontSize, true);
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) toggleRecording(app);
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_L)) app.showLog = !app.showLog;
         ensureDefaultTracks(app);
         syncMidiPorts(app);
         updateMeters(app);
@@ -1144,6 +1405,7 @@ int runGui(AppState& app)
         drawRecordingSettingsWindow(app);
         drawCustomContrastWindow(app);
         drawContrastReportWindow(app);
+        drawLogWindow(app);
 
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
@@ -1242,8 +1504,10 @@ int main(int argc, char** argv)
         printDevices(minidaw::scanDevices());
         return 0;
     case Action::AudioTest:
+        openLog(app, "--audio-test");
         return runAudioTest(app, audioTestSeconds, audioTestMonitor);
     case Action::RecordTest:
+        openLog(app, "--record-test");
         return runRecordTest(app, audioTestSeconds, recordFolder);
     case Action::ContrastReport: {
         auto result = buildPalette(app.config.contrast);
@@ -1254,5 +1518,8 @@ int main(int argc, char** argv)
     case Action::Gui:
         break;
     }
-    return runGui(app);
+    openLog(app, "GUI");
+    const int rc = runGui(app);
+    app.log.info("mini-daw closed");
+    return rc;
 }
