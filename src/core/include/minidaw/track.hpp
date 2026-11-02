@@ -20,6 +20,7 @@ struct Track {
     std::string midiPort;                    // MIDI: input port name
     int midiChannel = 0;                     // MIDI: 0 = all, 1..16
     bool armed = false;
+    bool monitor = false;                    // audio: input monitoring while armed (SPEC-MON-01)
 };
 
 // One audio track on inputs 1+2 (or 1 if there is only one input); none without inputs.

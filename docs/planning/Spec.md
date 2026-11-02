@@ -1,6 +1,6 @@
 # Spec — mini-daw
 
-Status: v0.14 (2026-11-02, crosscheck #4 fixes). All earlier defaults were confirmed by the user on 2026-11-01.
+Status: v0.15 (2026-11-02, P7 monitoring and meters). All earlier defaults were confirmed by the user on 2026-11-01.
 
 ## 1. Scope
 A small desktop program that records MIDI and audio input on several tracks at once, with live monitoring and playback of takes. A later phase adds VST3 instruments: their audio output can be recorded live, and recorded MIDI takes can be rendered through them to audio.
@@ -26,7 +26,7 @@ A small desktop program that records MIDI and audio input on several tracks at o
 - **SPEC-DEV-02a** Implementation: Settings → Audio devices… chooses input device, output device (each also `(default)` or `(none)`), sample rate (44.1/48/88.2/96 kHz) and buffer size (64–2048 frames). Apply reopens the stream; on failure the previous settings are reopened and the error is shown. All input channels of the input device are opened (up to 32) and stereo output. The window shows the actual rate, buffer size, reported latency, dropouts and a peak level per input channel as text (dBFS).
 - **SPEC-DEV-03a** Devices are stored **by name** in `[audio]` of `config.ini` (RtAudio ids are not stable between runs). A saved device that is missing falls back to the system default with a visible note; the saved choice is kept, so it is used again when the device returns.
 - **SPEC-DEV-05** A stream only counts as running after the first audio callback has arrived (within 1 s). Otherwise the driver's message is shown as an error. If the audio thread could not get realtime priority (Linux), a warning says so.
-- **SPEC-DEV-06** `mini-daw --audio-test <seconds>` opens the configured devices without the GUI and prints the actual settings, peak levels, callback count and dropouts.
+- **SPEC-DEV-06** `mini-daw --audio-test <seconds>` opens the configured devices without the GUI and prints the actual settings, peak levels, callback count and dropouts. With `--monitor`, see SPEC-MON-01a.
 
 ### 3.2 Tracks and recording
 - **SPEC-REC-01** The project has several tracks. Each track is an audio track (fed by one or two audio input channels) or a MIDI track (fed by one MIDI input port and channel, or all channels).
@@ -48,6 +48,8 @@ A small desktop program that records MIDI and audio input on several tracks at o
 ### 3.3 Monitoring
 - **SPEC-MON-01** Input monitoring can be switched on or off per armed audio track.
 - **SPEC-MON-02** Each track shows an input level meter.
+- **SPEC-MON-01a** Implementation (P7): each audio track has a Monitor checkbox with its state as text ("on", "off", "on when armed", "no output"). Monitoring sounds only while the track is armed and an output device is open; it can be switched during a recording. A mono track goes to both output sides at full level, a stereo track's first channel to the left and its second to the right; with a mono output device left and right are averaged; a channel used by several monitored tracks is heard once. Gain changes are ramped over one audio block (no clicks). The output is limited to −1..1 (0 dBFS). A tooltip warns to use headphones (feedback with speakers), and while monitoring is on the window shows the delay of at least two buffers plus the driver's latency. Default off. The audio thread reads the gains from atomics (SPEC-NF-01). `mini-daw --audio-test <seconds> --monitor` monitors the default track (inputs 1+2, or 1) and also prints the output peak.
+- **SPEC-MON-02a** Meters: a bar from −60 to 0 dBFS per channel (a stereo track shows two thin bars), with marks at −18 and −6 dBFS and a peak-hold line (1.5 s, then it falls). The bar rises at once and falls at 20 dB/s. Beside it, the level as dBFS text (the highest peak of the last 0.5 s, a higher peak at once) and, after a peak reached full scale (≥ 0.999, about −0.01 dBFS), a CLIP button that stays until clicked or until Record starts. The audio stream section also shows an output meter. MIDI tracks show their message count and "receiving" for 0.3 s after a message. Colours: Accent and Text on Control, which `colorPairs()` already checks (SPEC-UI-02a).
 
 ### 3.4 Playback / transport
 - **SPEC-PLAY-01** Transport controls: Play, Stop, Record, return to start.

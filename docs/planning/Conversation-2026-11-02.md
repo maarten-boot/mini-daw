@@ -101,3 +101,24 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 
 - The push arrived (GitHub `main` = `d6874b7`). Run 41495114618 (`c80053f`): 78/78 on both. Run 41495891483 (`d6874b7`): 88/88 on Windows (MSVC, no warnings) and Linux; T-REC-28 (non-ASCII take names) passes on real Windows.
 - Open for the user: Windows MIDI tests (T-REC-01/04/21 with a USB keyboard or virtual port; `tools/midi_test/` can help with a virtual port), T-REC-29 (MIDI port retry, default track), T-REC-10, T-UI-03/04. Next step in the Plan: P7 (monitoring and meters).
+
+## 13. P7: monitoring and meters
+> start P7
+
+- Choices made without asking (sensible defaults, easy to change): monitoring off by default and only while the track is armed; mono track to both sides at full level, stereo to left/right; output limited to 0 dBFS; meter −60..0 dBFS, falls 20 dB/s, peak hold 1.5 s; CLIP at ≥ 0.999 (integer devices never exceed 1.0), latched until clicked or Record starts.
+- Core: `meter.hpp` (`LevelMeter`, `meterFraction`, `peakToDb`) and `monitor.hpp` (`monitorGains`, `mixMonitor` with a one-block gain ramp). `AudioStream`: gains in atomics, output peaks, `setMonitor`, `takeOutputPeak`. `Track::monitor`.
+- GUI: Monitor column (state as text), bar meters with dBFS text and CLIP button per track, output meter, "receiving" for MIDI tracks, delay/headphones note. `--audio-test <s> --monitor`.
+- Spec v0.15 (MON-01a, MON-02a); Tests T-MON-01..06.
+- Tests: Linux 92/92, Wine 91/91. Live on the VM with a −6 dBFS sine through PipeWire: meter −6.0 dBFS; monitor on → output −6.0 dBFS, off → −inf.
+- Found on the way: WirePlumber linked the dummy sink's monitor into mini-daw's input, so monitoring made a real feedback loop (+3.5 dBFS in, output limited at 0 dBFS, CLIP shown). Same risk as speakers + microphone: hence the headphones warning. Method noted in `CLAUDE.md`.
+- Fixed: Arm/Monitor columns jumped in width when their text changed.
+- Open for the user: T-MON-06 on Windows (WASAPI, headphones).
+
+## 14. First Windows test with a real input
+> i testes the image on windows: contrast changes work, recording 50 second work but i hear a soft ticking nose when there is now sound (you hear it on replay) wave and instructions for the test in ./tmp/. How do you arm a midi input i see no controls in the gui for that, also n way to adda audio track. When unplugging the midi keyboard nothing changes on the gui , and no messages (perhaps we need a log file we can view via the menu for diagnostics)
+
+- The tested exe was `dist/windows/mini-daw.exe` from 2026-11-01 22:55 = P5 build: no track list, no Arm, no MIDI recording (they came with P6). The WAV name `take-…-….wav` (P5 naming) confirms it. Replaced by the current MinGW build (P6 + P7); only system DLLs needed.
+- Ticks: analysed (Tests.md results): square pulses ≈ −45 dBFS every 60–69 ms, both channels, random position relative to all buffer sizes, no gaps → not mini-daw's data path; probably interference. Checks proposed to the user.
+- Real gap found in the current code too: an open MIDI port that is unplugged is not noticed, and the port list is only read at start. Proposed: MIDI hot-plug (rescan every 2 s) and a log file viewable from the menu. Waiting for the user's go.
+- `/tmp/` added to `.gitignore` (the user's test folder, 16 MB WAV).
+- User's answers: MIDI hot-plug as proposed (rescan every 2 s, disconnect shown on the track, automatic reopen, also while recording with the gap noted in the take summary); log file `mini-daw.log` next to `config.ini`, fresh per run, previous run kept as `mini-daw.old.log`, View → Log and "Open log folder"; commit P7 first, then hot-plug + log, crosscheck #5 after that.

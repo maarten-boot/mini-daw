@@ -14,7 +14,7 @@
 | P6a | Core: SMF writer/reader, MIDI take builder, clock→frame mapping, MIDI inputs, recording session, `[recording]` settings | REC-04a–c, 07 | done (2026-11-02) |
 | P6b | GUI: track list, Arm, Record/Stop, Settings → Recording…; `--record-test` through the session (audio + MIDI) | REC-01a, 02a, 06 | done (2026-11-02) |
 | P6c | Manual tests with real MIDI: Linux VM (virtual keyboard, `audio` group), Windows (USB keyboard, virtual port) | REC-01, 04 | Linux done (2026-11-02, Midi Through + aplaymidi); Windows pending |
-| P7 | Monitoring and meters | MON-01..02, UI-07 | pending |
+| P7 | Monitoring and meters | MON-01..02, 01a, 02a, UI-07 | done (2026-11-02) on Linux; Windows (WASAPI) to be tested by the user |
 | P8 | Transport and playback | PLAY-01..04 | pending |
 | P9 | Project save/load | PRJ-01..02 | pending |
 | P9b | Windows packaging: GUI subsystem (no console window; `--list-devices` still prints), icon, installer | — | pending |

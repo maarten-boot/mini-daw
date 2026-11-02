@@ -8,6 +8,8 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
+    core/src/meter.cpp
+    core/src/monitor.cpp
     core/src/recorder.cpp
     core/src/midi_input.cpp
     core/src/recording_session.cpp

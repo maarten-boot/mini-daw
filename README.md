@@ -4,7 +4,7 @@ a simple daw just for recording and playback with VST3 instrument support
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early version (steps P2–P6). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Playback, monitoring and saving projects come next. Adjustable contrast and text size. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P7). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Each track has a level meter (with dBFS value and a CLIP label) and, for audio tracks, a Monitor switch to hear the input while armed (use headphones). Playback and saving projects come next. Adjustable contrast and text size. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -46,6 +46,7 @@ mini-daw                     open the GUI
 mini-daw --config <file>     use this config file instead of the default one
 mini-daw --list-devices      print audio devices and MIDI ports, then exit
 mini-daw --audio-test <sec>  open the configured audio devices, print settings and levels
+                             (add --monitor to hear inputs 1+2 and print the output level)
 mini-daw --record-test <sec> <folder>
                              record input 1 (and 2) to a 24-bit WAV file in <folder>
 mini-daw --contrast-report   print every colour pair and its contrast, then exit

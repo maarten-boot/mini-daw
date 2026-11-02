@@ -149,6 +149,8 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     options.flags = RTAUDIO_SCHEDULE_REALTIME;
 
     for (auto& p : peaks_) p.store(0.0f, std::memory_order_relaxed);
+    for (auto& p : outPeaks_) p.store(0.0f, std::memory_order_relaxed);
+    monitorCurrent_ = {};  // ramps up from silence in the first block
     xruns_.store(0, std::memory_order_relaxed);
     callbacks_.store(0, std::memory_order_relaxed);
     clock_.reset();
@@ -262,6 +264,20 @@ float AudioStream::takeInputPeak(unsigned int channel)
     return peaks_[channel].exchange(0.0f, std::memory_order_relaxed);
 }
 
+float AudioStream::takeOutputPeak(unsigned int channel)
+{
+    if (channel >= kMaxOutputChannels) return 0.0f;
+    return outPeaks_[channel].exchange(0.0f, std::memory_order_relaxed);
+}
+
+void AudioStream::setMonitor(const MonitorGains& gains)
+{
+    for (unsigned int ch = 0; ch < kMaxInputChannels; ++ch) {
+        monitorLeft_[ch].store(gains.left[ch], std::memory_order_relaxed);
+        monitorRight_[ch].store(gains.right[ch], std::memory_order_relaxed);
+    }
+}
+
 std::vector<std::string> AudioStream::takeDriverMessages()
 {
     std::lock_guard<std::mutex> lock(messagesMutex_);
@@ -294,6 +310,29 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
 
     if (output != nullptr) {
         std::memset(output, 0, sizeof(float) * frames * self->cbOutputChannels_);
+    }
+
+    // Input monitoring (SPEC-MON-01). Each gain is read on its own; a change
+    // that is half visible in one block is complete in the next.
+    if (output != nullptr && self->cbOutputChannels_ > 0) {
+        MonitorGains target;
+        for (unsigned int ch = 0; ch < kMaxInputChannels; ++ch) {
+            target.left[ch] = self->monitorLeft_[ch].load(std::memory_order_relaxed);
+            target.right[ch] = self->monitorRight_[ch].load(std::memory_order_relaxed);
+        }
+        auto* out = static_cast<float*>(output);
+        const unsigned int outCh = self->cbOutputChannels_;
+        if (mixMonitor(static_cast<const float*>(input), frames, self->cbInputChannels_, out, outCh,
+                       self->monitorCurrent_, target) > 0.0f) {
+            for (unsigned int ch = 0; ch < outCh && ch < kMaxOutputChannels; ++ch) {
+                float peak = 0.0f;
+                for (unsigned int f = 0; f < frames; ++f) peak = std::max(peak, std::fabs(out[f * outCh + ch]));
+                auto& slot = self->outPeaks_[ch];
+                float prev = slot.load(std::memory_order_relaxed);
+                while (peak > prev && !slot.compare_exchange_weak(prev, peak, std::memory_order_relaxed)) {
+                }
+            }
+        }
     }
 
     if (input != nullptr) {

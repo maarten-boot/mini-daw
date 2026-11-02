@@ -19,7 +19,9 @@
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/meter.hpp"
 #include "minidaw/midi_input.hpp"
+#include "minidaw/monitor.hpp"
 #include "minidaw/path_util.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/track.hpp"
@@ -35,11 +37,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -75,8 +80,15 @@ struct AppState {
     std::string audioError;
     bool showAudioSettings = false;
     minidaw::AudioSettings pendingAudio;         // edited in the settings window
-    std::array<float, minidaw::kMaxInputChannels> levelHold{};  // shown peak per channel
-    double levelHoldStart = 0.0;
+    // Meters (P7, SPEC-MON-02): per input channel and per output channel.
+    std::array<minidaw::LevelMeter, minidaw::kMaxInputChannels> inputMeters{};
+    std::array<minidaw::LevelMeter, minidaw::kMaxOutputChannels> outputMeters{};
+    minidaw::MonitorGains monitorSent;     // last gains handed to the audio stream (SPEC-MON-01)
+    struct MidiActivity {
+        std::uint64_t count = 0;
+        double changedAt = -10.0;
+    };
+    std::map<std::string, MidiActivity> midiActivity;  // per MIDI input port
 
     // Tracks and recording (P6). Declared after `audio`, so they are destroyed first.
     std::vector<minidaw::Track> tracks;
@@ -165,7 +177,8 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
             app.audioWarnings.push_back("The previous audio settings are active again.");
         }
     }
-    app.levelHold.fill(0.0f);
+    for (auto& m : app.inputMeters) m.reset();
+    for (auto& m : app.outputMeters) m.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +217,7 @@ int printContrastReport(const AppState& app)
 }
 
 // --audio-test: open the configured devices, run, report (T-DEV-02 without a GUI).
-int runAudioTest(AppState& app, int seconds)
+int runAudioTest(AppState& app, int seconds, bool monitor)
 {
     app.scan = minidaw::scanDevices();
     const auto& s = app.config.audio;
@@ -225,6 +238,19 @@ int runAudioTest(AppState& app, int seconds)
                 info.outputChannels);
 
     std::array<float, minidaw::kMaxInputChannels> peak{};
+    std::array<float, minidaw::kMaxOutputChannels> outPeak{};
+    if (monitor) {
+        // The default track (inputs 1+2, or 1), armed with monitoring on (T-MON-01 without a GUI).
+        std::vector<minidaw::Track> tracks = minidaw::defaultTracks(info.inputChannels);
+        for (auto& t : tracks) t.armed = t.monitor = true;
+        app.audio.setMonitor(minidaw::monitorGains(tracks, info.inputChannels));
+        if (tracks.empty() || info.outputChannels == 0) {
+            std::printf("warning: monitoring needs an input and an output\n");
+        } else {
+            std::printf("Monitoring: %s to the output\n",
+                        tracks[0].channels.size() == 2 ? "inputs 1+2 (stereo)" : "input 1 (mono)");
+        }
+    }
     // Measure from a fixed starting point: the count already includes the callbacks
     // made while open() waited, and Windows' sleep_for() overshoots, so use real time.
     const std::uint64_t startCallbacks = app.audio.callbacks();
@@ -234,6 +260,9 @@ int runAudioTest(AppState& app, int seconds)
         for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
             peak[ch] = std::max(peak[ch], app.audio.takeInputPeak(ch));
         }
+        for (unsigned int ch = 0; ch < info.outputChannels && ch < minidaw::kMaxOutputChannels; ++ch) {
+            outPeak[ch] = std::max(outPeak[ch], app.audio.takeOutputPeak(ch));
+        }
     }
     const std::uint64_t callbacks = app.audio.callbacks() - startCallbacks;
     const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
@@ -241,6 +270,12 @@ int runAudioTest(AppState& app, int seconds)
     for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
         std::printf("%s in %2u: %-10s", ch % 4 == 0 ? "  peak" : "", ch + 1, minidaw::formatDbfs(peak[ch]).c_str());
         if (ch % 4 == 3 || ch + 1 == info.inputChannels) std::printf("\n");
+    }
+    if (monitor) {
+        for (unsigned int ch = 0; ch < info.outputChannels && ch < minidaw::kMaxOutputChannels; ++ch) {
+            std::printf("%s out %u: %-10s", ch == 0 ? "  peak" : "", ch + 1, minidaw::formatDbfs(outPeak[ch]).c_str());
+        }
+        std::printf("\n");
     }
     std::printf("Callbacks: %llu in %.2f s (expected about %.0f), dropouts (xruns): %llu\n",
                 static_cast<unsigned long long>(callbacks), elapsed, expected,
@@ -525,6 +560,106 @@ void drawAudioSettingsWindow(AppState& app)
     ImGui::End();
 }
 
+ImU32 roleColor(const AppState& app, minidaw::Role role)
+{
+    const auto& c = app.palette[role];
+    return ImGui::ColorConvertFloat4ToU32(
+        ImVec4(static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f));
+}
+
+// Level meter (SPEC-MON-02): one bar per channel, -60 .. 0 dBFS, with marks at
+// -18 and -6 dBFS and a peak-hold line. Beside it the level as dBFS text and,
+// after clipping, a CLIP button that clears it: the level never depends on
+// colour alone (SPEC-UI-07). Colours: Accent and Text on Control, as checked
+// by colorPairs().
+void drawMeter(AppState& app, const std::vector<minidaw::LevelMeter*>& meters, float width)
+{
+    if (meters.empty()) return;
+    const float h = ImGui::GetFrameHeight();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float n = static_cast<float>(meters.size());
+    const float gap = meters.size() > 1 ? 2.0f : 0.0f;
+    const float barH = (h - 2.0f - gap * (n - 1.0f)) / n;
+    dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), roleColor(app, minidaw::Role::Control));
+    float text = 0.0f;
+    bool clipped = false;
+    for (std::size_t i = 0; i < meters.size(); ++i) {
+        const minidaw::LevelMeter& m = *meters[i];
+        const float y0 = p.y + 1.0f + static_cast<float>(i) * (barH + gap);
+        const float fill = minidaw::meterFraction(m.bar()) * (width - 2.0f);
+        if (fill > 0.0f) {
+            dl->AddRectFilled(ImVec2(p.x + 1.0f, y0), ImVec2(p.x + 1.0f + fill, y0 + barH),
+                              roleColor(app, minidaw::Role::Accent));
+        }
+        if (m.hold() > 0.0f) {
+            const float x = p.x + 1.0f + minidaw::meterFraction(m.hold()) * (width - 2.0f);
+            dl->AddRectFilled(ImVec2(x - 1.5f, y0), ImVec2(x + 0.5f, y0 + barH), roleColor(app, minidaw::Role::Text));
+        }
+        text = std::max(text, m.text());
+        clipped = clipped || m.clipped();
+    }
+    for (const float db : {-18.0f, -6.0f}) {
+        const float x = p.x + 1.0f + minidaw::meterFraction(std::pow(10.0f, db / 20.0f)) * (width - 2.0f);
+        dl->AddLine(ImVec2(x, p.y), ImVec2(x, p.y + h * 0.3f), roleColor(app, minidaw::Role::Text));
+        dl->AddLine(ImVec2(x, p.y + h * 0.7f), ImVec2(x, p.y + h), roleColor(app, minidaw::Role::Text));
+    }
+    dl->AddRect(p, ImVec2(p.x + width, p.y + h), roleColor(app, minidaw::Role::Border));
+    ImGui::Dummy(ImVec2(width, h));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Level meter, -60 to 0 dBFS. Marks at -18 and -6 dBFS; the thin line is the peak of the "
+                          "last 1.5 s.");
+    }
+    ImGui::SameLine();
+    const std::string value = minidaw::formatDbfs(text);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(value.c_str());
+    const float pad = 6.5f * ImGui::GetFontSize() - ImGui::CalcTextSize(value.c_str()).x;
+    if (pad > 0.0f) {
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::Dummy(ImVec2(pad, 1.0f));
+    }
+    if (clipped) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("CLIP")) {
+            for (auto* m : meters) m->clearClip();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The level reached 0 dBFS. Click to clear.");
+    }
+}
+
+// Once per frame: feed the meters and hand changed monitoring gains to the
+// audio stream (SPEC-MON-01/02).
+void updateMeters(AppState& app)
+{
+    const auto& info = app.audio.info();
+    const double now = ImGui::GetTime();
+    if (info.running) {
+        for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
+            app.inputMeters[ch].update(app.audio.takeInputPeak(ch), now);
+        }
+        for (unsigned int ch = 0; ch < info.outputChannels && ch < minidaw::kMaxOutputChannels; ++ch) {
+            app.outputMeters[ch].update(app.audio.takeOutputPeak(ch), now);
+        }
+    }
+    const minidaw::MonitorGains gains = info.running && info.outputChannels > 0
+                                            ? minidaw::monitorGains(app.tracks, info.inputChannels)
+                                            : minidaw::MonitorGains{};
+    if (!(gains == app.monitorSent)) {
+        app.audio.setMonitor(gains);
+        app.monitorSent = gains;
+    }
+    for (const auto& t : app.tracks) {
+        if (t.kind != minidaw::TrackKind::Midi || !app.midi.isOpen(t.midiPort)) continue;
+        auto& a = app.midiActivity[t.midiPort];
+        const std::uint64_t count = app.midi.messagesSeen(t.midiPort);
+        if (count != a.count) {
+            a.count = count;
+            a.changedAt = now;
+        }
+    }
+}
+
 void drawAudioStatus(AppState& app)
 {
     ImGui::SeparatorText("Audio stream");
@@ -542,20 +677,23 @@ void drawAudioStatus(AppState& app)
                     info.outputChannels);
         ImGui::Text("Dropouts (xruns): %llu", static_cast<unsigned long long>(app.audio.xruns()));
 
-        // Input levels as numbers (SPEC-UI-07: not colour alone). Peak held for 0.3 s.
-        const double now = ImGui::GetTime();
-        const bool refresh = now - app.levelHoldStart > 0.3;
-        for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
-            const float p = app.audio.takeInputPeak(ch);
-            app.levelHold[ch] = refresh ? p : std::max(app.levelHold[ch], p);
+        if (info.outputChannels > 0) {
+            ImGui::TextUnformatted("Output level:");
+            ImGui::SameLine();
+            std::vector<minidaw::LevelMeter*> out;
+            for (unsigned int ch = 0; ch < info.outputChannels && ch < minidaw::kMaxOutputChannels; ++ch) {
+                out.push_back(&app.outputMeters[ch]);
+            }
+            drawMeter(app, out, 10 * ImGui::GetFontSize());
         }
-        if (refresh) app.levelHoldStart = now;
         // Each track shows its own level; the full list is folded away (crosscheck #2, G3).
+        // As numbers, not colour alone (SPEC-UI-07).
         const std::string header = "Input levels (" + std::to_string(info.inputChannels) + " channels)###levels";
         if (info.inputChannels > 0 && ImGui::TreeNode(header.c_str())) {
             for (unsigned int ch = 0; ch < info.inputChannels; ++ch) {
-                if (ch % 4 != 0) ImGui::SameLine(static_cast<float>(ch % 4) * 12 * ImGui::GetFontSize());
-                ImGui::Text("In %u: %s", ch + 1, minidaw::formatDbfs(app.levelHold[ch]).c_str());
+                if (ch % 4 != 0) ImGui::SameLine(static_cast<float>(ch % 4) * 14 * ImGui::GetFontSize());
+                const auto& m = app.inputMeters[ch];
+                ImGui::Text("In %u: %s%s", ch + 1, minidaw::formatDbfs(m.text()).c_str(), m.clipped() ? " CLIP" : "");
             }
             ImGui::TreePop();
         }
@@ -610,6 +748,8 @@ void toggleRecording(AppState& app)
     app.recordError.clear();
     if (!app.session.start(app.tracks, app.config.recording, app.audio, app.midi, app.recordError)) return;
     app.lastTake.clear();
+    for (auto& m : app.inputMeters) m.clearClip();  // CLIP then means: during this take
+    for (auto& m : app.outputMeters) m.clearClip();
 }
 
 std::string audioInputLabel(const std::vector<unsigned int>& ch)
@@ -724,9 +864,15 @@ void drawTracksPanel(AppState& app)
     const float em = ImGui::GetFontSize();
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
     int removeIndex = -1;
-    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 6, flags)) {
+    const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
+    bool monitoring = false;
+    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 7, flags)) {
+        // Fixed widths, so the columns do not jump when the state text changes.
+        const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TableSetupColumn("#");
-        ImGui::TableSetupColumn("Arm");
+        ImGui::TableSetupColumn("Arm", ImGuiTableColumnFlags_WidthFixed, box + ImGui::CalcTextSize("armed").x);
+        ImGui::TableSetupColumn("Monitor", ImGuiTableColumnFlags_WidthFixed,
+                                box + ImGui::CalcTextSize("on when armed").x);
         ImGui::TableSetupColumn("Name");
         ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Level / activity");
@@ -743,6 +889,27 @@ void drawTracksPanel(AppState& app)
             if (ImGui::Checkbox("##arm", &t.armed) && t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
             ImGui::SameLine();
             ImGui::TextUnformatted(t.armed ? "armed" : "-");  // not by colour alone (SPEC-UI-07)
+            ImGui::EndDisabled();
+            ImGui::TableNextColumn();
+            if (t.kind == minidaw::TrackKind::Audio) {  // can change while recording (SPEC-MON-01)
+                ImGui::BeginDisabled(!hasOutput);
+                ImGui::Checkbox("##mon", &t.monitor);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Hear this input on the output while the track is armed.\n"
+                                      "Use headphones: with speakers a microphone can feed back.");
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                const char* state = !hasOutput   ? "no output"
+                                    : !t.monitor ? "off"
+                                    : t.armed    ? "on"
+                                                 : "on when armed";
+                ImGui::TextUnformatted(state);
+                monitoring = monitoring || (hasOutput && t.monitor && t.armed);
+            } else {
+                ImGui::TextUnformatted("-");
+            }
+            ImGui::BeginDisabled(rec);
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(12 * em);
             ImGui::InputText("##name", &t.name);
@@ -757,13 +924,21 @@ void drawTracksPanel(AppState& app)
             ImGui::EndDisabled();
             ImGui::TableNextColumn();
             if (t.kind == minidaw::TrackKind::Audio) {
-                float peak = 0.0f;
+                std::vector<minidaw::LevelMeter*> meters;
                 for (unsigned int c : t.channels) {
-                    if (c < app.levelHold.size()) peak = std::max(peak, app.levelHold[c]);
+                    if (c < inputs && c < app.inputMeters.size()) meters.push_back(&app.inputMeters[c]);
                 }
-                ImGui::TextUnformatted(minidaw::formatDbfs(peak).c_str());
+                if (meters.empty()) {
+                    ImGui::TextUnformatted("no input");
+                } else {
+                    drawMeter(app, meters, 10 * em);
+                }
             } else if (app.midi.isOpen(t.midiPort)) {
-                ImGui::Text("%llu messages", static_cast<unsigned long long>(app.midi.messagesSeen(t.midiPort)));
+                // Activity as text (SPEC-MON-02, SPEC-UI-07): "receiving" for 0.3 s after a message.
+                const auto it = app.midiActivity.find(t.midiPort);
+                const bool active = it != app.midiActivity.end() && ImGui::GetTime() - it->second.changedAt < 0.3;
+                ImGui::Text("%llu messages%s", static_cast<unsigned long long>(app.midi.messagesSeen(t.midiPort)),
+                            active ? "  receiving" : "");
             } else {
                 ImGui::TextUnformatted(t.armed ? "port not open" : "port opens when armed");
             }
@@ -774,6 +949,12 @@ void drawTracksPanel(AppState& app)
             ImGui::PopID();
         }
         ImGui::EndTable();
+    }
+    if (monitoring) {
+        const auto& info = app.audio.info();
+        ImGui::TextWrapped("Monitoring: what you hear is delayed by at least two buffers (%.1f ms) plus the "
+                           "driver's latency. Use headphones to avoid feedback.",
+                           2000.0 * info.bufferFrames / info.sampleRate);
     }
     if (removeIndex >= 0) {
         if (app.tracks[removeIndex].kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
@@ -939,6 +1120,7 @@ int runGui(AppState& app)
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) toggleRecording(app);
         ensureDefaultTracks(app);
         syncMidiPorts(app);
+        updateMeters(app);
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
@@ -990,7 +1172,7 @@ int parseSeconds(const char* text, int lo, int hi)
 
 void printUsage(const char* argv0)
 {
-    std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> |\n"
+    std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> [--monitor] |\n"
                 "        --record-test <seconds> <folder> | --contrast-report | --version | --help]\n",
                 argv0);
 }
@@ -1003,6 +1185,7 @@ int main(int argc, char** argv)
     app.configPath = minidaw::defaultConfigPath();
     enum class Action { Gui, ListDevices, AudioTest, RecordTest, ContrastReport } action = Action::Gui;
     int audioTestSeconds = 3;
+    bool audioTestMonitor = false;
     std::filesystem::path recordFolder;
 
     for (int i = 1; i < argc; ++i) {
@@ -1034,12 +1217,19 @@ int main(int argc, char** argv)
                 return 2;
             }
             recordFolder = std::filesystem::path(argv[++i]);  // native encoding, as argv is
+        } else if (std::strcmp(arg, "--monitor") == 0) {
+            audioTestMonitor = true;
         } else if (std::strcmp(arg, "--config") == 0 && i + 1 < argc) {
             app.configPath = argv[++i];
         } else {
             std::fprintf(stderr, "unknown option: %s (try --help)\n", arg);
             return 2;
         }
+    }
+
+    if (audioTestMonitor && action != Action::AudioTest) {
+        std::fprintf(stderr, "--monitor only works with --audio-test\n");
+        return 2;
     }
 
     auto loaded = minidaw::loadConfigFile(app.configPath);
@@ -1052,7 +1242,7 @@ int main(int argc, char** argv)
         printDevices(minidaw::scanDevices());
         return 0;
     case Action::AudioTest:
-        return runAudioTest(app, audioTestSeconds);
+        return runAudioTest(app, audioTestSeconds, audioTestMonitor);
     case Action::RecordTest:
         return runRecordTest(app, audioTestSeconds, recordFolder);
     case Action::ContrastReport: {

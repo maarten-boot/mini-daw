@@ -2,12 +2,14 @@
 
 // Audio device selection and the running audio stream (SPEC-DEV-02, 03, SPEC-NF-01).
 //
-// Opens a duplex stream on the chosen devices, outputs silence, measures input
-// peak levels and feeds the input to the Recorder (P5). Playback follows in P8.
+// Opens a duplex stream on the chosen devices, measures input peak levels,
+// feeds the input to the Recorder (P5) and mixes monitored inputs to the
+// output (P7, SPEC-MON-01). Playback follows in P8.
 
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/frame_clock.hpp"
+#include "minidaw/monitor.hpp"
 #include "minidaw/recorder.hpp"
 #include "minidaw/session_io.hpp"
 
@@ -43,6 +45,7 @@ ResolvedDevice resolveAudioDevice(const std::vector<AudioDeviceInfo>& devices, c
 
 inline constexpr unsigned int kMaxInputChannels = 32;
 inline constexpr unsigned int kMaxOutputChannels = 2;  // stereo master out
+static_assert(kMonitorMaxChannels == kMaxInputChannels);
 
 // Common choices offered in the settings window.
 inline constexpr unsigned int kSampleRateChoices[] = {44100, 48000, 88200, 96000};
@@ -83,6 +86,14 @@ public:
     // Highest absolute sample value on an input channel since the last call
     // (0 .. 1, can exceed 1 when clipping). Resets the value.
     float takeInputPeak(unsigned int channel);
+
+    // Highest absolute output value per output channel since the last call
+    // (after limiting to -1..1, so 1.0 means the output was limited). Resets it.
+    float takeOutputPeak(unsigned int channel);
+
+    // Input monitoring (SPEC-MON-01): the gains the callback mixes with from
+    // its next block on. Any thread; kept when the stream is reopened.
+    void setMonitor(const MonitorGains& gains);
 
     std::uint64_t xruns() const { return xruns_.load(std::memory_order_relaxed); }
     std::uint64_t callbacks() const { return callbacks_.load(std::memory_order_relaxed); }
@@ -126,6 +137,10 @@ private:
 
     // Shared with the audio thread (lock-free).
     std::array<std::atomic<float>, kMaxInputChannels> peaks_{};
+    std::array<std::atomic<float>, kMaxOutputChannels> outPeaks_{};
+    std::array<std::atomic<float>, kMaxInputChannels> monitorLeft_{};
+    std::array<std::atomic<float>, kMaxInputChannels> monitorRight_{};
+    MonitorGains monitorCurrent_;  // audio thread only: gains of the last block
     std::atomic<std::uint64_t> xruns_{0};
     std::atomic<std::uint64_t> callbacks_{0};
     FrameClock clock_;

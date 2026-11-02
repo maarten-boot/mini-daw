@@ -65,8 +65,12 @@ Status column in the Results section at the end.
 ## Monitoring
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
-| T-MON-01 | SPEC-MON-01 | M | Monitoring on, then off, on an armed track | Input is heard, then silent |
-| T-MON-02 | SPEC-MON-02 | M | Feed a −6 dBFS sine wave | Meter reads −6 dB ± 0.5 |
+| T-MON-01 | SPEC-MON-01, 01a | M | Monitoring on, then off, on an armed track (GUI, or `--audio-test 5 --monitor`) | Input is heard and the output meter shows it, then silent; state shown as text; delay note shown while on |
+| T-MON-02 | SPEC-MON-02, 02a | A+M | Feed a −6 dBFS sine wave | Meter reads −6 dB ± 0.5 |
+| T-MON-03 | SPEC-MON-01a | A | Monitor gains from tracks: mono, stereo, not armed, monitor off, channel used twice, channel beyond the device, MIDI track | Mono both sides, stereo left/right, the rest silent, a shared channel heard once |
+| T-MON-04 | SPEC-MON-01a, NF-01 | A | Mixer: steady gains, switch on, switch off, mono output, overload, no input | Routed as set; gains ramp over the block; L/R averaged; output limited to ±1 with the real peak reported; silence |
+| T-MON-05 | SPEC-MON-02a, UI-07 | A | Meter: fall rate, peak hold, text window, clip at full scale, clear, NaN input | 20 dB/s; hold 1.5 s then falls; louder peak at once; CLIP latched until cleared; NaN = silence |
+| T-MON-06 | SPEC-MON-01a, 02a | M | Windows (WASAPI): headphones, an armed track with Monitor on; sing or play loudly up to clipping; click CLIP; press Record | Input heard with little delay; CLIP appears and clears on click and at Record; no clicks when switching Monitor on/off |
 
 ## Playback
 | ID | Spec | Type | Description | Expected result |
@@ -191,3 +195,9 @@ Status column in the Results section at the end.
 | 2026-11-02 | `--record-test` argument check (J12) | Linux | pass | `abc`, `0`, `99999`, `5x` → message, exit code 2 |
 | 2026-11-02 | T-CI-02 | GitHub Actions run 41495114618 (`c80053f`, clock smoothing) | pass | windows 5m33s (78/78), linux 2m13s (78/78), licence |
 | 2026-11-02 | T-CI-02 | GitHub Actions run 41495891483 (`d6874b7`, crosscheck #4 fixes) | pass | windows 4m28s (88/88, MSVC, no compiler warnings; incl. T-REC-28 non-ASCII names on real Windows), linux 1m37s (88/88), licence |
+| 2026-11-02 | T-MON-02..05 (P7) | Linux 92/92 ctest; MinGW build under Wine 91/91 Catch2 cases (995 assertions) | pass | |
+| 2026-11-02 | T-MON-02 | Linux VM, GUI on Xvfb, 1 kHz −6 dBFS sine from `pw-play` linked to mini-daw's inputs with `pw-link` | pass | Track meter and text −6.0 dBFS |
+| 2026-11-02 | T-MON-01 | same, Arm + Monitor clicked with xdotool | pass | Output meter −6.0 dBFS with Monitor on, −inf with it off; CLIP cleared on click. Found on the way: WirePlumber had also linked the dummy sink's monitor to mini-daw's input, a real feedback loop: input rose to +3.5 dBFS, the output limiter held 0 dBFS and both CLIP labels showed it (as designed). Arm/Monitor columns now have fixed widths (they jumped when the text changed) |
+| 2026-11-02 | `--audio-test 3 --monitor` | Linux VM | pass | "Monitoring: inputs 1+2 (stereo)", output peak printed, 0 dropouts; `--monitor` alone → exit code 2 |
+| 2026-11-02 | T-UI-03/04 | Windows, user, P5 build from `dist/windows` (2026-11-01) | pass | Contrast changes work |
+| 2026-11-02 | T-REC-10 | Windows, user, same P5 build, real audio input | pass, with a note | 56.5 s, 24-bit stereo 48 kHz, no gaps. The user hears a soft ticking in quiet parts. Analysis: square pulses of about −45 dBFS (noise floor −62 dBFS RMS), identical on both channels, bursts of about 3 ms every 60–69 ms, at random positions relative to every buffer size (128–1024, 480, 441): not from mini-daw's data path (that would show at block boundaries), most likely electrical interference into the input. To check: record the same input with another program, and with mini-daw's GUI closed (`--record-test`) |
