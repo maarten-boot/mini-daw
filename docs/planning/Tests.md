@@ -189,3 +189,5 @@ Status column in the Results section at the end.
 | 2026-11-02 | T-REC-22..28 (crosscheck #4 fixes) | Linux 88/88 ctest; MinGW build under Wine 87/87 Catch2 cases (902 assertions) | pass | Session tests with stand-ins; non-ASCII names also under Wine |
 | 2026-11-02 | T-REC-01/04 (regression) | Linux VM, Midi Through + `aplaymidi`, 1024-frame buffer | pass | 21/21 events, gaps within 0.52 ms, note lengths within 1 ms |
 | 2026-11-02 | `--record-test` argument check (J12) | Linux | pass | `abc`, `0`, `99999`, `5x` → message, exit code 2 |
+| 2026-11-02 | T-CI-02 | GitHub Actions run 41495114618 (`c80053f`, clock smoothing) | pass | windows 5m33s (78/78), linux 2m13s (78/78), licence |
+| 2026-11-02 | T-CI-02 | GitHub Actions run 41495891483 (`d6874b7`, crosscheck #4 fixes) | pass | windows 4m28s (88/88, MSVC, no compiler warnings; incl. T-REC-28 non-ASCII names on real Windows), linux 1m37s (88/88), licence |

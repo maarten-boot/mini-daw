@@ -95,3 +95,9 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 > yes add the scripts to tools and commit it, i'll push
 
 - `tools/midi_test/make_test_mid.py` (options: notes, gap, length, held last note) and `check_take_mid.py` (gaps, lengths, end of track; exit code 1 above a tolerance). Run end to end on the VM: gaps within 0.52 ms, lengths within 1.04 ms, exit 0. Usage noted in `CLAUDE.md`.
+
+## 12. CI after crosscheck #4
+> pushed it, check the CI run
+
+- The push arrived (GitHub `main` = `d6874b7`). Run 41495114618 (`c80053f`): 78/78 on both. Run 41495891483 (`d6874b7`): 88/88 on Windows (MSVC, no warnings) and Linux; T-REC-28 (non-ASCII take names) passes on real Windows.
+- Open for the user: Windows MIDI tests (T-REC-01/04/21 with a USB keyboard or virtual port; `tools/midi_test/` can help with a virtual port), T-REC-29 (MIDI port retry, default track), T-REC-10, T-UI-03/04. Next step in the Plan: P7 (monitoring and meters).
