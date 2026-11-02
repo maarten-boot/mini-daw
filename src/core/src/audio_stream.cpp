@@ -100,6 +100,7 @@ void AudioStream::close()
         rtaudio_->closeStream();
     }
     if (recorder_.recording()) recorder_.stop();  // finishes the files
+    clockRate_.store(0, std::memory_order_release);
     info_ = {};
     cbInputChannels_ = 0;
     cbOutputChannels_ = 0;
@@ -150,6 +151,8 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     for (auto& p : peaks_) p.store(0.0f, std::memory_order_relaxed);
     xruns_.store(0, std::memory_order_relaxed);
     callbacks_.store(0, std::memory_order_relaxed);
+    clock_.reset();
+    framePos_ = 0;
     cbInputChannels_ = in.id ? in.channels : 0;
     cbOutputChannels_ = out.id ? out.channels : 0;
 
@@ -214,6 +217,7 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     info_.inputChannels = cbInputChannels_;
     info_.outputChannels = cbOutputChannels_;
     info_.sampleRate = rtaudio_->getStreamSampleRate();
+    clockRate_.store(info_.sampleRate, std::memory_order_release);
     info_.bufferFrames = frames;
     if (info_.sampleRate > 0) {
         info_.reportedLatencyMs = 1000.0 * static_cast<double>(rtaudio_->getStreamLatency()) / info_.sampleRate;
@@ -256,6 +260,11 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
                                unsigned int status, void* user)
 {
     auto* self = static_cast<AudioStream*>(user);
+    const std::int64_t now = steadyNowNs();
+    const std::uint64_t blockFrame = self->framePos_;
+    self->framePos_ += frames;
+    // The block just received ends at framePos_ "now" (SPEC-REC-04a).
+    self->clock_.publish(self->framePos_, now);
     self->callbacks_.fetch_add(1, std::memory_order_release);  // see the wait in open()
     if (status != 0) {
         self->xruns_.fetch_add(1, std::memory_order_relaxed);
@@ -278,7 +287,7 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
             while (peak > prev && !slot.compare_exchange_weak(prev, peak, std::memory_order_relaxed)) {
             }
         }
-        self->recorder_.process(samples, frames, channels);
+        self->recorder_.process(samples, frames, channels, blockFrame);
     }
     return 0;
 }

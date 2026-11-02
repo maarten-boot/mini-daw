@@ -9,7 +9,9 @@ add_executable(minidaw_tests
     test_audio_stream.cpp
     test_wav.cpp
     test_ring_buffer.cpp
-    test_recorder.cpp)
+    test_recorder.cpp
+    test_smf.cpp
+    test_track.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)
 

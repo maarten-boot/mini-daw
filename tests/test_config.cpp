@@ -100,6 +100,38 @@ TEST_CASE("T-REC-15: sync_to_disk in [recording], default on", "[config][T-REC-1
     CHECK_FALSE(loadConfigFile(dir.path / "config.ini").config.recording.syncToDisk);
 }
 
+TEST_CASE("T-REC-22: recording folder and MIDI timing in the config", "[config][T-REC-22]")
+{
+    auto d = parseConfig(defaultConfigText());
+    CHECK(d.warnings.empty());
+    CHECK(d.config.recording.folder.empty());
+    CHECK(d.config.recording.midiTiming == MidiTiming::Ppq);
+    CHECK(recordingFolder(d.config.recording) == defaultRecordingFolder());
+    CHECK(defaultRecordingFolder().filename() == "mini-daw");
+
+    // A Windows path in quotes keeps its backslashes; \\ and \" still work.
+    auto r = parseConfig("[recording]\nfolder = \"D:\\Takes\\Jam\"\nmidi_timing = SMPTE\n");
+    CHECK(r.warnings.empty());
+    CHECK(r.config.recording.folder == "D:\\Takes\\Jam");
+    CHECK(r.config.recording.midiTiming == MidiTiming::Smpte);
+    CHECK(parseConfig("[recording]\nfolder = \"a\\\\b \\\"q\\\"\"\n").config.recording.folder == "a\\b \"q\"");
+
+    auto bad = parseConfig("[recording]\nmidi_timing = bpm\n");
+    CHECK(bad.config.recording.midiTiming == MidiTiming::Ppq);
+    REQUIRE(bad.warnings.size() == 1);
+    CHECK(bad.warnings[0].find("midi_timing") != std::string::npos);
+
+    TempDir dir;
+    AppConfig cfg;
+    cfg.recording.folder = "C:\\Users\\me\\Music \"live\"";
+    cfg.recording.midiTiming = MidiTiming::Smpte;
+    REQUIRE(saveConfigFile(dir.path / "config.ini", cfg).empty());
+    const auto back = loadConfigFile(dir.path / "config.ini");
+    CHECK(back.warnings.empty());
+    CHECK(back.config.recording.folder == cfg.recording.folder);
+    CHECK(back.config.recording.midiTiming == MidiTiming::Smpte);
+}
+
 TEST_CASE("setConfigValue keeps comments and other lines", "[config]")
 {
     const std::string before = "; my notes\n[ui]\n; keep me\nmin_contrast = AA\n\n[other]\nx = 1\n";

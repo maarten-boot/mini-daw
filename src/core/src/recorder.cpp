@@ -82,6 +82,7 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
 
     takes_ = std::move(made);
     framesCaptured_.store(0);
+    haveStart_.store(false);
     if (options.startDiskThread) {
         diskRun_.store(true);
         disk_ = std::thread(&Recorder::diskLoop, this);
@@ -90,10 +91,14 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
     return true;
 }
 
-void Recorder::process(const float* input, unsigned int frames, unsigned int channels)
+void Recorder::process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame)
 {
     inProcess_.fetch_add(1);
     if (active_.load() && input != nullptr && channels == inputChannels_) {
+        if (!haveStart_.load(std::memory_order_relaxed)) {
+            startFrame_.store(blockFrame, std::memory_order_relaxed);
+            haveStart_.store(true, std::memory_order_release);
+        }
         for (auto& tp : takes_) {
             Take& t = *tp;
             const std::size_t need = static_cast<std::size_t>(frames) * t.channels;

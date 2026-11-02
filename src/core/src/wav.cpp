@@ -6,12 +6,7 @@
 #include <fstream>
 #include <system_error>
 
-#if defined(_WIN32)
-#include <io.h>
-#include <share.h>
-#else
-#include <unistd.h>
-#endif
+#include "file_util.hpp"
 
 namespace minidaw {
 
@@ -67,13 +62,7 @@ constexpr std::uint64_t kHeaderBytes = 44;
 
 std::FILE* openFile(const std::filesystem::path& path, bool update)
 {
-#if defined(_WIN32)
-    // Others may read a take while it is recorded (SPEC-REC-05a), but not
-    // write to it. _wfopen_s would lock the file against readers as well.
-    return _wfsopen(path.c_str(), update ? L"r+b" : L"wb", _SH_DENYWR);
-#else
-    return std::fopen(path.c_str(), update ? "r+b" : "wb");
-#endif
+    return detail::openForWriting(path, update);
 }
 
 } // namespace
@@ -117,12 +106,7 @@ bool WavWriter::writeHeader(std::uint64_t dataBytes, bool padded)
 
 bool WavWriter::syncFile()
 {
-    if (std::fflush(file_) != 0) return false;
-#if defined(_WIN32)
-    return _commit(_fileno(file_)) == 0;  // FlushFileBuffers
-#else
-    return ::fsync(fileno(file_)) == 0;
-#endif
+    return detail::syncToDisk(file_);
 }
 
 bool WavWriter::open(const std::filesystem::path& path, unsigned int sampleRate, unsigned int channels,

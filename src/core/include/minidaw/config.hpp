@@ -1,6 +1,6 @@
 #pragma once
 
-// Application configuration file (SPEC-UI-04, SPEC-UI-08, SPEC-DEV-03, SPEC-REC-05a).
+// Application configuration file (SPEC-UI-04, SPEC-UI-08, SPEC-DEV-03, SPEC-REC-05a, SPEC-REC-04b, SPEC-REC-07).
 //
 // Format: a small INI file, for example
 //
@@ -16,6 +16,8 @@
 //
 //   [recording]
 //   sync_to_disk = true       ; force take files to disk each second (true/false)
+//   folder = "D:\Takes"         ; empty = Documents\mini-daw (Windows), ~/Music/mini-daw
+//   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
 //
 // Default location:
 //   Windows: %APPDATA%\mini-daw\config.ini
@@ -23,6 +25,7 @@
 //   Linux:   $XDG_CONFIG_HOME/mini-daw/config.ini (default ~/.config/...)
 // The command-line option --config <file> overrides it.
 
+#include "minidaw/smf.hpp"
 #include "minidaw/theme.hpp"
 
 #include <filesystem>
@@ -56,8 +59,16 @@ struct RecordingSettings {
     // refresh, so a take survives power loss (SPEC-REC-05a). Can be switched
     // off for slow disks.
     bool syncToDisk = true;
+    std::string folder;                     // empty = defaultRecordingFolder()
+    MidiTiming midiTiming = MidiTiming::Ppq;
     friend bool operator==(const RecordingSettings&, const RecordingSettings&) = default;
 };
+
+// Documents\mini-daw on Windows, ~/Music/mini-daw on Linux and macOS (SPEC-REC-07).
+std::filesystem::path defaultRecordingFolder();
+
+// The folder from the settings, or the default when it is empty.
+std::filesystem::path recordingFolder(const RecordingSettings& settings);
 
 struct AppConfig {
     ContrastSetting contrast;

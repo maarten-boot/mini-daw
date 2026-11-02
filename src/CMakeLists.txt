@@ -9,6 +9,10 @@ add_library(minidaw_core STATIC
     core/src/config.cpp
     core/src/devices.cpp
     core/src/recorder.cpp
+    core/src/midi_input.cpp
+    core/src/recording_session.cpp
+    core/src/smf.cpp
+    core/src/track.cpp
     core/src/theme.cpp
     core/src/wav.cpp)
 target_include_directories(minidaw_core PUBLIC
@@ -17,6 +21,9 @@ target_include_directories(minidaw_core PUBLIC
 target_link_libraries(minidaw_core
     PUBLIC  minidaw_rtaudio minidaw_rtmidi
     PRIVATE minidaw_warnings)
+if(WIN32)
+    target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
+endif()
 
 if(MINIDAW_BUILD_APP)
     # Console subsystem on Windows for now, so --list-devices output is visible.

@@ -7,6 +7,14 @@
 #include <sstream>
 #include <system_error>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shlobj.h>
+#endif
+
 namespace minidaw {
 namespace {
 
@@ -25,7 +33,8 @@ std::string lower(std::string_view s)
     return out;
 }
 
-// A value is either "quoted" (with \" and \\ escapes; anything after the
+// A value is either "quoted" (with \" and \\ escapes, any other backslash is
+// kept as it is, so "D:\Takes" works; anything after the
 // closing quote is ignored) or plain (a trailing "; comment" or "# comment"
 // is removed).
 std::string parseValue(std::string_view value, bool& ok)
@@ -46,7 +55,7 @@ std::string parseValue(std::string_view value, bool& ok)
     std::string out;
     for (std::size_t i = 1; i < value.size(); ++i) {
         const char c = value[i];
-        if (c == '\\' && i + 1 < value.size()) {
+        if (c == '\\' && i + 1 < value.size() && (value[i + 1] == '"' || value[i + 1] == '\\')) {
             out += value[++i];
         } else if (c == '"') {
             return out;
@@ -192,6 +201,13 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.recording.syncToDisk = true;
                 warn("sync_to_disk '" + value + "' must be true or false. Using true.");
             }
+        } else if (section == "recording" && key == "folder") {
+            cfg.recording.folder = value;
+        } else if (section == "recording" && key == "midi_timing") {
+            if (!parseMidiTiming(value, cfg.recording.midiTiming)) {
+                cfg.recording.midiTiming = MidiTiming::Ppq;
+                warn("midi_timing '" + value + "' must be ppq or smpte. Using ppq.");
+            }
         } else {
             warn("unknown setting '" + key + "' in section [" + section + "]");
         }
@@ -278,7 +294,12 @@ std::string defaultConfigText()
            "[recording]\n"
            "; Force take files to the disk once a second, so a take survives a\n"
            "; power loss. Set to false if recording stutters on a slow disk.\n"
-           "sync_to_disk = true\n";
+           "sync_to_disk = true\n"
+           "; Folder for takes, in quotes. Empty: Documents\\mini-daw on Windows,\n"
+           "; ~/Music/mini-daw on Linux and macOS.\n"
+           "folder = \"\"\n"
+           "; MIDI file timing: ppq (960 ticks per quarter at 120 BPM) or smpte (1 ms ticks).\n"
+           "midi_timing = ppq\n";
 }
 
 std::filesystem::path defaultConfigPath()
@@ -297,6 +318,32 @@ std::filesystem::path defaultConfigPath()
     if (!home.empty()) return fs::path(home) / ".config" / "mini-daw" / "config.ini";
 #endif
     return fs::path("mini-daw-config.ini");
+}
+
+std::filesystem::path defaultRecordingFolder()
+{
+    namespace fs = std::filesystem;
+#if defined(_WIN32)
+    PWSTR docs = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs)) && docs != nullptr) {
+        fs::path p = fs::path(docs) / "mini-daw";
+        CoTaskMemFree(docs);
+        return p;
+    }
+    if (docs != nullptr) CoTaskMemFree(docs);
+    const std::string profile = getEnv("USERPROFILE");
+    if (!profile.empty()) return fs::path(profile) / "Documents" / "mini-daw";
+#else
+    const std::string home = getEnv("HOME");
+    if (!home.empty()) return fs::path(home) / "Music" / "mini-daw";
+#endif
+    return fs::path("mini-daw-takes");
+}
+
+std::filesystem::path recordingFolder(const RecordingSettings& settings)
+{
+    if (settings.folder.empty()) return defaultRecordingFolder();
+    return std::filesystem::path(settings.folder);
 }
 
 ConfigLoadResult loadConfigFile(const std::filesystem::path& path)
@@ -333,6 +380,8 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "audio", "sample_rate", std::to_string(config.audio.sampleRate));
     text = setConfigValue(text, "audio", "buffer_size", std::to_string(config.audio.bufferFrames));
     text = setConfigValue(text, "recording", "sync_to_disk", config.recording.syncToDisk ? "true" : "false");
+    text = setConfigValue(text, "recording", "folder", quoteConfigString(config.recording.folder));
+    text = setConfigValue(text, "recording", "midi_timing", midiTimingName(config.recording.midiTiming));
 
     std::error_code ec;
     if (path.has_parent_path()) {

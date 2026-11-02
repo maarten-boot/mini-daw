@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -72,9 +73,17 @@ public:
 
     bool recording() const { return active_.load(); }
 
-    // Audio thread only. `input` is interleaved with `channels` channels.
-    // No locks, no allocation, no I/O.
-    void process(const float* input, unsigned int frames, unsigned int channels);
+    // Audio thread only. `input` is interleaved with `channels` channels;
+    // `blockFrame` is the stream frame of its first sample. No locks, no
+    // allocation, no I/O.
+    void process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame = 0);
+
+    // Stream frame of the first recorded sample, once the first block arrived.
+    std::optional<std::uint64_t> startFrame() const
+    {
+        if (!haveStart_.load(std::memory_order_acquire)) return std::nullopt;
+        return startFrame_.load(std::memory_order_relaxed);
+    }
 
     // Progress while recording. Safe from the thread that calls start() and
     // stop() (the GUI thread), not from a third thread: they read takes_.
@@ -131,6 +140,8 @@ private:
     std::atomic<bool> active_{false};
     std::atomic<int> inProcess_{0};
     std::atomic<std::uint64_t> framesCaptured_{0};
+    std::atomic<std::uint64_t> startFrame_{0};
+    std::atomic<bool> haveStart_{false};
 
     std::atomic<bool> diskRun_{false};
     std::thread disk_;

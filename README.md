@@ -4,7 +4,7 @@ a simple daw just for recording and playback with VST3 instrument support
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early version (steps P2–P5). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, shows input levels, and has adjustable contrast and text size. The recording engine works from the command line (`--record-test`); tracks and a Record button in the GUI come next. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P6). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Playback, monitoring and saving projects come next. Adjustable contrast and text size. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -80,13 +80,19 @@ Settings → Audio devices… selects the input and output device, sample rate a
 mini-daw --audio-test 5
 ```
 
-To try recording without the GUI (the Record button comes with tracks):
+## Recording
+
+The main window has a track list. *Add audio track* (one input, or two for stereo) and *Add MIDI track* (a MIDI input port, all channels or one). Tick *Arm* on the tracks to record, then press *Record* (or Ctrl+R); press it again to stop. Each recording goes into its own folder `take-YYYYMMDD-HHMMSS` inside the recording folder (Settings → Recording…; default `Documents\mini-daw` on Windows, `~/Music/mini-daw` on Linux), with one file per track: `01-Audio 1+2.wav`, `02-Keys.mid`, …
+
+Audio is 24-bit WAV. MIDI is a Standard MIDI File; by default with 960 ticks per quarter note at a fixed 120 BPM (0.52 ms resolution, opens cleanly in any DAW). For free playing without a tempo you can switch to SMPTE timing (1 ms ticks) in Settings → Recording… or with `midi_timing = smpte` under `[recording]`. Both keep your timing exactly; PPQ only adds a bar grid that does not mean anything for unmetered playing. The track list is not saved yet (projects come later).
+
+To try recording without the GUI:
 
 ```
 mini-daw --record-test 10 C:\Users\me\Music\mini-daw
 ```
 
-This writes `take-YYYYMMDD-HHMMSS.wav` (24-bit) and reports lost frames, clipped samples and dropouts; the exit code is 1 if audio was lost. While a take is being recorded its file is kept valid and forced to the disk about once a second, so a crash or power loss loses at most the last second. If audio is lost (disk too slow), the gap is filled with silence so the rest of the take stays in time, and the loss is reported.
+This records input 1 (and 2) and every MIDI input into a take folder in the given folder and reports lost frames, clipped samples and dropouts; the exit code is 1 if audio was lost. While a take is being recorded its file is kept valid and forced to the disk about once a second, so a crash or power loss loses at most the last second. If audio is lost (disk too slow), the gap is filled with silence so the rest of the take stays in time, and the loss is reported.
 
 On a slow disk the once-a-second sync can be switched off (then only a program crash is covered):
 

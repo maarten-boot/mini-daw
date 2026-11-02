@@ -7,6 +7,7 @@
 
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/frame_clock.hpp"
 #include "minidaw/recorder.hpp"
 
 #include <array>
@@ -94,6 +95,14 @@ public:
     RecordingResult stopRecording() { return recorder_.stop(); }
     const Recorder& recorder() const { return recorder_; }
 
+    // Audio timeline (SPEC-REC-04a): the stream frame that corresponds to a
+    // steady-clock time (steadyNowNs()), once the stream runs. Any thread.
+    std::optional<std::uint64_t> frameAtTime(std::int64_t ns) const
+    {
+        return clock_.frameAt(ns, clockRate_.load(std::memory_order_acquire));
+    }
+    std::optional<std::uint64_t> currentFrame() const { return frameAtTime(steadyNowNs()); }
+
 private:
     static int audioCallback(void* output, void* input, unsigned int frames, double streamTime,
                              unsigned int status, void* user);
@@ -110,6 +119,9 @@ private:
     std::array<std::atomic<float>, kMaxInputChannels> peaks_{};
     std::atomic<std::uint64_t> xruns_{0};
     std::atomic<std::uint64_t> callbacks_{0};
+    FrameClock clock_;
+    std::atomic<unsigned int> clockRate_{0};  // 0 while no stream runs
+    std::uint64_t framePos_ = 0;   // audio thread only: frames received since open
 
     // Driver error messages (not from the audio callback itself).
     std::mutex messagesMutex_;

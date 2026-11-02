@@ -10,7 +10,10 @@
 | P3 | Theme/contrast system, including WCAG ratio calculation, presets and config file | UI-01..06 (UI-07 with meters in P7) | done (2026-11-01) |
 | P4 | Device layer: list devices, select them, save settings; text-size setting | DEV-01..06, UI-08 | done (2026-11-01); audio on real Windows not yet tested |
 | P5 | Audio engine: lock-free callback, ring buffers, disk writer thread, WAV writer; `--record-test` | NF-01, REC-03, REC-05/05a–c, REC-06 | done (2026-11-01); crosscheck #3 fixes (silence for lost audio, disk sync option, loss counting on disk errors). Recording on real Windows not yet tested; Record button comes with the tracks in P6 |
-| P6 | Tracks and multi-track recording (audio + MIDI), SMF writer, sample-accurate MIDI timestamps | REC-01..04 | pending |
+| P6 | Tracks and multi-track recording (audio + MIDI), SMF writer, sample-accurate MIDI timestamps | REC-01..04, 01a, 02a, 04a–c, 07 | P6a, P6b done (2026-11-02); P6c (real MIDI) pending |
+| P6a | Core: SMF writer/reader, MIDI take builder, clock→frame mapping, MIDI inputs, recording session, `[recording]` settings | REC-04a–c, 07 | done (2026-11-02) |
+| P6b | GUI: track list, Arm, Record/Stop, Settings → Recording…; `--record-test` through the session (audio + MIDI) | REC-01a, 02a, 06 | done (2026-11-02) |
+| P6c | Manual tests with real MIDI: Linux VM (virtual keyboard, `audio` group), Windows (USB keyboard, virtual port) | REC-01, 04 | pending |
 | P7 | Monitoring and meters | MON-01..02, UI-07 | pending |
 | P8 | Transport and playback | PLAY-01..04 | pending |
 | P9 | Project save/load | PRJ-01..02 | pending |
