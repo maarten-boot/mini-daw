@@ -73,3 +73,7 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 
 > yes commit it, i'll push; text only, no logo
 - SPEC-LIC-05: no VST Compatible logo; text form ("VST®", attribution sentence) only.
+
+## 10. CI after P10
+> pushed
+- Run 41629642662 (`7db2936`): linux and licence pass; windows fails to compile the SDK's `module_win32.cpp` with MSVC: the SDK's `SMTG_CPP20` uses `__cplusplus` only, which MSVC reports as 199711 unless `/Zc:__cplusplus` is given. Added for the SDK host library (public) and the test synth. Could only be checked by CI (no MSVC here).

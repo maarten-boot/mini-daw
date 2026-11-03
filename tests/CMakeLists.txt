@@ -62,6 +62,9 @@ else()
 endif()
 target_include_directories(minidaw_testsynth SYSTEM PRIVATE ${vst3})
 target_compile_definitions(minidaw_testsynth PRIVATE $<IF:$<CONFIG:Debug>,DEVELOPMENT=1,RELEASE=1>)
+if(MSVC)
+    target_compile_options(minidaw_testsynth PRIVATE /Zc:__cplusplus)  # see minidaw_vst3host
+endif()
 set_target_properties(minidaw_testsynth PROPERTIES PREFIX "" OUTPUT_NAME "minidaw-testsynth"
                                                    SUFFIX "${testsynth_suffix}" CXX_VISIBILITY_PRESET hidden)
 if(WIN32)

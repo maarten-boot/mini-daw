@@ -95,6 +95,11 @@ endif()
 add_library(minidaw_vst3host STATIC ${MINIDAW_VST3_SOURCES})
 target_include_directories(minidaw_vst3host SYSTEM PUBLIC ${vst3})
 target_compile_definitions(minidaw_vst3host PUBLIC $<IF:$<CONFIG:Debug>,DEVELOPMENT=1,RELEASE=1>)
+# The SDK detects C++20 by __cplusplus only; MSVC reports 199711 unless told
+# otherwise, so the SDK took its C++17 branch and did not compile (CI run 41629642662).
+if(MSVC)
+    target_compile_options(minidaw_vst3host PUBLIC /Zc:__cplusplus)
+endif()
 set_target_properties(minidaw_vst3host PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(WIN32)
     target_link_libraries(minidaw_vst3host PUBLIC ole32 shell32)
