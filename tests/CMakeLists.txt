@@ -68,7 +68,7 @@ endif()
 set_target_properties(minidaw_testsynth PROPERTIES PREFIX "" OUTPUT_NAME "minidaw-testsynth"
                                                    SUFFIX "${testsynth_suffix}" CXX_VISIBILITY_PRESET hidden)
 if(WIN32)
-    target_link_libraries(minidaw_testsynth PRIVATE ole32)
+    target_link_libraries(minidaw_testsynth PRIVATE ole32 user32 gdi32)  # gdi32/user32: the editor window
     if(MINGW)
         target_link_options(minidaw_testsynth PRIVATE -static -static-libgcc -static-libstdc++)
     endif()

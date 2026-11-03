@@ -37,7 +37,7 @@ endif()
 
 if(MINIDAW_BUILD_APP)
     # The program's code, built once and linked into the programs below.
-    add_library(minidaw_app OBJECT app/main.cpp app/imgui_theme.cpp)
+    add_library(minidaw_app OBJECT app/main.cpp app/imgui_theme.cpp app/plugin_window.cpp)
     if(WIN32)
         target_sources(minidaw_app PRIVATE app/renderer_d3d11.cpp)
     else()

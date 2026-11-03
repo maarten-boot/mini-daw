@@ -5,6 +5,8 @@
 #include "minidaw/path_util.hpp"
 #include "minidaw/ring_buffer.hpp"
 
+#include "pluginterfaces/gui/iplugview.h"
+#include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -107,6 +109,7 @@ struct Vst3Instrument::Impl {
     SpscRing<ParamChange> toProcessor{1024};   // host/editor -> audio thread
     SpscRing<ParamChange> toController{1024};  // audio thread -> GUI thread (idle)
     std::mutex setParamMutex;                  // several host threads may call setParameter
+    InstrumentEditor* editor = nullptr;        // the open editor, if any (GUI thread)
 };
 
 Vst3Instrument::Vst3Instrument() : impl_(std::make_unique<Impl>()) {}
@@ -254,6 +257,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
 void Vst3Instrument::unload()
 {
     Impl& m = *impl_;
+    if (m.editor) m.editor->close();  // the view uses the controller
     detail::ConsoleCapture capture;
     detail::NoErrorDialogs noDialogs;
     if (m.active) {
@@ -461,6 +465,176 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
         }
         done += n;
     }
+}
+
+// --- Editor (P10d) ---------------------------------------------------------------
+
+// The host side of the view's frame: the view asks here for a new size.
+class PlugFrameImpl : public IPlugFrame {
+public:
+    explicit PlugFrameImpl(InstrumentEditor* owner) : owner_(owner) {}
+    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* newSize) override;
+    tresult PLUGIN_API queryInterface(const TUID queried, void** obj) override
+    {
+        QUERY_INTERFACE(queried, obj, FUnknown::iid, IPlugFrame)
+        QUERY_INTERFACE(queried, obj, IPlugFrame::iid, IPlugFrame)
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1000; }  // owned by the editor
+    uint32 PLUGIN_API release() override { return 1000; }
+
+private:
+    InstrumentEditor* owner_;
+};
+
+struct InstrumentEditor::Impl {
+    explicit Impl(InstrumentEditor* owner) : frame(owner) {}
+    Vst3Instrument* instrument = nullptr;
+    IPtr<IPlugView> view;
+    PlugFrameImpl frame;
+    std::string platform;
+    bool attached = false;
+    bool inRequest = false;   // inside resizeView: the window is being resized for the view
+    Size current;             // the size the view was last given
+};
+
+tresult PLUGIN_API PlugFrameImpl::resizeView(IPlugView* view, ViewRect* newSize)
+{
+    InstrumentEditor::Impl& e = *owner_->impl_;
+    if (!newSize || !e.view || view != e.view.get()) return kInvalidArgument;
+    const InstrumentEditor::Size wanted{newSize->getWidth(), newSize->getHeight()};
+    if (wanted.width <= 0 || wanted.height <= 0) return kInvalidArgument;
+    e.inRequest = true;
+    const bool ok = owner_->onResizeRequest && owner_->onResizeRequest(wanted);
+    e.inRequest = false;
+    if (!ok) return kResultFalse;
+    // The VST3 rule: after resizing the window for the view, the host calls onSize.
+    e.current = wanted;
+    ViewRect r = *newSize;
+    e.view->onSize(&r);
+    return kResultTrue;
+}
+
+InstrumentEditor::InstrumentEditor() : impl_(std::make_unique<Impl>(this)) {}
+
+InstrumentEditor::~InstrumentEditor()
+{
+    close();
+}
+
+bool InstrumentEditor::isOpen() const
+{
+    return impl_->view != nullptr;
+}
+
+bool InstrumentEditor::create(Vst3Instrument& instrument, const char* platform, std::string& error)
+{
+    close();
+    Vst3Instrument::Impl& im = *instrument.impl_;
+    if (!im.active) {
+        error = "No plugin loaded.";
+        return false;
+    }
+    if (!im.controller) {
+        error = "The plugin has no controller, so no editor window.";
+        return false;
+    }
+    if (im.editor) {
+        error = "The plugin's editor window is already open.";
+        return false;
+    }
+    detail::ConsoleCapture capture;
+    IPtr<IPlugView> view = owned(im.controller->createView(ViewType::kEditor));
+    if (!view) {
+        error = "The plugin has no editor window.";
+        return false;
+    }
+    if (view->isPlatformTypeSupported(platform) != kResultTrue) {
+        error = std::string("The plugin's editor window does not support this system (") + platform + ").";
+        return false;
+    }
+    if (view->setFrame(&impl_->frame) != kResultTrue) {
+        // Some plugins return kResultOk (= kResultTrue) or nothing useful: not fatal.
+    }
+    impl_->view = view;
+    impl_->instrument = &instrument;
+    impl_->platform = platform;
+    impl_->attached = false;
+    impl_->current = {};
+    im.editor = this;
+    return true;
+}
+
+void InstrumentEditor::setContentScale(float scale)
+{
+    if (!impl_->view || !(scale > 0.0f)) return;
+    FUnknownPtr<IPlugViewContentScaleSupport> support(impl_->view);
+    if (support) support->setContentScaleFactor(scale);
+}
+
+InstrumentEditor::Size InstrumentEditor::size() const
+{
+    if (!impl_->view) return {};
+    ViewRect r;
+    if (impl_->view->getSize(&r) != kResultTrue) return impl_->current;
+    return {r.getWidth(), r.getHeight()};
+}
+
+bool InstrumentEditor::resizable() const
+{
+    return impl_->view && impl_->view->canResize() == kResultTrue;
+}
+
+bool InstrumentEditor::attach(void* parent, std::string& error)
+{
+    Impl& e = *impl_;
+    if (!e.view) {
+        error = "No editor created.";
+        return false;
+    }
+    if (e.attached) return true;
+    detail::ConsoleCapture capture;
+    if (e.view->attached(parent, e.platform.c_str()) != kResultOk) {
+        error = "The plugin could not open its editor in the window.";
+        return false;
+    }
+    e.attached = true;
+    e.current = size();
+    return true;
+}
+
+InstrumentEditor::Size InstrumentEditor::resize(Size wanted)
+{
+    Impl& e = *impl_;
+    if (!e.view || !e.attached) return wanted;
+    if (e.inRequest) return wanted;      // resizeView tells the view itself
+    if (wanted.width <= 0 || wanted.height <= 0) return e.current;   // minimised
+    if (wanted == e.current) return wanted;
+    if (!resizable()) return e.current;  // the window should get the view's size back
+    ViewRect r(0, 0, wanted.width, wanted.height);
+    e.view->checkSizeConstraint(&r);
+    const Size got{r.getWidth(), r.getHeight()};
+    if (got.width <= 0 || got.height <= 0) return e.current;
+    if (got == e.current) return got;
+    e.current = got;
+    e.view->onSize(&r);
+    return got;
+}
+
+void InstrumentEditor::close()
+{
+    Impl& e = *impl_;
+    if (e.view) {
+        detail::ConsoleCapture capture;
+        if (e.attached) e.view->removed();
+        e.view->setFrame(nullptr);
+        e.view = nullptr;
+    }
+    if (e.instrument) e.instrument->impl_->editor = nullptr;
+    e.instrument = nullptr;
+    e.attached = false;
+    e.current = {};
 }
 
 } // namespace minidaw

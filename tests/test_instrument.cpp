@@ -3,12 +3,21 @@
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
 
+#include "pluginterfaces/vst/ivsteditcontroller.h"
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 #include <cstring>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace minidaw;
 using Catch::Approx;
@@ -187,3 +196,99 @@ TEST_CASE("T-VST-14: instrument rack: playback MIDI at the sample, live MIDI, ga
     CHECK(peakOut(1, 512) == Approx(0.5f).margin(0.01));
     rack.clear();
 }
+
+TEST_CASE("T-VST-18: the plugin editor: create, scale, attach, resize, requests, close", "[vst][T-VST-18]")
+{
+    Vst3Instrument inst;
+    std::string err;
+    InstrumentEditor ed;
+    CHECK_FALSE(ed.create(inst, "minidaw-test", err));  // nothing loaded
+    CHECK_FALSE(err.empty());
+
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    err.clear();
+    CHECK_FALSE(ed.create(inst, "NoSuchPlatform", err));
+    CHECK(err.find("NoSuchPlatform") != std::string::npos);
+
+    std::vector<InstrumentEditor::Size> requests;
+    bool accept = true;
+    ed.onResizeRequest = [&](InstrumentEditor::Size s) {
+        requests.push_back(s);
+        return accept;
+    };
+    REQUIRE(ed.create(inst, "minidaw-test", err));
+    CHECK(ed.isOpen());
+    InstrumentEditor second;
+    CHECK_FALSE(second.create(inst, "minidaw-test", err));  // one editor per instrument
+    CHECK(err.find("already open") != std::string::npos);
+
+    ed.setContentScale(1.5f);
+    CHECK(inst.controller()->getParamNormalized(2) == Approx(1.5 / 4));
+    CHECK(ed.size() == InstrumentEditor::Size{300, 150});
+    CHECK(ed.resizable());
+
+    // On attach the test view asks for 320 x 160 (like plugins that adjust on open).
+    REQUIRE(ed.attach(nullptr, err));
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0] == InstrumentEditor::Size{320, 160});
+    CHECK(ed.size() == InstrumentEditor::Size{320, 160});
+
+    // The user resizes the window: the view's limits apply (200 x 100 .. 1200 x 800).
+    CHECK(ed.resize({500, 400}) == InstrumentEditor::Size{500, 400});
+    CHECK(ed.size() == InstrumentEditor::Size{500, 400});
+    CHECK(ed.resize({50, 5000}) == InstrumentEditor::Size{200, 800});
+    CHECK(ed.size() == InstrumentEditor::Size{200, 800});
+    CHECK(ed.resize({0, 0}) == InstrumentEditor::Size{200, 800});  // minimised: unchanged
+
+    // Unloading the instrument closes its editor; a new one can be opened after loading again.
+    inst.unload();
+    CHECK_FALSE(ed.isOpen());
+    ed.close();  // safe to repeat
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    accept = false;  // a refused request leaves the size as it was
+    REQUIRE(ed.create(inst, "minidaw-test", err));
+    REQUIRE(ed.attach(nullptr, err));
+    CHECK(requests.size() == 2);
+    CHECK(ed.size() == InstrumentEditor::Size{300, 150});
+    ed.close();
+    CHECK_FALSE(ed.isOpen());
+    REQUIRE(second.create(inst, "minidaw-test", err));  // free again after close
+}
+
+#if defined(_WIN32)
+TEST_CASE("T-VST-19: the plugin editor in a Windows window; an edit in it reaches the sound", "[vst][T-VST-19]")
+{
+    Vst3Instrument inst;
+    std::string err;
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    HWND host = CreateWindowExW(0, L"STATIC", L"editor host", WS_OVERLAPPEDWINDOW, 0, 0, 400, 300, nullptr, nullptr,
+                                GetModuleHandleW(nullptr), nullptr);  // never shown
+    REQUIRE(host != nullptr);
+    {
+        InstrumentEditor ed;
+        REQUIRE(ed.create(inst, "HWND", err));
+        REQUIRE(ed.attach(host, err));
+        HWND view = GetWindow(host, GW_CHILD);
+        REQUIRE(view != nullptr);
+        RECT rc;
+        GetClientRect(view, &rc);
+        CHECK(rc.right - rc.left == 300);
+        CHECK(rc.bottom - rc.top == 150);
+        CHECK(ed.resize({600, 300}) == InstrumentEditor::Size{600, 300});
+        GetClientRect(view, &rc);
+        CHECK(rc.right - rc.left == 600);
+
+        // A click on the right half raises the gain from 0.5 to 0.6: in the controller and in the sound.
+        SendMessageW(view, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(500, 100));
+        CHECK(inst.controller()->getParamNormalized(1) == Approx(0.6));
+        std::vector<float> l(4800), r(4800);
+        const InstrumentMidi on = msg(0, 0x90, 69, 127);
+        inst.process(&on, 1, 4800, {}, l.data(), r.data());
+        CHECK(peak(l, 2400, 4800) == Approx(0.6).margin(0.01));
+        ed.close();
+        CHECK(GetWindow(host, GW_CHILD) == nullptr);  // the view's window is gone
+    }
+    DestroyWindow(host);
+}
+#endif
+

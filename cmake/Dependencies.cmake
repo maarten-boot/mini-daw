@@ -72,6 +72,7 @@ set(MINIDAW_VST3_SOURCES
     ${vst3}/pluginterfaces/base/ustring.cpp
     ${vst3}/public.sdk/source/common/commonstringconvert.cpp
     ${vst3}/public.sdk/source/common/memorystream.cpp
+    ${vst3}/public.sdk/source/common/commoniids.cpp  # IPlugView, IPlugFrame, content scale (P10d)
     ${vst3}/public.sdk/source/vst/vstinitiids.cpp
     ${vst3}/public.sdk/source/vst/hosting/connectionproxy.cpp
     ${vst3}/public.sdk/source/vst/hosting/eventlist.cpp

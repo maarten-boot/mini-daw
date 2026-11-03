@@ -15,6 +15,7 @@
 
 #include "icon_data.hpp"
 #include "imgui_theme.hpp"
+#include "plugin_window.hpp"
 #include "renderer.hpp"
 
 #include "minidaw/audio_stream.hpp"
@@ -164,6 +165,10 @@ struct AppState {
     std::map<int, std::pair<std::filesystem::path, std::shared_ptr<const std::vector<minidaw::MidiEvent>>>> takeEvents;
     double instrumentStateAt = 0.0;
     std::vector<std::string> instrumentNotes;
+    // Plugin editor windows (P10d), by track number; closed before their
+    // instruments are unloaded.
+    minidaw::app::PluginWindows pluginWindows;
+    GLFWwindow* mainWindow = nullptr;
 
     // Playback (P8). Declared last: destroyed first (its thread reads `audio`).
     minidaw::MidiPlayer midiPlayer;
@@ -1124,6 +1129,7 @@ void unloadInstrument(AppState& app, int track)
 {
     const auto it = app.instruments.find(track);
     if (it == app.instruments.end()) return;
+    app.pluginWindows.close(track);
     std::unique_ptr<minidaw::Vst3Instrument> inst = std::move(it->second);
     app.instruments.erase(it);
     syncRack(app, true);  // the audio thread lets go of it first
@@ -1132,6 +1138,7 @@ void unloadInstrument(AppState& app, int track)
 
 void unloadAllInstruments(AppState& app)
 {
+    app.pluginWindows.closeAll();
     app.audio.instruments().clear();
     for (const auto& [port, ring] : app.rackTaps) app.midi.removeTap(port, ring);
     app.rackTaps.clear();
@@ -1193,11 +1200,36 @@ void restoreInstruments(AppState& app)
 }
 
 // After the sample rate changed: load again at the new rate, with the state.
+void openPluginWindow(AppState& app, const minidaw::Track& t);  // further down
+
 void reloadInstruments(AppState& app)
 {
     if (app.instruments.empty()) return;
     refreshInstrumentStates(app);
+    const std::vector<int> editors = app.pluginWindows.openTracks();  // opened again afterwards
     restoreInstruments(app);
+    for (const int n : editors) {
+        for (const auto& t : app.tracks) {
+            if (t.number == n) openPluginWindow(app, t);
+        }
+    }
+}
+
+// Opens the plugin's own editor window for a track (SPEC-VST-05a).
+void openPluginWindow(AppState& app, const minidaw::Track& t)
+{
+    const auto it = app.instruments.find(t.number);
+    if (it == app.instruments.end()) return;
+    const std::string title = it->second->name() + " - " + t.name + " - " + minidaw::kProductName;
+    std::string err;
+    if (app.pluginWindows.open(t.number, *it->second, title, app.mainWindow, err)) {
+        app.log.info("Track " + std::to_string(t.number) + ": editor of " + it->second->name() + " opened");
+    } else {
+        const std::string note = "Track " + std::to_string(t.number) + ": the editor of " + it->second->name() +
+                                 " could not be opened: " + err;
+        app.instrumentNotes.push_back(note);
+        app.log.warning(note);
+    }
 }
 
 // The rack follows the tracks: live MIDI for armed tracks, the take during
@@ -2105,11 +2137,34 @@ void drawTracksPanel(AppState& app)
                 // Leave room for the take name beside it.
                 const float nameW = t.take.empty() ? ImGui::CalcTextSize("-").x
                                                    : ImGui::CalcTextSize(minidaw::pathToUtf8(t.take.filename()).c_str()).x;
-                ImGui::SetNextItemWidth(std::max(7 * em, ImGui::GetContentRegionAvail().x - nameW -
-                                                             ImGui::GetStyle().ItemSpacing.x));
                 // Where the track's MIDI goes: a MIDI output, or a VST3 instrument (P10).
                 const bool hasInst = !t.instrumentClass.empty();
                 const bool instLoaded = app.instruments.count(t.number) != 0;
+                const bool editorOpen = app.pluginWindows.isOpen(t.number);
+                const char* editLabel = editorOpen ? "Close##editor" : "Edit##editor";
+                // Before the output list, so it stays visible in a narrow column.
+                // The instrument's own window: sounds, presets (SPEC-VST-05a).
+                if (instLoaded) {
+                    ImGui::BeginDisabled(!minidaw::app::PluginWindows::supported());
+                    if (ImGui::SmallButton(editLabel)) {
+                        if (editorOpen) {
+                            app.pluginWindows.close(t.number);
+                        } else {
+                            openPluginWindow(app, t);
+                        }
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("%s", !minidaw::app::PluginWindows::supported()
+                                                    ? "The instrument's own window: on Windows for now (Linux later)."
+                                                : editorOpen ? "Close the instrument's window."
+                                                             : "Open the instrument's own window (sounds, presets). It "
+                                                               "can stay open while you play.");
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                }
+                ImGui::SetNextItemWidth(std::max(7 * em, ImGui::GetContentRegionAvail().x - nameW -
+                                                             ImGui::GetStyle().ItemSpacing.x));
                 const std::string out = hasInst ? "Instrument: " + t.instrumentName + (instLoaded ? "" : " (not loaded)")
                                         : t.midiOut.empty() ? std::string("(no MIDI output)")
                                                             : t.midiOut;
@@ -2453,6 +2508,7 @@ int runGui(AppState& app)
 
     const std::string title = std::string(minidaw::kProductName) + " " + minidaw::kVersion;
     GLFWwindow* window = glfwCreateWindow(1280, 760, title.c_str(), nullptr, nullptr);
+    app.mainWindow = window;
     if (window == nullptr) {
         const std::string fatal = "The main window could not be created: " + g_lastGlfwError;
         app.log.error(fatal);
@@ -2535,6 +2591,7 @@ int runGui(AppState& app)
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        app.pluginWindows.update();  // editor windows the user closed
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
             glfwWaitEventsTimeout(0.1);  // minimised: don't render
             continue;

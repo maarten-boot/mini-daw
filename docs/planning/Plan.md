@@ -20,18 +20,18 @@
 | P9 | Projects: project folder with project.json and takes, autosave, open/new/save as/recent, reopen last, takes copied in | PRJ-01..02, 01a, 02a | done (2026-11-02) on Linux and Wine; Windows by the user |
 | P9b | Windows packaging: mini-daw.exe without console + mini-daw.com for the command line, icon, NSIS installer (per user), built in CI | PKG-01..03 | done (2026-11-03) on Linux/Wine; real Windows (installer pages, SmartScreen, Start menu) by the user |
 | — | **Milestone v1: record and play back MIDI and audio on Windows 10** | | |
-| P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | P10a, b, c, e done (2026-11-03); P10d (editor) pending |
+| P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | done on Windows (P10a–c, e 2026-11-03; P10d 2026-11-04); the editor on Linux later |
 | P10a | SDK 3.8.1 (hosting part) as a dependency; scanning with cache, moduleinfo.json, crash marker | VST-01, 01a | done (2026-11-03) |
 | P10b | Instrument (load, process, MIDI mapping, parameters, state) and the instrument rack in the audio engine (live MIDI taps, playback MIDI at the sample); GUI: Settings → Instruments, instrument per MIDI track | VST-02, 02a | done (2026-11-03) on Linux and Wine; real plugins by the user |
 | P10c | Test synth (a VST3 instrument built with the tests) | — | done (2026-11-03) |
-| P10d | Plugin editor window (Windows first, Linux later): an "Edit" button per instrument track opens the plugin's own window (presets, sounds), which can stay open while playing and be closed again | VST-05 | pending |
+| P10d | Plugin editor window (Windows first, Linux later): an "Edit" button per instrument track opens the plugin's own window (presets, sounds), which can stay open while playing and be closed again | VST-05, 05a | done (2026-11-04) on Linux/Wine (tests, live under Wine); real plugins on Windows by the user; Linux editor later (P12) |
 | P10e | Instrument and its state in the project | VST-06, 06a | done (2026-11-03) |
 | P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | pending |
 | — | **Milestone v2: VST3 instruments** | | |
 | P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |
 | P13 | Note and sound editing | — | later (not in v1) |
-| PL1 | Look and feel: clearer hover, active and selected states (e.g. the chosen instrument), so every click gives feedback; colours through roles, contrast ≥ the minimum (user feedback 2026-11-03) | UI-02, UI-06 | later |
+| PL1 | Look and feel: clearer hover, active and selected states (e.g. the chosen instrument), so every click gives feedback; colours through roles, contrast ≥ the minimum (user feedback 2026-11-03). Also: the Take column gets narrow in a small window, so the output list can be cut off | UI-02, UI-06 | later |
 | PL2 | Preset menu in mini-daw for plugins that publish program lists (VST3 IUnitInfo), next to the plugin's own editor | VST-05 | later, idea |
 | PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b (`Crosscheck-2026-11-02.md`) |
 

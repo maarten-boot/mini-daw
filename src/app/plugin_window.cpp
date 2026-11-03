@@ -1,0 +1,179 @@
+#include "plugin_window.hpp"
+
+#include <GLFW/glfw3.h>
+#if defined(_WIN32)
+#define GLFW_EXPOSE_NATIVE_WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <GLFW/glfw3native.h>
+#include <windows.h>
+#endif
+
+namespace minidaw::app {
+
+struct PluginWindows::Window {
+    GLFWwindow* window = nullptr;
+    InstrumentEditor editor;
+    bool settingSize = false;  // our own glfwSetWindowSize: no size callback loop
+};
+
+#if defined(_WIN32)
+namespace {
+
+PluginWindows::Window* windowOf(GLFWwindow* w)
+{
+    return static_cast<PluginWindows::Window*>(glfwGetWindowUserPointer(w));
+}
+
+void setClientSize(PluginWindows::Window& pw, InstrumentEditor::Size s)
+{
+    pw.settingSize = true;
+    glfwSetWindowSize(pw.window, s.width, s.height);
+    pw.settingSize = false;
+}
+
+// The user resized the window: the view decides (its limits); snap back if it differs.
+void onWindowSize(GLFWwindow* w, int width, int height)
+{
+    PluginWindows::Window* pw = windowOf(w);
+    if (!pw || pw->settingSize || width <= 0 || height <= 0) return;
+    const InstrumentEditor::Size got = pw->editor.resize({width, height});
+    if (got.width > 0 && got.height > 0 && !(got == InstrumentEditor::Size{width, height})) setClientSize(*pw, got);
+}
+
+// The window moved to a display with another scale: plugins that support
+// scaling usually ask for a new size afterwards (resizeView).
+void onContentScale(GLFWwindow* w, float xscale, float /*yscale*/)
+{
+    if (PluginWindows::Window* pw = windowOf(w)) pw->editor.setContentScale(xscale);
+}
+
+} // namespace
+#endif
+
+PluginWindows::PluginWindows() = default;
+
+PluginWindows::~PluginWindows()
+{
+    closeAll();
+}
+
+bool PluginWindows::supported()
+{
+#if defined(_WIN32)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::string& title, GLFWwindow* owner,
+                         std::string& error)
+{
+    if (const auto it = windows_.find(track); it != windows_.end()) {
+        glfwShowWindow(it->second->window);
+        glfwFocusWindow(it->second->window);
+        return true;
+    }
+#if defined(_WIN32)
+    auto pw = std::make_unique<Window>();
+    Window& win = *pw;
+    if (!win.editor.create(instrument, "HWND", error)) return false;
+    float scale = 1.0f, unused = 1.0f;
+    if (owner) glfwGetWindowContentScale(owner, &scale, &unused);
+    win.editor.setContentScale(scale);
+    const InstrumentEditor::Size size = win.editor.size();
+    if (size.width <= 0 || size.height <= 0) {
+        error = "The plugin's editor window has no size.";
+        return false;
+    }
+
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // the plugin draws itself
+    glfwWindowHint(GLFW_RESIZABLE, win.editor.resizable() ? GLFW_TRUE : GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_FALSE);  // VST3 sizes are pixels on Windows
+    win.window = glfwCreateWindow(size.width, size.height, title.c_str(), nullptr, nullptr);
+    glfwDefaultWindowHints();
+    if (!win.window) {
+        error = "The editor window could not be created.";
+        return false;
+    }
+    HWND hwnd = glfwGetWin32Window(win.window);
+    if (owner) {
+        // Owned by the main window: above it, minimised with it, no taskbar button of its own.
+        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(glfwGetWin32Window(owner)));
+        int ox = 0, oy = 0;
+        glfwGetWindowPos(owner, &ox, &oy);
+        glfwSetWindowPos(win.window, ox + 60, oy + 80);
+    }
+    glfwSetWindowUserPointer(win.window, &win);
+    win.editor.onResizeRequest = [&win](InstrumentEditor::Size s) {
+        setClientSize(win, s);
+        return true;
+    };
+    if (!win.editor.attach(hwnd, error)) {
+        win.editor.close();
+        glfwDestroyWindow(win.window);
+        return false;
+    }
+    // The view may have changed its size while attaching.
+    const InstrumentEditor::Size now = win.editor.size();
+    if (now.width > 0 && now.height > 0 && !(now == size)) setClientSize(win, now);
+    glfwSetWindowSizeCallback(win.window, onWindowSize);
+    glfwSetWindowContentScaleCallback(win.window, onContentScale);
+    glfwShowWindow(win.window);
+    glfwFocusWindow(win.window);
+    windows_[track] = std::move(pw);
+    return true;
+#else
+    (void)instrument;
+    (void)title;
+    (void)owner;
+    error = "Plugin editor windows are not available on this system yet (Windows first).";
+    return false;
+#endif
+}
+
+bool PluginWindows::isOpen(int track) const
+{
+    return windows_.count(track) != 0;
+}
+
+void PluginWindows::close(int track)
+{
+    const auto it = windows_.find(track);
+    if (it == windows_.end()) return;
+    Window& win = *it->second;
+    win.editor.close();  // the view leaves the window before the window goes
+    if (win.window) {
+        glfwSetWindowUserPointer(win.window, nullptr);
+        glfwDestroyWindow(win.window);
+    }
+    windows_.erase(it);
+}
+
+void PluginWindows::closeAll()
+{
+    while (!windows_.empty()) close(windows_.begin()->first);
+}
+
+void PluginWindows::update()
+{
+    std::vector<int> done;
+    for (const auto& [track, win] : windows_) {
+        // Closed by the user, or the instrument was unloaded (that closes the editor).
+        if (glfwWindowShouldClose(win->window) || !win->editor.isOpen()) done.push_back(track);
+    }
+    for (const int track : done) close(track);
+}
+
+std::vector<int> PluginWindows::openTracks() const
+{
+    std::vector<int> out;
+    for (const auto& [track, win] : windows_) out.push_back(track);
+    return out;
+}
+
+} // namespace minidaw::app
