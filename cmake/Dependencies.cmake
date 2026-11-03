@@ -36,6 +36,14 @@ FetchContent_Declare(nlohmann_json
     GIT_TAG        v3.12.0
     GIT_SHALLOW    TRUE)
 
+# VST3 SDK (P10): only the parts a host needs; vstgui4 and doc are not fetched.
+FetchContent_Declare(vst3sdk
+    GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
+    GIT_TAG        v3.8.1_build_84
+    GIT_SHALLOW    TRUE
+    GIT_SUBMODULES "base;pluginterfaces;public.sdk"
+    SOURCE_SUBDIR  _not_a_cmake_project)   # the hosting sources are compiled in src/CMakeLists.txt
+
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        v3.16.1
@@ -49,6 +57,50 @@ FetchContent_Declare(catch2
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(nlohmann_json)
+FetchContent_MakeAvailable(vst3sdk)
+
+# ---------------------------------------------------------------------------
+# VST3 SDK hosting part (P10), compiled as our own static library: the
+# interface IDs, module loading (Windows/Linux), the host helper classes and
+# the moduleinfo.json reader. No plugin-side code, no VSTGUI.
+# ---------------------------------------------------------------------------
+set(vst3 ${vst3sdk_SOURCE_DIR})
+set(MINIDAW_VST3_SOURCES
+    ${vst3}/pluginterfaces/base/conststringtable.cpp
+    ${vst3}/pluginterfaces/base/coreiids.cpp
+    ${vst3}/pluginterfaces/base/funknown.cpp
+    ${vst3}/pluginterfaces/base/ustring.cpp
+    ${vst3}/public.sdk/source/common/commonstringconvert.cpp
+    ${vst3}/public.sdk/source/common/memorystream.cpp
+    ${vst3}/public.sdk/source/vst/vstinitiids.cpp
+    ${vst3}/public.sdk/source/vst/hosting/connectionproxy.cpp
+    ${vst3}/public.sdk/source/vst/hosting/eventlist.cpp
+    ${vst3}/public.sdk/source/vst/hosting/hostclasses.cpp
+    ${vst3}/public.sdk/source/vst/hosting/module.cpp
+    ${vst3}/public.sdk/source/vst/hosting/parameterchanges.cpp
+    ${vst3}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+    ${vst3}/public.sdk/source/vst/hosting/plugprovider.cpp
+    ${vst3}/public.sdk/source/vst/hosting/processdata.cpp
+    ${vst3}/public.sdk/source/vst/moduleinfo/moduleinfoparser.cpp
+    ${vst3}/public.sdk/source/vst/utility/stringconvert.cpp)
+if(WIN32)
+    list(APPEND MINIDAW_VST3_SOURCES ${vst3}/public.sdk/source/vst/hosting/module_win32.cpp
+                                     ${vst3}/public.sdk/source/common/threadchecker_win32.cpp)
+elseif(APPLE)
+    # macOS later (P12)
+else()
+    list(APPEND MINIDAW_VST3_SOURCES ${vst3}/public.sdk/source/vst/hosting/module_linux.cpp
+                                     ${vst3}/public.sdk/source/common/threadchecker_linux.cpp)
+endif()
+add_library(minidaw_vst3host STATIC ${MINIDAW_VST3_SOURCES})
+target_include_directories(minidaw_vst3host SYSTEM PUBLIC ${vst3})
+target_compile_definitions(minidaw_vst3host PUBLIC $<IF:$<CONFIG:Debug>,DEVELOPMENT=1,RELEASE=1>)
+set_target_properties(minidaw_vst3host PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    target_link_libraries(minidaw_vst3host PUBLIC ole32 shell32)
+else()
+    target_link_libraries(minidaw_vst3host PUBLIC ${CMAKE_DL_LIBS})
+endif()
 
 FetchContent_MakeAvailable(rtaudio rtmidi)
 

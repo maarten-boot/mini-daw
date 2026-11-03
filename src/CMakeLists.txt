@@ -8,10 +8,13 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
+    core/src/instrument.cpp
+    core/src/instrument_rack.cpp
     core/src/log.cpp
     core/src/meter.cpp
     core/src/monitor.cpp
     core/src/player.cpp
+    core/src/plugin_scan.cpp
     core/src/project.cpp
     core/src/recorder.cpp
     core/src/midi_input.cpp
@@ -26,7 +29,7 @@ target_include_directories(minidaw_core PUBLIC
     core/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(minidaw_core
-    PUBLIC  minidaw_rtaudio minidaw_rtmidi
+    PUBLIC  minidaw_rtaudio minidaw_rtmidi minidaw_vst3host
     PRIVATE minidaw_warnings nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath

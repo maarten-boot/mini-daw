@@ -90,12 +90,19 @@ struct ProjectSettings {
 // Put `folder` first in the recent list (no duplicates, at most kMaxRecentProjects).
 void rememberProject(ProjectSettings& settings, const std::string& folder);
 
+// VST3 instruments (SPEC-VST-01a): folders searched besides the standard ones.
+struct InstrumentSettings {
+    std::vector<std::string> folders;  // UTF-8, at most 8 (folder1 .. folder8)
+    friend bool operator==(const InstrumentSettings&, const InstrumentSettings&) = default;
+};
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
     AudioSettings audio;
     RecordingSettings recording;
     ProjectSettings project;
+    InstrumentSettings instruments;
 };
 
 struct ConfigLoadResult {

@@ -23,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -137,6 +138,13 @@ public:
     // Errors reported by RtMidi while ports are open.
     std::vector<std::string> takeMessages();
 
+    // Live MIDI taps (P10b), GUI thread: every channel message arriving on the
+    // port (by name; also after it is reopened) is written to `ring` too, from
+    // the port's input thread. At most 8 per port. removeTap returns only when
+    // the input thread no longer writes to the ring.
+    bool addTap(const std::string& port, SpscRing<RawMidi>* ring);
+    void removeTap(const std::string& port, SpscRing<RawMidi>* ring);
+
 private:
     struct Port {
         std::string name;
@@ -146,6 +154,10 @@ private:
         std::atomic<std::uint64_t> lost{0};
         std::atomic<std::uint64_t> disconnects{0};
         std::atomic<bool> connected{false};
+        // Live MIDI for instruments (P10b): every channel message is also
+        // written to these rings (producer: this port's input thread).
+        std::array<std::atomic<SpscRing<RawMidi>*>, 8> taps{};
+        std::atomic<int> inCallback{0};  // the input thread is in onMessage (tap removal waits)
         bool everConnected = false;     // GUI thread only
         std::string openedAs;           // GUI thread only: RtMidi name it was opened as
         std::string lastProblem;        // GUI thread only: last failure reported
@@ -162,6 +174,8 @@ private:
     RtMidiIn* scanner(std::string& error);
 
     std::unique_ptr<RtMidiIn> scanner_;  // only lists ports (GUI thread)
+    std::map<std::string, std::vector<SpscRing<RawMidi>*>> tapsByPort_;  // GUI thread
+    void applyTaps(Port& port);
 
     std::vector<std::unique_ptr<Port>> ports_;
     std::atomic<bool> capture_{false};

@@ -58,3 +58,18 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 > pushed it, check the CI run
 - Run 41609704861 (`a5c68a8`): green. The installer is now built by the Windows makensis (O0 confirmed); NSIS 3.13.0 pinned; the Windows download is flat (setup 0.67 MB, exe/com 1.4 MB each from MSVC); PE check on the downloaded files OK. Artifact fetched with curl over HTTP/1.1.
 - Not committed: `res/*.xmp` (darktable sidecars of the user's images).
+
+## 9. P10: VST3 instruments (a–c, e)
+> start P10
+
+- User's choices: in-process hosting; scan on demand with a cache; editor on Windows first; test with Surge XT, Dexed and a test synth; later Cherry Audio and Arturia on Windows 10.
+- SDK v3.8.1_build_84 (2026-08-11, MIT) as a dependency, only `base`, `pluginterfaces`, `public.sdk`; the hosting sources compiled as `minidaw_vst3host` (Linux and MinGW).
+- P10c test synth first (separate processor and controller, gain parameter, state), as a real bundle for the tests.
+- P10a scanning (`plugin_scan`), P10b `Vst3Instrument` + `InstrumentRack` (hazard-protected config, live MIDI taps on MidiInputs, playback MIDI at the sample, notes released at Stop), GUI (Settings → Instruments, instrument per MIDI track), P10e state in project.json (base64).
+- Read the SDK's VST Usage Guidelines: "VST®" on first use + attribution in docs; the "VST Compatible" logo question is open for the user (SPEC-LIC-05).
+- Found on the way: missing SDK sources (pluginview, thread checker), negative file-clock values in `moduleStamp`, my test IDs clashing with the existing T-VST-01..07 (renumbered), and my own mis-clicks in the GUI test (redone).
+- Tests: Linux 127/127, Wine 126/126; live GUI test with the test synth (scan, live play, record, playback, project restore).
+- Open: P10d (editor), real plugins (T-VST-17), the logo decision.
+
+> yes commit it, i'll push; text only, no logo
+- SPEC-LIC-05: no VST Compatible logo; text form ("VST®", attribution sentence) only.

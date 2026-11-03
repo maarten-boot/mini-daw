@@ -20,6 +20,8 @@
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/instrument.hpp"
+#include "minidaw/plugin_scan.hpp"
 #include "minidaw/log.hpp"
 #include "minidaw/meter.hpp"
 #include "minidaw/midi_input.hpp"
@@ -148,6 +150,21 @@ struct AppState {
     std::string projectDialogError;
     std::string windowTitle;               // shown in the title bar
 
+    // Instruments (P10). The rack (inside `audio`) is cleared before these are
+    // unloaded (unloadAllInstruments at exit).
+    minidaw::PluginCache pluginCache;
+    minidaw::PluginScanner scanner;
+    bool scanning = false;
+    bool scanRetryBad = false;
+    bool showInstruments = false;
+    std::string instrumentFolderInput;
+    std::map<int, std::unique_ptr<minidaw::Vst3Instrument>> instruments;  // by track number
+    std::string rackSignature;               // what the rack was configured for
+    std::vector<std::pair<std::string, minidaw::SpscRing<minidaw::RawMidi>*>> rackTaps;
+    std::map<int, std::pair<std::filesystem::path, std::shared_ptr<const std::vector<minidaw::MidiEvent>>>> takeEvents;
+    double instrumentStateAt = 0.0;
+    std::vector<std::string> instrumentNotes;
+
     // Playback (P8). Declared last: destroyed first (its thread reads `audio`).
     minidaw::MidiPlayer midiPlayer;
     bool playbackForRecording = false;     // the run was started by Record (timeline for the takes)
@@ -268,6 +285,8 @@ void stopPlayback(AppState& app)
     app.playbackForRecording = false;
 }
 
+void reloadInstruments(AppState& app);  // P10, further down
+
 void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
 {
     if (app.session.recording()) {
@@ -284,6 +303,7 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
         app.config.audio = settings;
         if (save) saveConfig(app);
         for (auto& t : app.tracks) refreshTakeLength(app, t);  // MIDI lengths depend on the rate (M9)
+        reloadInstruments(app);  // instruments run at the stream rate
     } else if (!(previous == settings)) {
         minidaw::OpenResult back = app.audio.open(previous, app.scan);
         logOpenResult(app, back);
@@ -600,6 +620,7 @@ void drawMenuBar(AppState& app, bool& quit)
             app.pendingRecording = app.config.recording;
             app.showRecordingSettings = true;
         }
+        if (ImGui::MenuItem("Instruments (VST\xc2\xae" "3)...")) app.showInstruments = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -993,6 +1014,328 @@ void syncMidiPorts(AppState& app, bool force = false)
     }
 }
 
+// --- Instruments (P10) ------------------------------------------------------
+std::filesystem::path pluginCacheFile(const AppState& app)
+{
+    return app.configPath.parent_path() / "plugins.json";
+}
+
+std::filesystem::path pluginScanMarker(const AppState& app)
+{
+    return app.configPath.parent_path() / "plugin-scan.inprogress";
+}
+
+std::vector<std::filesystem::path> instrumentFolders(const AppState& app)
+{
+    std::vector<std::filesystem::path> f = minidaw::standardVst3Folders();
+    for (const auto& extra : app.config.instruments.folders) f.push_back(minidaw::pathFromUtf8(extra));
+    return f;
+}
+
+std::string instrumentLabel(const minidaw::PluginClass& c)
+{
+    return c.vendor.empty() ? c.name : c.name + " (" + c.vendor + ")";
+}
+
+void startScan(AppState& app)
+{
+    app.scanner.start(instrumentFolders(app), app.pluginCache, pluginScanMarker(app), app.scanRetryBad);
+    app.scanning = true;
+    app.log.info("Scanning for VST3 instruments: " + std::to_string(app.scanner.total()) + " module(s)");
+}
+
+// One module per frame, so the window stays responsive (SPEC-VST-01a).
+void stepScan(AppState& app)
+{
+    if (!app.scanning) return;
+    const std::string current = app.scanner.current();
+    if (!current.empty()) app.log.info("Scanning " + current);
+    if (app.scanner.step()) return;
+    app.scanning = false;
+    app.pluginCache = app.scanner.result();
+    std::string err;
+    if (!minidaw::savePluginCache(pluginCacheFile(app), app.pluginCache, err)) app.log.error(err);
+    std::size_t bad = 0;
+    for (const auto& m : app.pluginCache.modules) {
+        if (m.status == minidaw::ModuleStatus::Failed || m.status == minidaw::ModuleStatus::Crashed) {
+            ++bad;
+            app.log.warning(std::string("Instrument module ") + minidaw::moduleStatusName(m.status) + ": " + m.path +
+                            (m.error.empty() ? "" : " - " + m.error));
+        }
+    }
+    app.log.info("Scan done: " + std::to_string(app.pluginCache.instruments().size()) + " instrument(s), " +
+                 std::to_string(bad) + " module(s) with problems");
+}
+
+// At start: a scan that did not finish means a module crashed mini-daw.
+void checkScanMarker(AppState& app)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(pluginScanMarker(app), ec)) return;
+    minidaw::PluginScanner s;
+    s.start({}, app.pluginCache, pluginScanMarker(app));  // reads and removes the marker
+    const std::string crashed = s.crashedLastTime();
+    if (crashed.empty()) return;
+    for (auto& m : app.pluginCache.modules) {
+        if (m.path == crashed) {
+            m.status = minidaw::ModuleStatus::Crashed;
+            m.error = "mini-daw stopped while loading this module during a scan.";
+            m.classes.clear();
+        }
+    }
+    std::string err;
+    minidaw::savePluginCache(pluginCacheFile(app), app.pluginCache, err);
+    const std::string note = "mini-daw stopped while scanning " + crashed + " last time; that module is skipped "
+                             "(Settings > Instruments can try it again).";
+    app.instrumentNotes.push_back(note);
+    app.log.warning(note);
+}
+
+unsigned int instrumentRate(const AppState& app)
+{
+    return app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+}
+
+// The plugins' current state into the tracks (for the project file).
+void refreshInstrumentStates(AppState& app)
+{
+    for (auto& t : app.tracks) {
+        const auto it = app.instruments.find(t.number);
+        if (it == app.instruments.end() || !it->second->loaded()) continue;
+        std::string comp, ctrl, err;
+        if (it->second->getState(comp, ctrl, err)) {
+            t.instrumentState = std::move(comp);
+            t.instrumentControllerState = std::move(ctrl);
+        }
+    }
+}
+
+void syncRack(AppState& app, bool force = false);
+
+void unloadInstrument(AppState& app, int track)
+{
+    const auto it = app.instruments.find(track);
+    if (it == app.instruments.end()) return;
+    std::unique_ptr<minidaw::Vst3Instrument> inst = std::move(it->second);
+    app.instruments.erase(it);
+    syncRack(app, true);  // the audio thread lets go of it first
+    inst->unload();
+}
+
+void unloadAllInstruments(AppState& app)
+{
+    app.audio.instruments().clear();
+    for (const auto& [port, ring] : app.rackTaps) app.midi.removeTap(port, ring);
+    app.rackTaps.clear();
+    app.rackSignature.clear();
+    for (auto& [n, inst] : app.instruments) inst->unload();
+    app.instruments.clear();
+}
+
+// Loads the instrument a track names (with its saved state). Reports a
+// missing or failing plugin as a note; the track keeps its settings.
+bool loadTrackInstrument(AppState& app, minidaw::Track& t)
+{
+    unloadInstrument(app, t.number);
+    if (t.instrumentClass.empty()) return false;
+    std::filesystem::path module = minidaw::pathFromUtf8(t.instrumentModule);
+    if (const minidaw::PluginClass* c = app.pluginCache.findClass(t.instrumentClass)) {
+        module = minidaw::pathFromUtf8(c->modulePath);  // it may have moved since the project was saved
+        if (t.instrumentName.empty()) t.instrumentName = c->name;
+    }
+    auto inst = std::make_unique<minidaw::Vst3Instrument>();
+    std::string err;
+    std::error_code ec;
+    if (module.empty() || !std::filesystem::exists(module, ec) ||
+        !inst->load(module, t.instrumentClass, instrumentRate(app), err)) {
+        const std::string note = "Track " + std::to_string(t.number) + ": instrument \"" +
+                                 (t.instrumentName.empty() ? t.instrumentClass : t.instrumentName) +
+                                 "\" could not be loaded" + (err.empty() ? " (not found; scan in Settings > Instruments)" : ": " + err);
+        app.instrumentNotes.push_back(note);
+        app.log.warning(note);
+        return false;
+    }
+    if (!t.instrumentState.empty() && !inst->setState(t.instrumentState, t.instrumentControllerState, err)) {
+        app.log.warning("Track " + std::to_string(t.number) + ": " + err);
+    }
+    t.instrumentModule = minidaw::pathToUtf8(module);
+    app.log.info("Track " + std::to_string(t.number) + ": instrument " + inst->name() + " loaded");
+    app.instruments[t.number] = std::move(inst);
+    syncRack(app, true);
+    return true;
+}
+
+void chooseInstrument(AppState& app, minidaw::Track& t, const minidaw::PluginClass& c)
+{
+    t.instrumentClass = c.classId;
+    t.instrumentModule = c.modulePath;
+    t.instrumentName = c.name;
+    t.instrumentState.clear();
+    t.instrumentControllerState.clear();
+    t.midiOut.clear();  // the instrument plays instead
+    loadTrackInstrument(app, t);
+}
+
+void restoreInstruments(AppState& app)
+{
+    unloadAllInstruments(app);
+    for (auto& t : app.tracks) {
+        if (t.kind == minidaw::TrackKind::Midi && !t.instrumentClass.empty()) loadTrackInstrument(app, t);
+    }
+}
+
+// After the sample rate changed: load again at the new rate, with the state.
+void reloadInstruments(AppState& app)
+{
+    if (app.instruments.empty()) return;
+    refreshInstrumentStates(app);
+    restoreInstruments(app);
+}
+
+// The rack follows the tracks: live MIDI for armed tracks, the take during
+// playback (not for an armed track while recording). Rebuilt when anything
+// it depends on changes.
+void syncRack(AppState& app, bool force)
+{
+    std::string sig = app.playbackForRecording ? "R" : "P";
+    for (const auto& t : app.tracks) {
+        const auto it = app.instruments.find(t.number);
+        if (t.kind != minidaw::TrackKind::Midi || it == app.instruments.end()) continue;
+        sig += "|" + std::to_string(t.number) + (t.armed ? "a" : "-") + t.midiPort + "#" +
+               std::to_string(t.midiChannel) + "@" + minidaw::pathToUtf8(t.take) + ":" +
+               std::to_string(t.takeStart) + "&" + std::to_string(reinterpret_cast<std::uintptr_t>(it->second.get()));
+    }
+    sig += "/" + std::to_string(instrumentRate(app));
+    if (!force && sig == app.rackSignature) return;
+    app.rackSignature = sig;
+
+    for (const auto& [port, ring] : app.rackTaps) app.midi.removeTap(port, ring);
+    app.rackTaps.clear();
+    std::vector<minidaw::InstrumentRack::SlotSetup> slots;
+    std::vector<std::string> livePorts;
+    for (const auto& t : app.tracks) {
+        const auto it = app.instruments.find(t.number);
+        if (t.kind != minidaw::TrackKind::Midi || it == app.instruments.end() || !it->second->loaded()) continue;
+        if (slots.size() >= minidaw::InstrumentRack::kMaxSlots) break;
+        minidaw::InstrumentRack::SlotSetup s;
+        s.instrument = it->second.get();
+        s.track = t.number;
+        s.liveChannel = t.midiChannel;
+        s.live = t.armed && !t.midiPort.empty();
+        if (!t.take.empty() && !(t.armed && app.playbackForRecording)) {
+            auto& cached = app.takeEvents[t.number];
+            if (cached.first != t.take || !cached.second) {
+                minidaw::SmfData d;
+                std::string err;
+                cached.first = t.take;
+                cached.second = minidaw::readSmf(t.take, d, err)
+                                    ? std::make_shared<const std::vector<minidaw::MidiEvent>>(
+                                          minidaw::smfToFrames(d, instrumentRate(app)))
+                                    : nullptr;
+            }
+            s.playback = cached.second;
+            s.takeStart = t.takeStart;
+        }
+        slots.push_back(s);
+        livePorts.push_back(s.live ? t.midiPort : std::string());
+    }
+    app.audio.instruments().configure(slots);
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        if (livePorts[i].empty()) continue;
+        minidaw::SpscRing<minidaw::RawMidi>* ring = app.audio.instruments().liveRing(i);
+        if (app.midi.addTap(livePorts[i], ring)) app.rackTaps.emplace_back(livePorts[i], ring);
+    }
+}
+
+// Every frame: idle the plugins (controller updates), keep the rack in step,
+// and keep the saved states fresh for the project (every 5 s).
+void updateInstruments(AppState& app)
+{
+    for (auto& [n, inst] : app.instruments) inst->idle();
+    syncRack(app);
+    const double now = ImGui::GetTime();
+    if (!app.instruments.empty() && now >= app.instrumentStateAt) {
+        app.instrumentStateAt = now + 5.0;
+        refreshInstrumentStates(app);
+    }
+}
+
+void drawInstrumentsWindow(AppState& app)
+{
+    if (!app.showInstruments) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(56 * em, 32 * em), ImGuiCond_Appearing);
+    if (ImGui::Begin("Instruments (VST\xc2\xae" "3)###instruments", &app.showInstruments)) {
+        ImGui::TextWrapped("VST is a registered trademark of Steinberg Media Technologies GmbH.");  // SPEC-LIC-05
+        ImGui::SeparatorText("Folders");
+        for (const auto& f : minidaw::standardVst3Folders()) ImGui::BulletText("%s", minidaw::pathToUtf8(f).c_str());
+        int removeIndex = -1;
+        for (std::size_t i = 0; i < app.config.instruments.folders.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::BulletText("%s", app.config.instruments.folders[i].c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this folder");
+            ImGui::PopID();
+        }
+        if (removeIndex >= 0) {
+            app.config.instruments.folders.erase(app.config.instruments.folders.begin() + removeIndex);
+            saveConfig(app);
+        }
+        ImGui::SetNextItemWidth(36 * em);
+        ImGui::InputText("##folder", &app.instrumentFolderInput);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(app.instrumentFolderInput.empty() || app.config.instruments.folders.size() >= 8);
+        if (ImGui::Button("Add folder")) {
+            app.config.instruments.folders.push_back(app.instrumentFolderInput);
+            app.instrumentFolderInput.clear();
+            saveConfig(app);
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Scan");
+        ImGui::BeginDisabled(app.scanning);
+        if (ImGui::Button("Scan")) startScan(app);
+        ImGui::SameLine();
+        ImGui::Checkbox("Also try modules that failed or crashed before", &app.scanRetryBad);
+        ImGui::EndDisabled();
+        if (app.scanning) {
+            ImGui::TextWrapped("Scanning %zu of %zu: %s", app.scanner.done() + 1, app.scanner.total(),
+                               app.scanner.current().c_str());
+        }
+        for (const auto& n : app.instrumentNotes) ImGui::TextWrapped("Note: %s", n.c_str());
+
+        const auto list = app.pluginCache.instruments();
+        ImGui::SeparatorText(("Instruments found: " + std::to_string(list.size())).c_str());
+        if (list.empty()) ImGui::TextWrapped("None yet. Press Scan (VST3 instruments in the folders above).");
+        const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
+        if (!list.empty() && ImGui::BeginTable("instruments", 4, flags, ImVec2(0, 12 * ImGui::GetTextLineHeightWithSpacing()))) {
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Vendor");
+            ImGui::TableSetupColumn("Version");
+            ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const auto& c : list) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.name.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.vendor.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.version.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.modulePath.c_str());
+            }
+            ImGui::EndTable();
+        }
+        bool header = false;
+        for (const auto& m : app.pluginCache.modules) {
+            if (m.status != minidaw::ModuleStatus::Failed && m.status != minidaw::ModuleStatus::Crashed) continue;
+            if (!header) ImGui::SeparatorText("Modules with problems");
+            header = true;
+            ImGui::BulletText("%s: %s%s", m.path.c_str(), minidaw::moduleStatusName(m.status),
+                              m.error.empty() ? "" : (" - " + m.error).c_str());
+        }
+    }
+    ImGui::End();
+}
+
 // --- Projects (P9) ---------------------------------------------------------
 // Where projects are proposed: <recording folder>/projects.
 std::filesystem::path projectsBase(const AppState& app)
@@ -1102,8 +1445,10 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
         app.log.error("Open project: " + err);
         return false;
     }
+    refreshInstrumentStates(app);
     saveProjectNow(app);  // the current one first
     stopPlayback(app);
+    unloadAllInstruments(app);
     app.projectFolder = folder;
     app.tracks = std::move(d.tracks);
     app.tracksCreated = true;
@@ -1114,6 +1459,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
     for (const auto& w : warnings) app.log.warning("Project: " + w);
     importIntoProject(app);  // a project saved with outside takes (should not happen, but repairable)
     for (auto& t : app.tracks) refreshTakeLength(app, t);
+    restoreInstruments(app);  // with their saved state (SPEC-VST-06)
     app.projectSavedText = minidaw::projectToJson(currentProject(app), folder);
     if (!warnings.empty()) {
         // Opening needed repairs: keep the original, then save the repaired
@@ -1159,6 +1505,7 @@ bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool
         app.projectDialogError = err;
         return false;
     }
+    refreshInstrumentStates(app);
     saveProjectNow(app);
     std::vector<minidaw::Track> tracks = keepTracks ? app.tracks : std::vector<minidaw::Track>{};
     if (keepTracks && !importIntoProject(app, folder, tracks)) {
@@ -1173,6 +1520,7 @@ bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool
     if (keepTracks) {
         app.tracks = std::move(tracks);
     } else {
+        unloadAllInstruments(app);
         app.projectNotes.clear();
         app.tracks.clear();
         app.tracksCreated = false;  // the default track comes back
@@ -1189,6 +1537,7 @@ bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool
 void closeProject(AppState& app)
 {
     if (app.session.recording() || app.projectFolder.empty()) return;
+    refreshInstrumentStates(app);
     saveProjectNow(app);
     stopPlayback(app);
     app.log.info("Closed project " + minidaw::pathToUtf8(app.projectFolder));
@@ -1196,6 +1545,7 @@ void closeProject(AppState& app)
     app.projectSavedText.clear();
     app.projectNotes.clear();
     app.projectError.clear();
+    unloadAllInstruments(app);
     app.tracks.clear();
     app.tracksCreated = false;
     app.midiPortsDirty = true;
@@ -1291,6 +1641,7 @@ void applyGains(AppState& app)
         const float g = minidaw::trackGain(t, solo);
         app.audio.player().setGain(t.number, g, g);
         app.midiPlayer.setGain(t.number, g);
+        app.audio.instruments().setGain(t.number, g);
     }
 }
 
@@ -1325,7 +1676,7 @@ bool startPlayback(AppState& app, bool forRecording)
         if (t.take.empty() || (forRecording && t.armed)) continue;
         if (t.kind == minidaw::TrackKind::Audio) {
             clips.push_back({t.number, t.take, t.takeStart});
-        } else if (!t.midiOut.empty()) {
+        } else if (!t.midiOut.empty() && !app.instruments.count(t.number)) {  // instruments: via the rack
             minidaw::SmfData d;
             std::string err;
             if (!minidaw::readSmf(t.take, d, err)) {
@@ -1350,14 +1701,21 @@ bool startPlayback(AppState& app, bool forRecording)
                          },
                          app.playWarnings);
     // Only takes that really play make it an overdub (a skipped clip does not, M6).
-    app.overdub = audioStarted > 0 || app.midiPlayer.trackCount() > 0;
+    const bool instrumentPlays = std::any_of(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
+        return !t.take.empty() && app.instruments.count(t.number) && !(forRecording && t.armed);
+    });
+    app.overdub = audioStarted > 0 || app.midiPlayer.trackCount() > 0 || instrumentPlays;
     if (forRecording) app.recordStartPosition = position;
     app.playbackForRecording = forRecording;
     for (const auto& w : app.playWarnings) app.log.warning("Playback: " + w);
     char buf[160];
-    std::snprintf(buf, sizeof buf, "%s from %.3f s: %zu audio and %zu MIDI take(s)",
+    const auto instrumentTakes = static_cast<std::size_t>(std::count_if(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
+        return !t.take.empty() && app.instruments.count(t.number) && !(forRecording && t.armed);
+    }));
+    std::snprintf(buf, sizeof buf, "%s from %.3f s: %zu audio, %zu MIDI-out and %zu instrument take(s)",
                   forRecording ? "Recording timeline started" : "Playback started",
-                  static_cast<double>(position) / info.sampleRate, audioStarted, app.midiPlayer.trackCount());
+                  static_cast<double>(position) / info.sampleRate, audioStarted, app.midiPlayer.trackCount(),
+                  instrumentTakes);
     app.log.info(buf);
     return true;
 }
@@ -1741,15 +2099,39 @@ void drawTracksPanel(AppState& app)
                                                    : ImGui::CalcTextSize(minidaw::pathToUtf8(t.take.filename()).c_str()).x;
                 ImGui::SetNextItemWidth(std::max(7 * em, ImGui::GetContentRegionAvail().x - nameW -
                                                              ImGui::GetStyle().ItemSpacing.x));
-                const std::string out = t.midiOut.empty() ? std::string("(no MIDI output)") : t.midiOut;
+                // Where the track's MIDI goes: a MIDI output, or a VST3 instrument (P10).
+                const bool hasInst = !t.instrumentClass.empty();
+                const bool instLoaded = app.instruments.count(t.number) != 0;
+                const std::string out = hasInst ? "Instrument: " + t.instrumentName + (instLoaded ? "" : " (not loaded)")
+                                        : t.midiOut.empty() ? std::string("(no MIDI output)")
+                                                            : t.midiOut;
                 if (ImGui::BeginCombo("##out", out.c_str())) {
-                    if (ImGui::Selectable("(no MIDI output)", t.midiOut.empty())) t.midiOut.clear();
+                    if (ImGui::Selectable("(no MIDI output)", !hasInst && t.midiOut.empty())) {
+                        unloadInstrument(app, t.number);
+                        t.instrumentClass.clear();
+                        t.midiOut.clear();
+                    }
                     for (const auto& name : app.midiPlayer.outputPorts()) {
-                        if (ImGui::Selectable(name.c_str(), t.midiOut == name)) t.midiOut = name;
+                        if (ImGui::Selectable(name.c_str(), !hasInst && t.midiOut == name)) {
+                            unloadInstrument(app, t.number);
+                            t.instrumentClass.clear();
+                            t.midiOut = name;
+                        }
+                    }
+                    ImGui::SeparatorText("Instruments (VST3)");
+                    const auto list = app.pluginCache.instruments();
+                    if (list.empty()) ImGui::TextUnformatted("None found yet: Settings > Instruments > Scan");
+                    for (const auto& c : list) {
+                        ImGui::PushID(c.classId.c_str());
+                        if (ImGui::Selectable(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
+                            chooseInstrument(app, t, c);
+                        }
+                        ImGui::PopID();
                     }
                     ImGui::EndCombo();
                 } else if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("MIDI output this track plays to: %s", out.c_str());
+                    ImGui::SetTooltip("Where this track's MIDI goes (live when armed, and its take when playing): %s",
+                                      out.c_str());
                 }
                 ImGui::SameLine();
             }
@@ -1780,6 +2162,7 @@ void drawTracksPanel(AppState& app)
     }
     if (removeIndex >= 0) {
         if (app.tracks[removeIndex].kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
+        unloadInstrument(app, app.tracks[removeIndex].number);
         app.tracks.erase(app.tracks.begin() + removeIndex);
     }
     for (const auto& w : app.midiWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
@@ -1968,6 +2351,7 @@ void openTakeFolder(AppState& app, const std::filesystem::path& folder)
         return;
     }
     stopPlayback(app);
+    unloadAllInstruments(app);    // the old tracks' instruments
     app.tracks = std::move(tracks);
     for (auto& t : app.tracks) refreshTakeLength(app, t);
     app.tracksCreated = true;     // no default track on top of these
@@ -2126,6 +2510,8 @@ int runGui(AppState& app)
     setFontSize(app, app.config.fontSize, false);
     app.scan = minidaw::scanDevices();
     logScan(app);
+    app.pluginCache = minidaw::loadPluginCache(pluginCacheFile(app));
+    checkScanMarker(app);
     applyAudioSettings(app, app.config.audio, false);
     if (!app.config.project.last.empty()) {  // reopen the last project (SPEC-PRJ-02a)
         const std::filesystem::path last = minidaw::pathFromUtf8(app.config.project.last);
@@ -2167,6 +2553,8 @@ int runGui(AppState& app)
         syncMidiPorts(app);
         updateMeters(app);
         updateTransport(app);
+        updateInstruments(app);
+        stepScan(app);
         autosaveProject(app);
         {
             const std::string t = std::string(minidaw::kProductName) + " " + minidaw::kVersion +
@@ -2202,6 +2590,7 @@ int runGui(AppState& app)
         drawLogWindow(app);
         drawTakeBrowser(app);
         drawProjectDialog(app);
+        drawInstrumentsWindow(app);
 
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
@@ -2211,7 +2600,9 @@ int runGui(AppState& app)
 
     if (app.session.recording()) app.session.stop();  // finish the files before the stream closes
     stopPlayback(app);
+    refreshInstrumentStates(app);
     saveProjectNow(app);
+    unloadAllInstruments(app);
     app.midi.closeAll();
     app.audio.close();
     minidaw::app::rendererShutdown();

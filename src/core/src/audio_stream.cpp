@@ -314,7 +314,10 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
     }
 
     // Playback (SPEC-PLAY-02): also without an output, so the timeline runs.
-    self->player_.process(static_cast<float*>(output), frames, output ? self->cbOutputChannels_ : 0, blockFrame);
+    const auto timeline =
+        self->player_.process(static_cast<float*>(output), frames, output ? self->cbOutputChannels_ : 0, blockFrame);
+    // Instruments (P10b): live MIDI and the takes' MIDI at their timeline position.
+    self->rack_.process(static_cast<float*>(output), frames, output ? self->cbOutputChannels_ : 0, timeline);
 
     // Input monitoring (SPEC-MON-01). Each gain is read on its own; a change
     // that is half visible in one block is complete in the next.

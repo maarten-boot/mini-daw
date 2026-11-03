@@ -66,6 +66,10 @@ bool sameFileContent(const std::filesystem::path& a, const std::filesystem::path
 // `file` lies below `folder` (not the folder itself).
 bool isInsideFolder(const std::filesystem::path& file, const std::filesystem::path& folder);
 
+// Base64 (RFC 4648) for plugin states in project.json (P10e).
+std::string base64Encode(const std::string& bytes);
+bool base64Decode(const std::string& text, std::string& bytes);  // false: not base64
+
 // Folders under `base` that hold a project (one level deep), by name.
 std::vector<std::filesystem::path> listProjects(const std::filesystem::path& base);
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <exception>
 #include <optional>
+#include <thread>
 
 namespace minidaw {
 
@@ -273,6 +274,7 @@ std::vector<MidiPortEvent> MidiInputs::setPorts(const std::vector<std::string>& 
         auto port = std::make_unique<Port>();
         port->name = name;
         port->capture = &capture_;
+        applyTaps(*port);
         ports_.push_back(std::move(port));
         added = true;
     }
@@ -359,14 +361,52 @@ void MidiInputs::onMessage(double /*deltaTime*/, std::vector<unsigned char>* mes
     auto* port = static_cast<Port*>(user);
     if (message == nullptr || message->empty()) return;
     port->seen.fetch_add(1, std::memory_order_relaxed);
-    if (!port->capture->load(std::memory_order_acquire)) return;
     const std::uint8_t len = channelMessageSize((*message)[0]);
     if (len == 0 || message->size() < len) return;
     RawMidi m;
     m.ns = now;
     m.size = len;
     for (std::uint8_t i = 0; i < len; ++i) m.data[i] = (*message)[i];
+    // Live taps for instruments (also while not recording).
+    port->inCallback.fetch_add(1, std::memory_order_seq_cst);
+    for (auto& t : port->taps) {
+        if (SpscRing<RawMidi>* ring = t.load(std::memory_order_seq_cst)) ring->write(&m, 1);
+    }
+    port->inCallback.fetch_sub(1, std::memory_order_seq_cst);
+    if (!port->capture->load(std::memory_order_acquire)) return;
     if (!port->ring.write(&m, 1)) port->lost.fetch_add(1, std::memory_order_relaxed);
+}
+
+void MidiInputs::applyTaps(Port& port)
+{
+    const auto it = tapsByPort_.find(port.name);
+    for (std::size_t i = 0; i < port.taps.size(); ++i) {
+        SpscRing<RawMidi>* ring = (it != tapsByPort_.end() && i < it->second.size()) ? it->second[i] : nullptr;
+        port.taps[i].store(ring, std::memory_order_seq_cst);
+    }
+}
+
+bool MidiInputs::addTap(const std::string& name, SpscRing<RawMidi>* ring)
+{
+    auto& list = tapsByPort_[name];
+    if (std::find(list.begin(), list.end(), ring) != list.end()) return true;
+    if (list.size() >= 8) return false;
+    list.push_back(ring);
+    if (Port* p = find(name)) applyTaps(*p);
+    return true;
+}
+
+void MidiInputs::removeTap(const std::string& name, SpscRing<RawMidi>* ring)
+{
+    auto it = tapsByPort_.find(name);
+    if (it == tapsByPort_.end()) return;
+    it->second.erase(std::remove(it->second.begin(), it->second.end(), ring), it->second.end());
+    if (Port* p = find(name)) {
+        applyTaps(*p);
+        // A callback that read the old pointer may still be writing: wait for it.
+        while (p->inCallback.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();
+    }
+    if (it->second.empty()) tapsByPort_.erase(it);
 }
 
 std::size_t MidiInputs::read(const std::string& name, RawMidi* out, std::size_t max)

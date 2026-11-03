@@ -20,7 +20,12 @@
 | P9 | Projects: project folder with project.json and takes, autosave, open/new/save as/recent, reopen last, takes copied in | PRJ-01..02, 01a, 02a | done (2026-11-02) on Linux and Wine; Windows by the user |
 | P9b | Windows packaging: mini-daw.exe without console + mini-daw.com for the command line, icon, NSIS installer (per user), built in CI | PKG-01..03 | done (2026-11-03) on Linux/Wine; real Windows (installer pages, SmartScreen, Start menu) by the user |
 | — | **Milestone v1: record and play back MIDI and audio on Windows 10** | | |
-| P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | pending |
+| P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | P10a, b, c, e done (2026-11-03); P10d (editor) pending |
+| P10a | SDK 3.8.1 (hosting part) as a dependency; scanning with cache, moduleinfo.json, crash marker | VST-01, 01a | done (2026-11-03) |
+| P10b | Instrument (load, process, MIDI mapping, parameters, state) and the instrument rack in the audio engine (live MIDI taps, playback MIDI at the sample); GUI: Settings → Instruments, instrument per MIDI track | VST-02, 02a | done (2026-11-03) on Linux and Wine; real plugins by the user |
+| P10c | Test synth (a VST3 instrument built with the tests) | — | done (2026-11-03) |
+| P10d | Plugin editor window (Windows first, Linux later) | VST-05 | pending |
+| P10e | Instrument and its state in the project | VST-06, 06a | done (2026-11-03) |
 | P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | pending |
 | — | **Milestone v2: VST3 instruments** | | |
 | P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |

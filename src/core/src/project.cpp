@@ -50,6 +50,64 @@ fs::path loadedPath(const std::string& stored, const fs::path& folder)
 
 } // namespace
 
+std::string base64Encode(const std::string& bytes)
+{
+    static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    std::size_t i = 0;
+    for (; i + 2 < bytes.size(); i += 3) {
+        const unsigned v = (static_cast<unsigned char>(bytes[i]) << 16) | (static_cast<unsigned char>(bytes[i + 1]) << 8) |
+                           static_cast<unsigned char>(bytes[i + 2]);
+        out += abc[(v >> 18) & 63];
+        out += abc[(v >> 12) & 63];
+        out += abc[(v >> 6) & 63];
+        out += abc[v & 63];
+    }
+    if (i + 1 == bytes.size()) {
+        const unsigned v = static_cast<unsigned char>(bytes[i]) << 16;
+        out += abc[(v >> 18) & 63];
+        out += abc[(v >> 12) & 63];
+        out += "==";
+    } else if (i + 2 == bytes.size()) {
+        const unsigned v = (static_cast<unsigned char>(bytes[i]) << 16) | (static_cast<unsigned char>(bytes[i + 1]) << 8);
+        out += abc[(v >> 18) & 63];
+        out += abc[(v >> 12) & 63];
+        out += abc[(v >> 6) & 63];
+        out += '=';
+    }
+    return out;
+}
+
+bool base64Decode(const std::string& text, std::string& bytes)
+{
+    bytes.clear();
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    if (text.size() % 4 != 0) return false;
+    for (std::size_t i = 0; i < text.size(); i += 4) {
+        int v[4];
+        for (int k = 0; k < 4; ++k) {
+            const char c = text[i + static_cast<std::size_t>(k)];
+            v[k] = c == '=' ? (i + 4 == text.size() && k >= 2 ? -2 : -1) : val(c);
+            if (v[k] == -1) return false;
+        }
+        if (v[2] == -2 && v[3] != -2) return false;
+        const unsigned n = (static_cast<unsigned>(v[0]) << 18) | (static_cast<unsigned>(v[1]) << 12) |
+                           (static_cast<unsigned>(v[2] < 0 ? 0 : v[2]) << 6) | static_cast<unsigned>(v[3] < 0 ? 0 : v[3]);
+        bytes += static_cast<char>((n >> 16) & 0xFF);
+        if (v[2] >= 0) bytes += static_cast<char>((n >> 8) & 0xFF);
+        if (v[3] >= 0) bytes += static_cast<char>(n & 0xFF);
+    }
+    return true;
+}
+
 bool isInsideFolder(const fs::path& file, const fs::path& folder)
 {
     const fs::path rel = normalFolder(file).lexically_relative(normalFolder(folder));
@@ -71,6 +129,13 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
             j["midiInput"] = t.midiPort;
             j["midiChannel"] = t.midiChannel;
             j["midiOutput"] = t.midiOut;
+            if (!t.instrumentClass.empty()) {
+                j["instrument"] = {{"classId", t.instrumentClass},
+                                   {"module", t.instrumentModule},
+                                   {"name", t.instrumentName},
+                                   {"state", base64Encode(t.instrumentState)},
+                                   {"controllerState", base64Encode(t.instrumentControllerState)}};
+            }
         }
         j["armed"] = t.armed;
         j["volumeDb"] = t.volumeDb;
@@ -179,6 +244,25 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
                 }
             }
             t.midiOut = get("midiOutput", std::string());
+            if (j.contains("instrument")) {
+                const json& ins = j["instrument"];
+                bool ok = ins.is_object() && ins.contains("classId") && ins["classId"].is_string();
+                if (ok) {
+                    t.instrumentClass = ins["classId"].get<std::string>();
+                    t.instrumentModule = ins.value("module", std::string());
+                    t.instrumentName = ins.value("name", std::string());
+                    ok = base64Decode(ins.value("state", std::string()), t.instrumentState) &&
+                         base64Decode(ins.value("controllerState", std::string()), t.instrumentControllerState);
+                    if (!ok) {
+                        t.instrumentState.clear();
+                        t.instrumentControllerState.clear();
+                        warnings.push_back(where + "the saved instrument settings are damaged; the instrument starts "
+                                                   "with its defaults.");
+                    }
+                } else {
+                    warnings.push_back(where + "'instrument' is damaged; no instrument.");
+                }
+            }
         }
         t.armed = get("armed", false);
         t.volumeDb = std::clamp(get("volumeDb", 0.0f), kMinVolumeDb, kMaxVolumeDb);

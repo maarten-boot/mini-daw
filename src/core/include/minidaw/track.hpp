@@ -28,6 +28,13 @@ struct Track {
     std::int64_t takeStart = 0;              // timeline frame of the take's first frame (overdub shift: < 0 ok)
     std::uint64_t takeFrames = 0;            // its length at the session rate (takeLengthFrames)
     std::string midiOut;                     // MIDI: output port for playback; empty = none (default)
+    // MIDI: a VST3 instrument (P10, SPEC-VST-02/06). Empty class = none. When
+    // set, live and played MIDI go to it instead of `midiOut`.
+    std::string instrumentClass;             // 32 hex digits
+    std::string instrumentModule;            // UTF-8 path of the module (to find it again)
+    std::string instrumentName;              // for messages when it is missing
+    std::string instrumentState;             // the plugin's processor state (bytes)
+    std::string instrumentControllerState;   // the plugin's controller state (bytes)
     float volumeDb = 0.0f;                   // -60 (= silent) .. +6
     bool mute = false;
     bool solo = false;

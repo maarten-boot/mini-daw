@@ -10,6 +10,7 @@
 #include "minidaw/devices.hpp"
 #include "minidaw/frame_clock.hpp"
 #include "minidaw/monitor.hpp"
+#include "minidaw/instrument_rack.hpp"
 #include "minidaw/player.hpp"
 #include "minidaw/recorder.hpp"
 #include "minidaw/session_io.hpp"
@@ -99,6 +100,8 @@ public:
     // Playback (SPEC-PLAY-02). Start/stop it on the GUI thread; close() stops it.
     Player& player() { return player_; }
     const Player& player() const { return player_; }
+    // VST3 instruments (P10b): configured on the GUI thread, played in the callback.
+    InstrumentRack& instruments() { return rack_; }
 
     std::uint64_t xruns() const { return xruns_.load(std::memory_order_relaxed); }
     std::uint64_t callbacks() const { return callbacks_.load(std::memory_order_relaxed); }
@@ -147,6 +150,7 @@ private:
     std::array<std::atomic<float>, kMaxInputChannels> monitorRight_{};
     MonitorGains monitorCurrent_;  // audio thread only: gains of the last block
     Player player_;
+    InstrumentRack rack_;
     std::atomic<std::uint64_t> xruns_{0};
     std::atomic<std::uint64_t> callbacks_{0};
     FrameClock clock_;

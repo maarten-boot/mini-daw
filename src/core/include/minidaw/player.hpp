@@ -100,7 +100,10 @@ public:
     std::vector<std::string> takeErrors();
 
     // Audio thread: adds the clips to `out` (interleaved, 1 or 2 channels).
-    void process(float* out, unsigned int frames, unsigned int outChannels, std::uint64_t blockFrame);
+    // Returns the timeline position of this block while playing (for the
+    // instruments' playback MIDI), empty when not playing.
+    std::optional<std::uint64_t> process(float* out, unsigned int frames, unsigned int outChannels,
+                                         std::uint64_t blockFrame);
 
     // Tests: run the reader once (fill the rings), instead of its thread.
     void startForTest(const std::vector<PlaybackClip>& clips, std::uint64_t position, unsigned int sampleRate,

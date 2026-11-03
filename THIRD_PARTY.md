@@ -11,6 +11,7 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 | imgui | v1.92.9 | MIT | https://github.com/ocornut/imgui | GUI |
 | glfw | 3.4 | Zlib | https://github.com/glfw/glfw | Window, OpenGL context, input |
 | nlohmann_json | v3.12.0 | MIT | https://github.com/nlohmann/json | Project files (JSON), header-only |
+| vst3sdk | v3.8.1_build_84 | MIT | https://github.com/steinbergmedia/vst3sdk | Hosting VST3 instruments (P10); only `base`, `pluginterfaces`, `public.sdk` |
 | catch2 | v3.16.1 | BSL-1.0 | https://github.com/catchorg/Catch2 | Unit tests (not part of the program) |
 
 RtAudio and RtMidi use the MIT licence text with one extra non-binding request: that changes be sent back to the author.
@@ -28,5 +29,4 @@ Used to build or package mini-daw, not part of the program itself.
 
 | Component | Licence | Step | Notes |
 |-----------|---------|------|-------|
-| Steinberg VST3 SDK | MIT (since SDK 3.8; LICENSE file checked 2026-11-01) | P10 | VST3 instrument hosting |
 | Steinberg ASIO SDK | GPLv3 or Steinberg proprietary | P11b | **Optional, off by default, never in this repository.** A binary built with it under GPLv3 is itself GPLv3. See README. |

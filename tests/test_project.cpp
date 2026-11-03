@@ -279,3 +279,54 @@ TEST_CASE("T-PRJ-05: last and recent projects in the config", "[project][config]
     CHECK(back.config.project == cfg.project);
     CHECK(parseConfig(defaultConfigText()).config.project.last.empty());
 }
+
+TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[project][vst][T-VST-15]")
+{
+    std::string out;
+    for (const std::string& s : {std::string(), std::string("a"), std::string("ab"), std::string("abc"),
+                                std::string("\0\xff\x10 binary\x80", 12)}) {
+        REQUIRE(base64Decode(base64Encode(s), out));
+        CHECK(out == s);
+    }
+    CHECK(base64Encode("Man") == "TWFu");
+    CHECK(base64Encode("Ma") == "TWE=");
+    CHECK_FALSE(base64Decode("abc", out));    // not a multiple of 4
+    CHECK_FALSE(base64Decode("ab!d", out));   // bad character
+
+    test::TempDir dir;
+    std::string err;
+    REQUIRE(createProjectFolder(dir.path() / "P", err));
+    ProjectData d;
+    Track t;
+    t.kind = TrackKind::Midi;
+    t.instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
+    t.instrumentModule = "C:/Program Files/Common Files/VST3/Synth.vst3";
+    t.instrumentName = "Synth";
+    t.instrumentState = std::string("\x01\x02\x00\xfe", 4);
+    t.instrumentControllerState = "ctrl";
+    d.tracks.push_back(t);
+    REQUIRE(saveProject(dir.path() / "P", d, err));
+    ProjectData back;
+    std::vector<std::string> w;
+    REQUIRE(loadProject(dir.path() / "P", back, w, err));
+    CHECK(w.empty());
+    REQUIRE(back.tracks.size() == 1);
+    CHECK(back.tracks[0].instrumentClass == t.instrumentClass);
+    CHECK(back.tracks[0].instrumentModule == t.instrumentModule);
+    CHECK(back.tracks[0].instrumentState == t.instrumentState);
+    CHECK(back.tracks[0].instrumentControllerState == "ctrl");
+
+    // A damaged state: a warning, the instrument stays (with its defaults).
+    const std::string text = R"({"format":"mini-daw project","version":1,"tracks":[{"number":1,"name":"K","kind":"midi",
+        "instrument":{"classId":"0123456789ABCDEF0123456789ABCDEF","state":"#bad"}}]})";
+    REQUIRE(projectFromJson(text, dir.path(), back, w, err));
+    CHECK(back.tracks[0].instrumentClass.size() == 32);
+    CHECK(back.tracks[0].instrumentState.empty());
+    CHECK(w.size() == 1);
+
+    // Extra instrument folders in the config.
+    AppConfig cfg;
+    cfg.instruments.folders = {"D:\\VST3 extra", "/opt/vst3"};
+    REQUIRE(saveConfigFile(dir.path() / "c.ini", cfg).empty());
+    CHECK(loadConfigFile(dir.path() / "c.ini").config.instruments == cfg.instruments);
+}

@@ -232,6 +232,9 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             } else {
                 cfg.recording.latencyCorrectionMs = static_cast<int>(v);
             }
+        } else if (section == "instruments" && key.size() >= 7 && key.compare(0, 6, "folder") == 0 &&
+                   key.find_first_not_of("0123456789", 6) == std::string::npos) {
+            if (!value.empty() && cfg.instruments.folders.size() < 8) cfg.instruments.folders.push_back(value);
         } else if (section == "project" && key == "last") {
             cfg.project.last = value;
         } else if (section == "project" && key.size() >= 7 && key.compare(0, 6, "recent") == 0 &&
@@ -432,6 +435,10 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "recording", "latency_correction_ms",
                           std::to_string(config.recording.latencyCorrectionMs));
     text = setConfigValue(text, "project", "last", quoteConfigString(config.project.last));
+    for (std::size_t i = 0; i < 8; ++i) {
+        const std::string v = i < config.instruments.folders.size() ? config.instruments.folders[i] : std::string();
+        text = setConfigValue(text, "instruments", "folder" + std::to_string(i + 1), quoteConfigString(v));
+    }
     for (std::size_t i = 0; i < kMaxRecentProjects; ++i) {
         const std::string v = i < config.project.recent.size() ? config.project.recent[i] : std::string();
         text = setConfigValue(text, "project", "recent" + std::to_string(i + 1), quoteConfigString(v));

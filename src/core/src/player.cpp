@@ -267,14 +267,16 @@ void Player::readerLoop(Run* run)
 }
 
 // Audio thread. No locks, no allocation, no I/O.
-void Player::process(float* out, unsigned int frames, unsigned int outChannels, std::uint64_t blockFrame)
+std::optional<std::uint64_t> Player::process(float* out, unsigned int frames, unsigned int outChannels,
+                                             std::uint64_t blockFrame)
 {
     Run* r = nullptr;
     do {
         r = run_.load(std::memory_order_seq_cst);
         inUse_.store(r, std::memory_order_seq_cst);
     } while (r != run_.load(std::memory_order_seq_cst));
-    if (r == nullptr) return;
+    if (r == nullptr) return std::nullopt;
+    const std::uint64_t blockPosition = r->startPosition + r->played.load(std::memory_order_relaxed);
 
     if (!r->anchored.load(std::memory_order_relaxed)) {
         r->anchorStream.store(blockFrame, std::memory_order_relaxed);
@@ -353,6 +355,7 @@ void Player::process(float* out, unsigned int frames, unsigned int outChannels, 
     }
     r->played.fetch_add(frames, std::memory_order_relaxed);
     inUse_.store(nullptr, std::memory_order_release);
+    return blockPosition;
 }
 
 } // namespace minidaw
