@@ -1,6 +1,7 @@
 #include "minidaw/instrument.hpp"
 
 #include "console_capture.hpp"
+#include "no_error_dialogs.hpp"
 #include "minidaw/path_util.hpp"
 #include "minidaw/ring_buffer.hpp"
 
@@ -147,6 +148,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
     Impl& m = *impl_;
     hostContext();
     detail::ConsoleCapture capture;
+    detail::NoErrorDialogs noDialogs;
     try {
         m.module = VST3::Hosting::Module::create(pathToUtf8(module), error);
         if (!m.module) {
@@ -253,6 +255,7 @@ void Vst3Instrument::unload()
 {
     Impl& m = *impl_;
     detail::ConsoleCapture capture;
+    detail::NoErrorDialogs noDialogs;
     if (m.active) {
         m.processor->setProcessing(false);
         m.component->setActive(false);

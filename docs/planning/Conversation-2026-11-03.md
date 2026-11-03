@@ -77,3 +77,14 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 ## 10. CI after P10
 > pushed
 - Run 41629642662 (`7db2936`): linux and licence pass; windows fails to compile the SDK's `module_win32.cpp` with MSVC: the SDK's `SMTG_CPP20` uses `__cplusplus` only, which MSVC reports as 199711 unless `/Zc:__cplusplus` is given. Added for the SDK host library (public) and the test synth. Could only be checked by CI (no MSVC here).
+
+## 11. CI after the MSVC fix: Windows tests hang
+> pushed (run 41632628383)
+- `a57e8cf`: MSVC now builds everything; linux and licence pass. The Windows Test step hung for over 54 minutes.
+- `gh run cancel` was refused (HTTP 403: the personal access token may not cancel runs); the user cancelled the run in the web UI.
+> stuck at: … Start 105: T-VST-10: moduleinfo.json is used without loading; damaged modules fail cleanly
+- Cause (most likely): T-VST-10 loads a text file as a plugin. The SDK passes it straight to `LoadLibraryW`, and on real Windows that can open a system error dialog ("Bad Image" / "not a valid Win32 application") that nobody can close on the runner. Wine shows no such dialog, so the local tests passed.
+> yes cancel it and do both fixes
+- Fix 1: `NoErrorDialogs` (`SetThreadErrorMode` with FAILCRITICALERRORS, NOGPFAULTERRORBOX, NOOPENFILEERRORBOX) around loading a module in the scanner and around loading and unloading an instrument; the old mode is restored afterwards. A broken plugin now fails with an error message, also in the program itself, where the dialog would otherwise interrupt a scan.
+- Fix 2: `ctest --timeout 300` in both CI test steps, so that a hang fails within minutes and shows which test hung.
+- Linux 127/127, Wine 126/126. Only CI can confirm the fix (needs real Windows).

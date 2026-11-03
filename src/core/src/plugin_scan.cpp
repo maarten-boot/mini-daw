@@ -1,6 +1,7 @@
 #include "minidaw/plugin_scan.hpp"
 
 #include "console_capture.hpp"
+#include "no_error_dialogs.hpp"
 #include "minidaw/path_util.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -293,6 +294,7 @@ ScannedModule scanModule(const fs::path& module)
 
     // 2. Load the module and ask its factory.
     detail::ConsoleCapture capture;  // some modules print while loading
+    detail::NoErrorDialogs noDialogs;
     std::string error;
     try {
         auto mod = VST3::Hosting::Module::create(pathText, error);
