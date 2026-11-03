@@ -18,7 +18,7 @@
 | P7b | MIDI hot-plug and diagnostics log (from the user's Windows test) | REC-01b, LOG-01 | done (2026-11-02) on Linux and Wine; Windows with a USB keyboard to be tested by the user |
 | P8 | Transport and playback: streamed audio playback, MIDI playback to outputs, volume/mute/solo, overdub with latency estimate, open take folder, stream watchdog | PLAY-01..06, 01a..04a, DEV-05 | done (2026-11-02) on Linux; Windows (WASAPI, MIDI out) and the overdub loopback measurement to be tested by the user |
 | P9 | Projects: project folder with project.json and takes, autosave, open/new/save as/recent, reopen last, takes copied in | PRJ-01..02, 01a, 02a | done (2026-11-02) on Linux and Wine; Windows by the user |
-| P9b | Windows packaging: GUI subsystem (no console window; `--list-devices` still prints), icon, installer | — | pending |
+| P9b | Windows packaging: mini-daw.exe without console + mini-daw.com for the command line, icon, NSIS installer (per user), built in CI | PKG-01..03 | done (2026-11-03) on Linux/Wine; real Windows (installer pages, SmartScreen, Start menu) by the user |
 | — | **Milestone v1: record and play back MIDI and audio on Windows 10** | | |
 | P10 | VST3 hosting: scan, load, process, editor window, save state | VST-01, 02, 05, 06 | pending |
 | P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | pending |

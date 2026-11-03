@@ -13,6 +13,7 @@
 //   mini-daw --contrast-report     print every colour pair and its contrast, then exit
 //   mini-daw --version             print the version, then exit
 
+#include "icon_data.hpp"
 #include "imgui_theme.hpp"
 #include "renderer.hpp"
 
@@ -2067,6 +2068,14 @@ int runGui(AppState& app)
         glfwTerminate();
         return 1;
     }
+#if !defined(_WIN32)
+    // Window icon (P9b); on Windows it comes from the program's icon resource.
+    GLFWimage icons[2] = {
+        {minidaw::app::kIcon32Size, minidaw::app::kIcon32Size, const_cast<unsigned char*>(minidaw::app::kIcon32)},
+        {minidaw::app::kIcon48Size, minidaw::app::kIcon48Size, const_cast<unsigned char*>(minidaw::app::kIcon48)},
+    };
+    glfwSetWindowIcon(window, 2, icons);
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2199,12 +2208,35 @@ void printUsage(const char* argv0)
     std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> [--monitor] |\n"
                 "        --record-test <seconds> <folder> | --contrast-report | --version | --help]\n",
                 argv0);
+#if defined(_WIN32)
+    std::printf("In a terminal, run mini-daw.com (or just `mini-daw`): it prints and returns exit codes;\n"
+                "mini-daw.exe is the window program.\n");
+#endif
 }
+
+#if defined(_WIN32)
+// mini-daw.exe has no console (P9b). Given a command-line option anyway, it
+// writes to the terminal it was started from, if any; the exit code is then
+// not seen by cmd (use mini-daw.com for that).
+void attachToParentConsole(int argc)
+{
+    if (argc < 2) return;
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out != nullptr && out != INVALID_HANDLE_VALUE) return;  // console program, or redirected
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+    FILE* f = nullptr;
+    freopen_s(&f, "CONOUT$", "w", stdout);
+    freopen_s(&f, "CONOUT$", "w", stderr);
+}
+#endif
 
 } // namespace
 
 int main(int argc, char** argv)
 {
+#if defined(_WIN32)
+    attachToParentConsole(argc);
+#endif
     AppState app;
     app.configPath = minidaw::defaultConfigPath();
     enum class Action { Gui, ListDevices, AudioTest, RecordTest, ContrastReport } action = Action::Gui;

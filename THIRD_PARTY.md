@@ -15,6 +15,15 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 
 RtAudio and RtMidi use the MIT licence text with one extra non-binding request: that changes be sent back to the author.
 
+## Build tools
+
+Used to build or package mini-daw, not part of the program itself.
+
+| Tool | Licence | Used for | Notes |
+|------|---------|----------|-------|
+| NSIS 3 | zlib/libpng (the installer stub that becomes part of the setup program) | Windows installer (P9b) | From the CI runner image or Chocolatey; `makensis` also runs on Linux |
+| Pillow | MIT-CMU (HPND) | Drawing the icon once (`tools/icon/make_icon.py`) | Only on the developer's machine; the generated files are committed |
+
 ## Planned
 
 | Component | Licence | Step | Notes |

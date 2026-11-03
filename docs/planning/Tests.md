@@ -140,6 +140,14 @@ Status column in the Results section at the end.
 |----|------|------|-------------|-----------------|
 | T-UI-12 | SPEC-UI-08 | A+M | `font_size = 20` in config; Ctrl+= / Ctrl+- / Ctrl+0 | Text 20 px; changes by 2 px, limited to 12–32; saved; bad values give a warning |
 
+## Packaging (Windows)
+| ID | Spec | Type | Description | Expected result |
+|----|------|------|-------------|-----------------|
+| T-PKG-01 | SPEC-PKG-01, 03 | A | `tools/check_pe.py` on the built programs (test `pe_check`, also in CI) | mini-daw.exe: window program; mini-daw.com: console program; both with icon GLFW_ICON and version information |
+| T-PKG-02 | SPEC-PKG-01 | A+M | `mini-daw.com --version`, a bad option; `mini-daw.exe --version` from a terminal; double-click mini-daw.exe | Prints, exit codes 0 / 2; .exe prints to the terminal; double-click: window only, no console |
+| T-PKG-03 | SPEC-PKG-02 | A+M | Silent install `/S` and uninstall `/S` (Wine); on Windows: the installer pages, Start menu, Apps & features, SmartScreen, install over an older version | Files in %LOCALAPPDATA%\Programs\mini-daw, Start menu entry, uninstall key with version; uninstall removes them and keeps %APPDATA%\mini-daw; pages readable; SmartScreen "Run anyway" works |
+| T-PKG-04 | SPEC-PKG-03 | M | Icon in Explorer, the taskbar, Apps & features, the installer, the Linux window | The waveform icon everywhere; readable at small sizes |
+
 ## Licensing
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
@@ -258,3 +266,9 @@ Status column in the Results section at the end.
 | 2026-11-03 | T-CI-02 | GitHub Actions run 41540018781 (`6536815`, P9) | pass | Every step of the linux, windows and licence jobs passed (GitHub API); nlohmann/json fetched and licence-checked. The job logs could not be downloaded here (network error), so the test count and the MSVC warning count are not confirmed for this run |
 | 2026-11-03 | crosscheck #7 fixes (N1–N11): T-PRJ-03, 04, 07, 08 | Linux 119/119 ctest; MinGW build under Wine 118/118 Catch2 cases (1657 assertions) | pass | N1 and N2 first reproduced with a small program (type_error.302 / .316) |
 | 2026-11-03 | N1, N5, N6 live | Linux VM, GUI on Xvfb | pass | Last project with `"version":"1"`: mini-daw starts, status line "Could not open the project: … no valid format version"; Recent: missing project disabled; a project with an unknown track kind opens with a warning, `project.json.bak` keeps the original, the repaired file is saved |
+| 2026-11-03 | T-CI-02 | GitHub Actions run 41602682487 (`f863bda`, crosscheck #7 fixes) | pass | windows 5m25s and linux 2m4s: build, test and smoke-run steps passed (read via the API; logs not downloadable on this network); licence |
+| 2026-11-03 | (Linux test build) | `ubuntu:24.04` container with the host's CA bundle | pass | 119/119; GLIBC ≤ 2.38 |
+| 2026-11-03 | T-PKG-01 | MinGW build (`tools/check_pe.py`) | pass | mini-daw.exe window program, mini-daw.com console program, both with GLFW_ICON and version info. (`pe_check` cannot run through ctest in the MinGW build dir: test discovery runs the .exe; on the Windows CI it runs) |
+| 2026-11-03 | T-PKG-02 (Wine part) | Wine | pass | `.com --version` 0, bad option 2; `.exe --version` printed too |
+| 2026-11-03 | T-PKG-03 (silent) | makensis 3.09 in an `ubuntu:24.04` container; install/uninstall under Wine | pass | 1.8 MB setup; files, Start menu link, uninstall key (version 0.1.0); after uninstall all gone, `%APPDATA%\mini-daw\config.ini` kept. The installer pages did not show on Xvfb under Wine (black screenshot): to check on Windows |
+| 2026-11-03 | T-PKG-04 (Linux part) | Linux VM, `xprop _NET_WM_ICON` | pass | Window carries the 32×32 and 48×48 icon |

@@ -27,4 +27,11 @@ if(Python3_Interpreter_FOUND)
         COMMAND Python3::Interpreter -I ${PROJECT_SOURCE_DIR}/tools/check_licenses.py
                 --root ${PROJECT_SOURCE_DIR})
     set_tests_properties(licence_check PROPERTIES LABELS "licence")
+    # Windows programs: mini-daw.exe without console, mini-daw.com with, both
+    # with icon and version information (T-PKG-01).
+    if(WIN32 AND TARGET minidaw AND TARGET minidaw_cli)
+        add_test(NAME pe_check
+            COMMAND Python3::Interpreter -I ${PROJECT_SOURCE_DIR}/tools/check_pe.py $<TARGET_FILE_DIR:minidaw>)
+        set_tests_properties(pe_check PROPERTIES LABELS "package")
+    endif()
 endif()

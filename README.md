@@ -4,7 +4,7 @@ a simple daw just for recording and playback with VST3 instrument support
 
 A small program to record MIDI and audio input on several tracks at once, with monitoring and playback. VST3 instrument hosting comes later. Windows 10 first; Linux and macOS later.
 
-**Status:** early version (steps P2–P9). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Each track has a level meter (with dBFS value and a CLIP label) and, for audio tracks, a Monitor switch to hear the input while armed (use headphones). MIDI keyboards can be unplugged and plugged in again; they reconnect by themselves. View → Log (Ctrl+L) shows a diagnostics log, also kept as `mini-daw.log` next to `config.ini` (on Windows in `%APPDATA%\mini-daw`). Play back what you recorded (Space = Play/Stop, Home = to the start), with volume, mute and solo per track; MIDI tracks play to a MIDI output you choose. Record while other tracks play to overdub along with them; File → Open take folder… loads earlier takes. Projects: File → New project… keeps everything (tracks, mix, takes) in one folder, saved automatically and reopened at the next start; Save project as… copies it with its takes. Next: Windows packaging, then VST3 instruments. Adjustable contrast and text size. See `docs/planning/` for the Spec, Plan and test cases.
+**Status:** early version (steps P2–P9b). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Each track has a level meter (with dBFS value and a CLIP label) and, for audio tracks, a Monitor switch to hear the input while armed (use headphones). MIDI keyboards can be unplugged and plugged in again; they reconnect by themselves. View → Log (Ctrl+L) shows a diagnostics log, also kept as `mini-daw.log` next to `config.ini` (on Windows in `%APPDATA%\mini-daw`). Play back what you recorded (Space = Play/Stop, Home = to the start), with volume, mute and solo per track; MIDI tracks play to a MIDI output you choose. Record while other tracks play to overdub along with them; File → Open take folder… loads earlier takes. Projects: File → New project… keeps everything (tracks, mix, takes) in one folder, saved automatically and reopened at the next start; Save project as… copies it with its takes. Windows: an installer (`mini-daw-<version>-setup.exe`, from the CI downloads). Next: VST3 instruments. Adjustable contrast and text size. See `docs/planning/` for the Spec, Plan and test cases.
 
 ## Building
 
@@ -42,7 +42,7 @@ cmake --build build-win
 ### Command line
 
 ```
-mini-daw                     open the GUI
+mini-daw                     open the GUI (Windows: mini-daw.exe; in a terminal mini-daw.com runs, see below)
 mini-daw --config <file>     use this config file instead of the default one
 mini-daw --list-devices      print audio devices and MIDI ports, then exit
 mini-daw --audio-test <sec>  open the configured audio devices, print settings and levels
@@ -119,3 +119,9 @@ ASIO support is **optional and off by default**, and is planned for a later step
 - The mini-daw source code stays MIT in all cases.
 - If you build with `-DMINIDAW_WITH_ASIO=ON` and use the ASIO SDK under GPLv3, the resulting **binary is GPLv3** and must be distributed under GPLv3 terms, including its source code.
 - ASIO is a trademark of Steinberg Media Technologies GmbH. It is not part of the mini-daw name.
+
+## Installing on Windows
+
+Run `mini-daw-<version>-setup.exe`. It installs for your user only, without administrator rights, into `%LOCALAPPDATA%\Programs\mini-daw`, with a Start menu entry (and, if you tick it, a desktop shortcut). Uninstall it in Settings → Apps; your settings, log, projects and takes stay. The installer is not signed yet, so Windows SmartScreen may warn about an unknown publisher: choose **More info → Run anyway**.
+
+The folder has two programs: `mini-daw.exe` (the window, no console) and `mini-daw.com` (the same program for the terminal). In cmd or PowerShell, `mini-daw --list-devices` runs the `.com`, which prints its output and returns exit codes (for `--record-test`).

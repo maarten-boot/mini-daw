@@ -22,3 +22,18 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 - Repaired projects keep `project.json.bak`; open failures shown in the status line; Recent marks missing projects.
 - Spec v0.21; tests T-PRJ-07, T-PRJ-08, T-PRJ-03/04 extended. Linux 119/119, Wine 118/118; N1/N5/N6 checked live.
 - A safety check refused my `rm -f $O/*` (would be `/*` if `$O` were empty); rerun with `"${O:?}"/*`.
+
+## 4. CI, Linux build behind TLS inspection
+> pushed it, check the CI run
+- Run 41602682487 (`f863bda`): build, test and smoke steps passed on Windows and Linux, licence passed (read via the API).
+- The container build failed: "server certificate verification failed". The office network inspects HTTPS ("Reversinglabs D.o.o. Forward Trust CA"); the host trusts that CA, the container did not. Fixed by mounting the host's CA bundle read-only into the container (documented in `CLAUDE.md`). 119/119, GLIBC ≤ 2.38; `dist/` refreshed.
+
+## 5. P9b: Windows packaging
+> start P9b
+
+- User's choices: mini-daw.exe (no console) + mini-daw.com (console) — the Visual Studio `devenv.com` trick; NSIS; current user, no admin; Claude draws the icon.
+- Icon: `tools/icon/make_icon.py` (Pillow) → `res/mini-daw.ico` (7 thicker bars at ≤ 32 px), PNG, `icon_data.hpp` for the Linux window.
+- CMake: app code as an OBJECT library linked into `minidaw` (WIN32) and `minidaw_cli` (`.com`); resource file with `GLFW_ICON` and VERSIONINFO; `installer` target (makensis). `mini-daw.exe` given an option attaches to the parent console.
+- `tools/check_pe.py` (subsystem, icon, version info) as ctest `pe_check` on Windows; CI: NSIS install if missing, PE check, smoke-run via `.com`, installer built and uploaded.
+- Tested: PE check; `.com` exit codes under Wine; installer built with makensis in a container, silent install/uninstall under Wine (config kept); Linux window icon via xprop. The installer pages could not be seen under Wine on Xvfb: for the user on Windows.
+- Spec v0.22 (PKG-01..03), tests T-PKG-01..04, THIRD_PARTY.md "Build tools" (NSIS, Pillow).

@@ -30,7 +30,7 @@ Windows cross-build from Linux (MinGW-w64 13 is installed):
 ```
 cmake -S . -B <build-win> -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake
 cmake --build <build-win>
-rm -rf dist/* && mkdir -p dist/windows && cp <build-win>/src/mini-daw.exe dist/windows/
+rm -rf dist/* && mkdir -p dist/windows && cp <build-win>/src/mini-daw.exe <build-win>/src/mini-daw.com dist/windows/
 ```
 Windows/MSVC is built by GitHub Actions (`.github/workflows/build.yml`).
 
@@ -46,4 +46,4 @@ Windows/MSVC is built by GitHub Actions (`.github/workflows/build.yml`).
 - **Audio signal on the VM:** the sound server is PipeWire with only a dummy output and no real input. Play a test WAV with `pw-play file.wav &`, then `pw-link "pw-play:output_FL" "ALSA plug-in [mini-daw]:input_FL"` (and FR). WirePlumber also links the dummy sink's monitor to mini-daw's input: with monitoring on that is a feedback loop; remove it with `pw-link -d "auto_null:monitor_FL" "ALSA plug-in [mini-daw]:input_FL"` (and FR). `pw-link -l` shows the links.
 
 ## Useful program options
-`--config <file>`, `--list-devices`, `--audio-test <seconds> [--monitor]`, `--record-test <seconds> <folder>` (audio + every MIDI input), `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.
+On Windows the command-line options are for `mini-daw.com` (console); `mini-daw.exe` has no console. `--config <file>`, `--list-devices`, `--audio-test <seconds> [--monitor]`, `--record-test <seconds> <folder>` (audio + every MIDI input), `--contrast-report`, `--version`. Environment: `MINIDAW_D3D_WARP=1` forces the Windows software renderer.
