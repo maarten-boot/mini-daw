@@ -37,3 +37,19 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 - `tools/check_pe.py` (subsystem, icon, version info) as ctest `pe_check` on Windows; CI: NSIS install if missing, PE check, smoke-run via `.com`, installer built and uploaded.
 - Tested: PE check; `.com` exit codes under Wine; installer built with makensis in a container, silent install/uninstall under Wine (config kept); Linux window icon via xprop. The installer pages could not be seen under Wine on Xvfb: for the user on Windows.
 - Spec v0.22 (PKG-01..03), tests T-PKG-01..04, THIRD_PARTY.md "Build tools" (NSIS, Pillow).
+
+## 6. CI after P9b and crosscheck #8
+> pushed it, check the CI run
+> do the crosscheck #8
+
+- Run 41606309851 (`497c975`): MSVC builds both programs, tests, PE check and `.com` smoke run pass; the installer step fails (`File … -> no files found`). Log fetched with `curl --http1.1` and the gh token (gh itself fails on this network).
+- Cause (O0): Windows makensis splits `File` paths at the last backslash; my paths used `/` only. The container test (Linux makensis) passed, and the CMake `installer` target had never run on Windows: my test gap.
+- Crosscheck #8 in `Crosscheck-2026-11-02.md`: O0 high (CI), O1 artifact layout, O2 NSIS unpinned, O3 .ilk in Debug, O4 install while running, O5 older over newer, O6 console attach, O7 text size on high-DPI displays (GLFW already makes the process DPI aware), O8 docs. Waiting for the user's go.
+
+## 7. Crosscheck #8 fixes
+> yes fix O0–O8, O0 first
+
+- O0: platform separator in the NSIS script + native paths. Wanted to prove it with the Windows makensis under Wine: the download (NSIS 3.10 zip from SourceForge, in scratchpad/nsis-dl) was allowed, running it was refused (code from an outside source) — not worked around; CI will confirm.
+- O1 flat download folder, O2 NSIS pinned 3.13.0, O3 `/INCREMENTAL:NO` for the .com, O4 install/uninstall wait for mini-daw to close, O5 older-over-newer question and old folder removed, O6 narrower console attach, O7 display scaling (text, spacing, window size), O8 docs.
+- A safety check refused `rm -f "$ST"/*setup*.exe` (unguarded variable) — rerun as `"${ST:?}"`.
+- Tested: installer rules under Wine (older refused, folder move, while running: exit 2), 150 % scaling on Linux (needed `Xvfb -noreset` and `xrdb -nocpp`).

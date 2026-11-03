@@ -2095,6 +2095,33 @@ int runGui(AppState& app)
     app.rendererName = minidaw::app::rendererName();
     app.log.info("Graphics: " + app.rendererName);
 
+    // Display scaling (crosscheck #8, O7). GLFW makes the process DPI aware, so
+    // sizes are real pixels: text and spacing follow the window's content scale
+    // (font_size stays the size at 100 %), and the window gets the scaled size,
+    // at most 90 % of the screen's work area.
+    {
+        float xs = 1.0f, ys = 1.0f;
+        glfwGetWindowContentScale(window, &xs, &ys);
+        const float scale = std::clamp(xs, 1.0f, 4.0f);
+        ImGui::GetStyle().ScaleAllSizes(scale);
+        ImGui::GetStyle().FontScaleDpi = scale;
+        int wx = 0, wy = 0, ww = 0, wh = 0;
+        if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) glfwGetMonitorWorkarea(monitor, &wx, &wy, &ww, &wh);
+        int w = static_cast<int>(1280 * scale), h = static_cast<int>(760 * scale);
+        if (ww > 0 && wh > 0) {
+            w = std::min(w, ww * 9 / 10);
+            h = std::min(h, wh * 9 / 10);
+        }
+        glfwSetWindowSize(window, w, h);
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "Display scale %.0f %%, window %d x %d", scale * 100.0, w, h);
+        app.log.info(buf);
+        // Moved to a monitor with other scaling: the text follows.
+        glfwSetWindowContentScaleCallback(window, [](GLFWwindow*, float x, float) {
+            ImGui::GetStyle().FontScaleDpi = std::clamp(x, 1.0f, 4.0f);
+        });
+    }
+
     setContrast(app, app.config.contrast, false);
     setFontSize(app, app.config.fontSize, false);
     app.scan = minidaw::scanDevices();
@@ -2215,18 +2242,34 @@ void printUsage(const char* argv0)
 }
 
 #if defined(_WIN32)
-// mini-daw.exe has no console (P9b). Given a command-line option anyway, it
-// writes to the terminal it was started from, if any; the exit code is then
-// not seen by cmd (use mini-daw.com for that).
-void attachToParentConsole(int argc)
+// mini-daw.exe has no console (P9b). Given an option that prints, it writes to
+// the terminal it was started from, if any (the exit code is then not seen by
+// cmd: use mini-daw.com). Only a stream without a handle is reopened, so
+// `mini-daw.exe --list-devices > file` still writes stdout to the file and
+// errors to the terminal; `--config <file>` alone opens the window without
+// touching the terminal (crosscheck #8, O6).
+void attachToParentConsole(int argc, char** argv)
 {
-    if (argc < 2) return;
-    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (out != nullptr && out != INVALID_HANDLE_VALUE) return;  // console program, or redirected
+    bool prints = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            ++i;  // its value
+            continue;
+        }
+        prints = true;  // every other option prints something (or an error)
+    }
+    if (!prints) return;
+    auto missing = [](DWORD which) {
+        const HANDLE h = GetStdHandle(which);
+        return h == nullptr || h == INVALID_HANDLE_VALUE;
+    };
+    const bool noOut = missing(STD_OUTPUT_HANDLE);
+    const bool noErr = missing(STD_ERROR_HANDLE);
+    if (!noOut && !noErr) return;  // console program, or both redirected
     if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
     FILE* f = nullptr;
-    freopen_s(&f, "CONOUT$", "w", stdout);
-    freopen_s(&f, "CONOUT$", "w", stderr);
+    if (noOut) freopen_s(&f, "CONOUT$", "w", stdout);
+    if (noErr) freopen_s(&f, "CONOUT$", "w", stderr);
 }
 #endif
 
@@ -2235,7 +2278,7 @@ void attachToParentConsole(int argc)
 int main(int argc, char** argv)
 {
 #if defined(_WIN32)
-    attachToParentConsole(argc);
+    attachToParentConsole(argc, argv);
 #endif
     AppState app;
     app.configPath = minidaw::defaultConfigPath();

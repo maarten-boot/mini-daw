@@ -10,6 +10,16 @@
 
 Unicode true
 !include "MUI2.nsh"
+!include "WordFunc.nsh"
+
+; Separator before a file name in STAGE paths. The Windows makensis splits a
+; `File` path at the last backslash to find the folder to search; with only
+; '/' it found nothing (crosscheck #8, O0). The Linux makensis uses '/'.
+!ifdef NSIS_WIN32_MAKENSIS
+  !define SEP "\"
+!else
+  !define SEP "/"
+!endif
 
 !ifndef VERSION
   !error "VERSION is not defined"
@@ -33,14 +43,48 @@ VIAddVersionKey "CompanyName" "Maarten Boot"
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\mini-daw"
 
-!define MUI_ICON "${STAGE}/mini-daw.ico"
-!define MUI_UNICON "${STAGE}/mini-daw.ico"
+; A running program cannot be replaced or removed (crosscheck #8, O4). Opening
+; it for writing fails while it runs; then ask to close it. Silent: give up.
+!macro WAIT_UNTIL_CLOSED DIR
+  !define ID ${__LINE__}
+  retry_${ID}:
+  IfFileExists "${DIR}\mini-daw.exe" 0 done_${ID}
+  ClearErrors
+  FileOpen $9 "${DIR}\mini-daw.exe" a
+  IfErrors busy_${ID}
+  FileClose $9
+  IfFileExists "${DIR}\mini-daw.com" 0 done_${ID}
+  ClearErrors
+  FileOpen $9 "${DIR}\mini-daw.com" a
+  IfErrors busy_${ID}
+  FileClose $9
+  Goto done_${ID}
+  busy_${ID}:
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "mini-daw is running. Close it (your project is saved automatically), then choose Retry." /SD IDCANCEL IDRETRY retry_${ID}
+  Abort "mini-daw is running; nothing was changed."
+  done_${ID}:
+  !undef ID
+!macroend
+
+; An older installer over a newer installation: ask first (O5).
+Function .onInit
+  ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+  StrCmp $0 "" done
+  ${VersionCompare} "$0" "${VERSION}" $1
+  StrCmp $1 "1" 0 done
+  MessageBox MB_YESNO|MB_ICONQUESTION "A newer mini-daw ($0) is installed. Replace it with the older version ${VERSION}?" /SD IDNO IDYES done
+  Abort
+  done:
+FunctionEnd
+
+!define MUI_ICON "${STAGE}${SEP}mini-daw.ico"
+!define MUI_UNICON "${STAGE}${SEP}mini-daw.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\mini-daw.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Start mini-daw"
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "${STAGE}/LICENSE.txt"
+!insertmacro MUI_PAGE_LICENSE "${STAGE}${SEP}LICENSE.txt"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -51,12 +95,24 @@ VIAddVersionKey "CompanyName" "Maarten Boot"
 
 Section "mini-daw (required)" SecMain
   SectionIn RO
+  ; An earlier installation in another folder is removed first, so no stray
+  ; copy stays behind (O5).
+  ReadRegStr $1 HKCU "${UNINSTALL_KEY}" "InstallLocation"
+  StrCmp $1 "" same_folder
+  StrCmp $1 "$INSTDIR" same_folder
+  IfFileExists "$1\uninstall.exe" 0 same_folder
+  !insertmacro WAIT_UNTIL_CLOSED "$1"
+  ExecWait '"$1\uninstall.exe" /S _?=$1'
+  Delete "$1\uninstall.exe"
+  RMDir "$1"
+  same_folder:
+  !insertmacro WAIT_UNTIL_CLOSED "$INSTDIR"
   SetOutPath "$INSTDIR"
-  File "${STAGE}/mini-daw.exe"
-  File "${STAGE}/mini-daw.com"
-  File "${STAGE}/LICENSE.txt"
-  File "${STAGE}/THIRD_PARTY.md"
-  File "${STAGE}/README.md"
+  File "${STAGE}${SEP}mini-daw.exe"
+  File "${STAGE}${SEP}mini-daw.com"
+  File "${STAGE}${SEP}LICENSE.txt"
+  File "${STAGE}${SEP}THIRD_PARTY.md"
+  File "${STAGE}${SEP}README.md"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   CreateShortcut "$SMPROGRAMS\mini-daw.lnk" "$INSTDIR\mini-daw.exe"
@@ -84,6 +140,7 @@ SectionEnd
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
+  !insertmacro WAIT_UNTIL_CLOSED "$INSTDIR"
   ; Only what the installer put there. Settings, the log (%APPDATA%\mini-daw)
   ; and projects and takes (Documents\mini-daw) belong to the user and stay.
   Delete "$INSTDIR\mini-daw.exe"

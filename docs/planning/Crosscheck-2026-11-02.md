@@ -201,3 +201,46 @@ Scope: Spec v0.20, Plan, Tests, README, code at commit `6536815` (P9: changes si
 | N12 | No change (noted). |
 
 Result: Linux 119/119 ctest; MinGW build under Wine 118/118 Catch2 cases; live checks of N1, N5, N6 on the VM.
+
+---
+
+# Crosscheck #8 — 2026-11-03 (after P9b)
+
+Scope: Spec v0.22, Plan, Tests, README, code at commit `497c975` (P9b: changes since `f863bda`), CI run 41606309851. Spec ↔ Plan ↔ Tests ↔ code by Claude; the packaging changes also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). The CI failure was read from the job log (fetched over HTTP/1.1; `gh` fails on this network); O7 checked in GLFW's source.
+
+| Area | Verdict |
+|------|---------|
+| CI | ❌ run 41606309851: windows — Install NSIS (Chocolatey, NSIS 3.13), Configure, Build (MSVC: mini-daw.exe + mini-daw.com), Test, PE check and `.com` smoke run pass; **Build the installer fails** → **O0**; upload skipped. linux and licence pass |
+| PKG-01 (two programs) | ✅ OBJECT library compiled once; WIN32 + `/ENTRY:mainCRTStartup`; PE check passes on MSVC too; ⚠️ console attach looks at stdout only → **O6**; ⚠️ `.ilk` name clash in MSVC Debug → **O3** |
+| PKG-02 (installer) | ❌ never built by the CMake target on Windows → **O0**; ⚠️ running instance, older over newer → **O4**, **O5**; ⚠️ CI artifact layout → **O1** |
+| PKG-03 (icon) | ✅ all 7 sizes in the .ico, regeneration byte-identical; GLFW_ICON is the name GLFW loads |
+| CI-01 | ⚠️ NSIS from Chocolatey unpinned → **O2** |
+| Spec ↔ tests | ✅ every Spec item has a test or is a design rule / sub-item; no duplicate IDs; no result rows for unknown tests; docs use `mini-daw.com` for the options |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| O0 | high (CI) | `makensis` on Windows: `File: "D:/a/…/installer-stage/mini-daw.exe" -> no files found`. The Windows makensis splits a `File` path at the last backslash; the path had only `/`, so it looked for the whole string as a name in the current folder. On Linux (`/` is the separator) the same script works, which is why the container test passed; the CMake `installer` target itself had not been run on Windows before. | In the script, join the file name with `\` when `NSIS_WIN32_MAKENSIS` is defined (else `/`); pass the stage folder in native form (`file(TO_NATIVE_PATH)`). Check: container makensis (Linux) locally, CI (Windows). |
+| O1 | medium | With three paths, `upload-artifact` keeps them below their common folder: the download holds `src/Release/mini-daw.exe`, `src/Release/mini-daw.com` and `mini-daw-0.1.0-setup.exe` (before: a flat `mini-daw.exe`). | Copy the three files into one folder in the workflow and upload that folder (flat download). |
+| O2 | low-medium | `choco install nsis` takes the newest package (3.13 in this run): not reproducible, unlike the SHA-pinned actions. | Pin `--version=3.13.0`; check the version makensis reports; note it in SPEC-CI-01. |
+| O3 | low | MSVC Debug builds: `PDB_NAME` separates the PDBs, but both programs would write `mini-daw.ilk` in the same folder (incremental linking). Release (CI, installer) is not affected. | `/INCREMENTAL:NO` for the `.com`. |
+| O4 | low-medium | Installing while mini-daw runs: `File` cannot replace the open program; the user gets Abort/Retry/Ignore, a silent install fails. | Before copying, ask to close mini-daw (retry until it is closed, or cancel); detect it by trying to rename the installed program. |
+| O5 | low | An older installer can overwrite a newer version without notice; reinstalling into another folder leaves the old files. | Compare with the installed version (registry `DisplayVersion`) and ask before installing an older one; on a new folder, offer to remove the old installation (run its uninstaller). |
+| O6 | low | `attachToParentConsole` only checks stdout: with `mini-daw.exe … > file` stdout is redirected and nothing is attached, so error messages on stderr are lost; when mini-daw.exe is started from a terminal with only `--config`, the GUI attaches to the terminal (Ctrl+C there reaches the GUI, GLFW messages appear). | Attach only for the options that print (not for `--config` alone), and reopen only the stream that has no handle. |
+| O7 | low | GLFW makes the process per-monitor DPI aware (`win32_init.c:692`), so Windows does not stretch the window (no blur), but mini-daw draws its text at 16 px in physical pixels: on a 150 % display it is small until the user raises it (View → Text size). There is no manifest (GLFW sets DPI awareness at run time, so none is needed for that). | When there is no `font_size` in the config yet, start with 16 px × the window's content scale (`glfwGetWindowContentScale`), rounded, within 12–32. |
+| O8 | docs | SPEC-PKG-02 says "Installing over an older version replaces it" without the running-program case; Tests have no row for the CI installer build. | Update with O4/O5; T-PKG-03 also covers the CI-built installer. |
+
+## Actions taken (user: "yes fix O0–O8, O0 first")
+| # | Done |
+|---|------|
+| O0 | The NSIS script joins file names with `\` when `NSIS_WIN32_MAKENSIS` is defined (else `/`); CMake passes native paths. Linux makensis builds it; the Windows makensis proof comes from CI (running a downloaded Windows makensis here was refused). |
+| O1 | CI copies mini-daw.exe, mini-daw.com and the setup into `upload/`; the download is flat. |
+| O2 | `choco install nsis --version=3.13.0`; the step fails unless makensis reports v3.13; SPEC-CI-01 note updated. |
+| O3 | `/INCREMENTAL:NO` for mini-daw.com (no shared `.ilk` in Debug). |
+| O4 | Install and uninstall check whether mini-daw.exe / .com can be opened for writing; if not: "mini-daw is running. Close it…" (Retry/Cancel), silent: abort, exit 2. Checked under Wine with mini-daw.exe running. |
+| O5 | `.onInit`: an older version over a newer one asks (silent: refuses); an earlier installation in another folder is uninstalled first. Checked under Wine. |
+| O6 | Attach only for options that print (not `--config` alone); reopen only the stream without a handle. |
+| O7 | Text, spacing (ScaleAllSizes + FontScaleDpi) and the first window size follow the content scale (window at most 90 % of the work area); follows a monitor change; `font_size` stays the 100 % size. Checked on Linux at 150 %. |
+| O8 | SPEC-PKG-01/02, UI-08, CI-01 and T-PKG-03, T-UI-13 updated. |
+
+Result: Linux 119/119; installer rules checked under Wine; 150 % scaling checked on Linux; the Windows makensis build to be confirmed by CI.

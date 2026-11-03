@@ -24,10 +24,12 @@ jobs:
           key: deps-windows-${{ hashFiles('cmake/Dependencies.cmake') }}
 
       - name: Install NSIS (installer, P9b)
-        # Usually on the runner image already; otherwise from Chocolatey.
+        # Pinned version (crosscheck #8, O2); the runner image has no NSIS.
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
-          & "C:\Program Files (x86)\NSIS\makensis.exe" -VERSION
+          choco install nsis --version=3.13.0 -y --no-progress --allow-downgrade
+          $v = & "C:\Program Files (x86)\NSIS\makensis.exe" -VERSION
+          Write-Output "makensis $v"
+          if ($v -ne "v3.13") { throw "unexpected NSIS version $v" }
 
       - name: Configure
         # No -G: CMake picks the newest Visual Studio on the runner image.
@@ -51,14 +53,18 @@ jobs:
       - name: Build the installer
         run: cmake --build build --config Release --target installer
 
+      - name: Collect the downloads
+        # One flat folder: the download holds the three files side by side (O1).
+        run: |
+          New-Item -ItemType Directory -Force upload | Out-Null
+          Copy-Item build\src\Release\mini-daw.exe, build\src\Release\mini-daw.com, build\mini-daw-*-setup.exe upload\
+          Get-ChildItem upload
+
       - name: Upload program
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mini-daw-windows-x64
-          path: |
-            build/src/Release/mini-daw.exe
-            build/src/Release/mini-daw.com
-            build/mini-daw-*-setup.exe
+          path: upload/
           if-no-files-found: error
 
   linux:

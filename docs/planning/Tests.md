@@ -139,13 +139,14 @@ Status column in the Results section at the end.
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
 | T-UI-12 | SPEC-UI-08 | A+M | `font_size = 20` in config; Ctrl+= / Ctrl+- / Ctrl+0 | Text 20 px; changes by 2 px, limited to 12–32; saved; bad values give a warning |
+| T-UI-13 | SPEC-UI-08 | M | Start with display scaling 150 % (Windows display settings; Linux: `Xft.dpi: 144`) | Text 24 px, spacing scaled, window 1920 × 1140 or 90 % of the work area; text size setting still 16 |
 
 ## Packaging (Windows)
 | ID | Spec | Type | Description | Expected result |
 |----|------|------|-------------|-----------------|
 | T-PKG-01 | SPEC-PKG-01, 03 | A | `tools/check_pe.py` on the built programs (test `pe_check`, also in CI) | mini-daw.exe: window program; mini-daw.com: console program; both with icon GLFW_ICON and version information |
 | T-PKG-02 | SPEC-PKG-01 | A+M | `mini-daw.com --version`, a bad option; `mini-daw.exe --version` from a terminal; double-click mini-daw.exe | Prints, exit codes 0 / 2; .exe prints to the terminal; double-click: window only, no console |
-| T-PKG-03 | SPEC-PKG-02 | A+M | Silent install `/S` and uninstall `/S` (Wine); on Windows: the installer pages, Start menu, Apps & features, SmartScreen, install over an older version | Files in %LOCALAPPDATA%\Programs\mini-daw, Start menu entry, uninstall key with version; uninstall removes them and keeps %APPDATA%\mini-daw; pages readable; SmartScreen "Run anyway" works |
+| T-PKG-03 | SPEC-PKG-02 | A+M | Installer built by CI (`installer` target, Windows makensis); silent install `/S` and uninstall `/S` (Wine); an older installer over a newer version; install into another folder; install and uninstall while mini-daw runs; on Windows: the installer pages, Start menu, Apps & features, SmartScreen | Built; files in %LOCALAPPDATA%\Programs\mini-daw, Start menu entry, uninstall key with version; uninstall removes them and keeps %APPDATA%\mini-daw; older refused when silent (asks otherwise); the old folder removed; while running: asks to close (silent: exit 2, nothing changed); pages readable; SmartScreen "Run anyway" works |
 | T-PKG-04 | SPEC-PKG-03 | M | Icon in Explorer, the taskbar, Apps & features, the installer, the Linux window | The waveform icon everywhere; readable at small sizes |
 
 ## Licensing
@@ -272,3 +273,8 @@ Status column in the Results section at the end.
 | 2026-11-03 | T-PKG-02 (Wine part) | Wine | pass | `.com --version` 0, bad option 2; `.exe --version` printed too |
 | 2026-11-03 | T-PKG-03 (silent) | makensis 3.09 in an `ubuntu:24.04` container; install/uninstall under Wine | pass | 1.8 MB setup; files, Start menu link, uninstall key (version 0.1.0); after uninstall all gone, `%APPDATA%\mini-daw\config.ini` kept. The installer pages did not show on Xvfb under Wine (black screenshot): to check on Windows |
 | 2026-11-03 | T-PKG-04 (Linux part) | Linux VM, `xprop _NET_WM_ICON` | pass | Window carries the 32×32 and 48×48 icon |
+| 2026-11-03 | T-CI-02, T-PKG-01 | GitHub Actions run 41606309851 (`497c975`, P9b) | **FAIL** | windows: NSIS 3.13 installed from Chocolatey; MSVC build of mini-daw.exe + mini-daw.com, tests, PE check (T-PKG-01 on MSVC: pass) and `.com` smoke run pass; **Build the installer fails** (`File … -> no files found`: crosscheck #8, O0); upload skipped. linux, licence pass. Log fetched with curl over HTTP/1.1 |
+| 2026-11-03 | crosscheck #8 fixes (O0–O8) | Linux 119/119 | pass | |
+| 2026-11-03 | T-PKG-03 (Linux makensis) | `ubuntu:24.04` container, NSIS 3.09 | pass | The fixed script builds; the Windows makensis fix (O0) itself can only be confirmed by CI: running the downloaded Windows makensis here was refused (code from an outside source) |
+| 2026-11-03 | T-PKG-03 (new rules) | Wine | pass | 0.1.0 installed, then 0.0.9 silently: refused (exit 2), still 0.1.0; install into C:\mdaw-other: the old folder removed, uninstall key moved; with mini-daw.exe running: install and uninstall silently stop with exit 2, files untouched (a first try with `--audio-test` proved nothing: it ends at once under Wine) |
+| 2026-11-03 | T-UI-13 (Linux) | Xvfb `-noreset`, `Xft.dpi: 144` | pass | "Display scale 150 %, window 1920 x 1140", text and spacing larger; at 100 %: 1280 × 760, or 90 % of a smaller screen |

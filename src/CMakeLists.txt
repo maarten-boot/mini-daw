@@ -62,6 +62,9 @@ if(MINIDAW_BUILD_APP)
         target_link_libraries(minidaw_cli PRIVATE minidaw_app)
         if(MSVC)
             target_link_options(minidaw PRIVATE /ENTRY:mainCRTStartup)  # keep main() in a GUI program
+            # Both programs are called mini-daw: no incremental-link file for the
+            # .com, so Debug builds do not share mini-daw.ilk (crosscheck #8, O3).
+            target_link_options(minidaw_cli PRIVATE /INCREMENTAL:NO)
         endif()
 
         # Installer (P9b): `cmake --build <build> --target installer` when NSIS is found.
@@ -69,13 +72,17 @@ if(MINIDAW_BUILD_APP)
         if(MINIDAW_MAKENSIS)
             set(stage ${CMAKE_BINARY_DIR}/installer-stage)
             set(setup ${CMAKE_BINARY_DIR}/mini-daw-${PROJECT_VERSION}-setup.exe)
+            # makensis gets native paths (backslashes on Windows, crosscheck #8 O0).
+            file(TO_NATIVE_PATH "${stage}" stage_native)
+            file(TO_NATIVE_PATH "${setup}" setup_native)
             add_custom_target(installer
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${stage}
                 COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:minidaw> $<TARGET_FILE:minidaw_cli> ${stage}/
                 COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/LICENSE ${stage}/LICENSE.txt
                 COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/THIRD_PARTY.md ${PROJECT_SOURCE_DIR}/README.md
                         ${MINIDAW_ICON_FILE} ${stage}/
-                COMMAND ${MINIDAW_MAKENSIS} -V2 -DVERSION=${PROJECT_VERSION} -DSTAGE=${stage} -DOUTFILE=${setup}
+                COMMAND ${MINIDAW_MAKENSIS} -V2 -DVERSION=${PROJECT_VERSION} -DSTAGE=${stage_native}
+                        -DOUTFILE=${setup_native}
                         ${PROJECT_SOURCE_DIR}/installer/mini-daw.nsi
                 DEPENDS minidaw minidaw_cli
                 COMMENT "Building ${setup}"
