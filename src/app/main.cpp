@@ -843,21 +843,29 @@ void drawMeter(AppState& app, const std::vector<minidaw::LevelMeter*>& meters, f
         ImGui::SetTooltip("Level meter, -60 to 0 dBFS. Marks at -18 and -6 dBFS; the thin line is the peak of the "
                           "last 1.5 s.");
     }
+    // Fixed space for the text and the CLIP button, so that nothing to the
+    // right moves when the value gets longer or CLIP appears. The widest
+    // value is "-1xx.x dBFS" (formatDbfs); "8" is used as the widest digit.
     ImGui::SameLine();
     const std::string value = minidaw::formatDbfs(text);
+    const float valueWidth = std::max(ImGui::CalcTextSize("-888.8 dBFS").x, ImGui::CalcTextSize("-inf dBFS").x);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(value.c_str());
-    const float pad = 5.5f * ImGui::GetFontSize() - ImGui::CalcTextSize(value.c_str()).x;
+    const float pad = valueWidth - ImGui::CalcTextSize(value.c_str()).x;
     if (pad > 0.0f) {
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::Dummy(ImVec2(pad, 1.0f));
     }
+    ImGui::SameLine();
+    const ImVec2 clipSize(ImGui::CalcTextSize("CLIP").x + 2.0f * ImGui::GetStyle().FramePadding.x,
+                          ImGui::GetTextLineHeight());
     if (clipped) {
-        ImGui::SameLine();
         if (ImGui::SmallButton("CLIP")) {
             for (auto* m : meters) m->clearClip();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The level reached 0 dBFS. Click to clear.");
+    } else {
+        ImGui::Dummy(clipSize);  // keeps the space of the CLIP button
     }
 }
 

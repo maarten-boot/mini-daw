@@ -88,3 +88,13 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 - Fix 1: `NoErrorDialogs` (`SetThreadErrorMode` with FAILCRITICALERRORS, NOGPFAULTERRORBOX, NOOPENFILEERRORBOX) around loading a module in the scanner and around loading and unloading an instrument; the old mode is restored afterwards. A broken plugin now fails with an error message, also in the program itself, where the dialog would otherwise interrupt a scan.
 - Fix 2: `ctest --timeout 300` in both CI test steps, so that a hang fails within minutes and shows which test hung.
 - Linux 127/127, Wine 126/126. Only CI can confirm the fix (needs real Windows).
+
+## 12. CI after the error-dialog fix
+> pushed it, check the CI run
+- Run 41703163695 (`fcf1e86`): green on windows, linux and licence. Windows: 128/128 tests in 30 s; T-VST-10 now passes in 0.02 s (it hung before the fix, which confirms the error-dialog cause). PE check, `.com` smoke run and the installer all pass. This is the first fully green Windows run with VST3 hosting (P10a–c, e).
+
+## 13. Windows test of P10 by the user
+> ok tested it on windows, i can hear the audio in (still with addtional pulsing nose but i will check for interference), the vst3 instruments audio is on the speaker if i arm the track, the vu level bars are ok but to the right you show numbers that vary in required space … best allocate a fixed space for the max number … the gui is some times a bit sluggish becaude of lacking visual feedback … Arturia instruments have many diffent pre-sets … a instrument pup up when pressing a button for that track (like bandlab sonar) … What do you thingk ?
+- Real VST3 instruments (Arturia) work on Windows 10: found, heard live. Pulsing noise on the input: the user checks for interference first.
+- Fixed now: the dBFS text and the CLIP button get a fixed width (SPEC-MON-02a, T-MON-07); built on Linux and MinGW, not yet seen on screen with a live signal.
+- The instrument pop-up is exactly P10d (plugin editor); presets in Arturia live in its own window. Added later items: PL1 look and feel (hover/selection feedback), PL2 a preset menu from VST3 program lists.
