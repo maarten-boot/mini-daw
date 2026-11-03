@@ -53,3 +53,8 @@ Continues `Conversation-2026-11-02.md` (P7, P7b, P8, P9 and crosschecks #5 and #
 - O1 flat download folder, O2 NSIS pinned 3.13.0, O3 `/INCREMENTAL:NO` for the .com, O4 install/uninstall wait for mini-daw to close, O5 older-over-newer question and old folder removed, O6 narrower console attach, O7 display scaling (text, spacing, window size), O8 docs.
 - A safety check refused `rm -f "$ST"/*setup*.exe` (unguarded variable) — rerun as `"${ST:?}"`.
 - Tested: installer rules under Wine (older refused, folder move, while running: exit 2), 150 % scaling on Linux (needed `Xvfb -noreset` and `xrdb -nocpp`).
+
+## 8. CI after crosscheck #8
+> pushed it, check the CI run
+- Run 41609704861 (`a5c68a8`): green. The installer is now built by the Windows makensis (O0 confirmed); NSIS 3.13.0 pinned; the Windows download is flat (setup 0.67 MB, exe/com 1.4 MB each from MSVC); PE check on the downloaded files OK. Artifact fetched with curl over HTTP/1.1.
+- Not committed: `res/*.xmp` (darktable sidecars of the user's images).
