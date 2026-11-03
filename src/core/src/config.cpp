@@ -333,7 +333,12 @@ std::string defaultConfigText()
            "; Overdub: new audio takes are moved earlier by the estimated round-trip\n"
            "; latency plus this many ms (-500 to 500), so they line up with what you\n"
            "; heard. Raise it if overdubs land late, lower it if they land early.\n"
-           "latency_correction_ms = 0\n";
+           "latency_correction_ms = 0\n"
+           "\n"
+           "[project]\n"
+           "; The project open when mini-daw closed; it is opened again at the next start.\n"
+           "; recent1 .. recent8 (written by mini-daw) are the File > Recent projects list.\n"
+           "last = \"\"\n";
 }
 
 void rememberProject(ProjectSettings& settings, const std::string& folder)

@@ -126,23 +126,36 @@ TEST_CASE("T-PRJ-02/03: missing takes, damaged or unknown project files", "[proj
     CHECK_FALSE(projectFromJson(R"({"format":"mini-daw project","version":99,"tracks":[]})", "p", d, w, err));
     CHECK(err.find("newer") != std::string::npos);
     CHECK_FALSE(projectFromJson(R"({"format":"mini-daw project","version":1})", "p", d, w, err));
+    // Wrong types for the header fields: an error, never an exception (crosscheck #7, N1).
+    for (const char* bad : {R"({"format":"mini-daw project","version":"1","tracks":[]})",
+                            R"({"format":5,"version":1,"tracks":[]})",
+                            R"({"format":"mini-daw project","version":1.5,"tracks":[]})",
+                            R"({"format":"mini-daw project","version":1,"tracks":{"a":1}})",
+                            R"({"format":"mini-daw project","version":1,"sampleRate":-5,"tracks":[]})",
+                            R"([1,2,3])", ""}) {
+        CHECK_NOTHROW(projectFromJson(bad, "p", d, w, err));
+    }
+    CHECK_FALSE(projectFromJson(R"({"format":"mini-daw project","version":"1","tracks":[]})", "p", d, w, err));
 
     // Bad fields: warnings, the rest is loaded.
     const std::string text = R"({"format":"mini-daw project","version":1,"tracks":[
         {"number":1,"name":"A","kind":"audio","volumeDb":"loud","inputChannels":[0,1,2,3]},
         {"number":1,"name":"B","kind":"midi","midiChannel":40},
+        {"number":7,"name":"E","kind":"audio","inputChannels":[-1]},
         {"number":2,"name":"C","kind":"video"},
         42,
         {"number":5,"name":"D","kind":"audio","take":"takes/gone.wav"}]})";
     w.clear();
     REQUIRE(projectFromJson(text, "p", d, w, err));
-    REQUIRE(d.tracks.size() == 3);
+    REQUIRE(d.tracks.size() == 4);
     CHECK(d.tracks[0].volumeDb == 0.0f);                              // wrong type: default
-    CHECK(d.tracks[0].channels == std::vector<unsigned int>{0});      // too many channels: default
+    CHECK(d.tracks[0].channels == std::vector<unsigned int>{0});      // too many channels: input 1, warned
     CHECK(d.tracks[1].number == 2);                                   // duplicate number renumbered
-    CHECK(d.tracks[1].midiChannel == 16);                             // clamped
-    CHECK(d.tracks[2].take.filename() == "gone.wav");                 // kept, but reported missing
-    CHECK(w.size() == 5);  // volume, duplicate number, unknown kind, not an object, missing take
+    CHECK(d.tracks[1].midiChannel == 0);                              // out of range: all channels, warned (N7)
+    CHECK(d.tracks[2].channels == std::vector<unsigned int>{0});      // negative channel: not wrapped (N7)
+    CHECK(d.tracks[3].take.filename() == "gone.wav");                 // kept, but reported missing
+    // volume, channels, MIDI channel, duplicate number, negative channel, unknown kind, not an object, missing take
+    CHECK(w.size() == 8);
     CHECK_FALSE(loadProject("/no/such/folder", d, w, err));
 }
 
@@ -160,25 +173,90 @@ TEST_CASE("T-PRJ-04: takes outside the project are copied into it", "[project][T
     tracks[1].take = makeWav(project / "takes" / "take-x" / "02-In.wav");  // already inside: untouched
     tracks[2].number = 3;
     tracks[2].take = dir.path() / "rec" / "missing.wav";
-    std::vector<std::string> copied;
-    const auto errors = importTakes(project, tracks, copied);
-    REQUIRE(copied.size() == 1);
-    REQUIRE(errors.size() == 1);
-    CHECK(errors[0].find("missing") != std::string::npos);
+    auto r = importTakes(project, tracks);
+    REQUIRE(r.copied.size() == 1);
+    REQUIRE(r.missing.size() == 1);
+    CHECK(r.failed.empty());
     CHECK(tracks[0].take == project / "takes" / "imported" / "take-20261101-090000" / "01-Old.wav");
-    CHECK(fs::file_size(tracks[0].take) == fs::file_size(outside));
+    CHECK(sameFileContent(tracks[0].take, outside));
     CHECK(tracks[1].take == project / "takes" / "take-x" / "02-In.wav");
     CHECK(tracks[2].take == dir.path() / "rec" / "missing.wav");  // keeps its path
     // Importing again finds the copy (nothing copied twice).
     tracks[0].take = outside;
-    copied.clear();
-    importTakes(project, tracks, copied);
-    CHECK(copied.empty());
+    r = importTakes(project, tracks);
+    CHECK(r.copied.empty());
     CHECK(isInsideFolder(tracks[0].take, project));
+    CHECK_FALSE(isInsideFolder(project, project));  // the folder itself is not "inside" (N8)
 
     CHECK(listProjects(dir.path()).empty());  // a folder without project.json is not a project yet
     REQUIRE(saveProject(project, ProjectData{}, err));
     CHECK(listProjects(dir.path()) == std::vector<fs::path>{project});
+}
+
+TEST_CASE("T-PRJ-07: copying takes in never mixes up or overwrites takes", "[project][T-PRJ-07]")
+{
+    test::TempDir dir;
+    const fs::path project = dir.path() / "P";
+    std::string err;
+    REQUIRE(createProjectFolder(project, err));
+    // Two different takes with the same take folder name and file name, same size (N3).
+    const fs::path a = makeWav(dir.path() / "A" / "takes" / "take-1" / "01-Gitaar.wav", 300);
+    const fs::path b = dir.path() / "B" / "takes" / "take-1" / "01-Gitaar.wav";
+    makeWav(b, 300);
+    {
+        std::fstream f(b, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(-1, std::ios::end);
+        f.put('\x7f');  // same size, other content
+    }
+    REQUIRE_FALSE(sameFileContent(a, b));
+    std::vector<Track> tracks(3);
+    tracks[0].number = 1;
+    tracks[0].take = a;
+    tracks[1].number = 2;
+    tracks[1].take = b;
+    tracks[2].number = 3;
+    tracks[2].take = a;  // the same take twice: one copy
+    const auto r = importTakes(project, tracks);
+    CHECK(r.failed.empty());
+    CHECK(r.copied.size() == 2);
+    const fs::path dirIn = project / "takes" / "imported" / "take-1";
+    CHECK(tracks[0].take == dirIn / "01-Gitaar.wav");
+    CHECK(tracks[1].take == dirIn / "01-Gitaar-2.wav");
+    CHECK(tracks[2].take == tracks[0].take);
+    CHECK(sameFileContent(tracks[0].take, a));
+    CHECK(sameFileContent(tracks[1].take, b));
+
+    // A copy that cannot be made (a file where the folder should be): reported, path kept,
+    // nothing else touched (N4).
+    const fs::path c = makeWav(dir.path() / "C" / "take-9" / "05-X.wav");
+    std::ofstream(project / "takes" / "imported" / "take-9") << "a file, not a folder";
+    std::vector<Track> more(1);
+    more[0].number = 5;
+    more[0].take = c;
+    const auto r2 = importTakes(project, more);
+    CHECK(r2.failed.size() == 1);
+    CHECK(more[0].take == c);
+    CHECK(sameFileContent(dirIn / "01-Gitaar.wav", a));  // earlier copies untouched
+}
+
+TEST_CASE("T-PRJ-08: names that are not valid UTF-8 are saved, not a crash", "[project][T-PRJ-08]")
+{
+    test::TempDir dir;
+    ProjectData p;
+    Track t;
+    t.name = "Pr\xfc" "fung";  // Latin-1, not UTF-8 (N2)
+    t.kind = TrackKind::Midi;
+    t.midiPort = "Port \xff";
+    p.tracks.push_back(t);
+    std::string text;
+    REQUIRE_NOTHROW(text = projectToJson(p, dir.path()));
+    std::string err;
+    REQUIRE(saveProject(dir.path(), p, err));
+    ProjectData back;
+    std::vector<std::string> w;
+    REQUIRE(loadProject(dir.path(), back, w, err));
+    REQUIRE(back.tracks.size() == 1);
+    CHECK(back.tracks[0].name == "Pr\xef\xbf\xbd" "fung");  // the bad byte became U+FFFD
 }
 
 TEST_CASE("T-PRJ-05: last and recent projects in the config", "[project][config][T-PRJ-05]")

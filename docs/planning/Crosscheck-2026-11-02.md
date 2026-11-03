@@ -151,3 +151,53 @@ Scope: Spec v0.18, Plan, Tests, code at commit `2892d9e` (P8: changes since `42e
 | M12 | T-PLAY-14 (stop/start under a running audio thread, also with ThreadSanitizer), T-PLAY-15 (one output, 3 channels, big blocks, no output), T-PLAY-16 (placement), T-PLAY-17 (MIDI). |
 
 Result: Linux 113/113 ctest; MinGW build under Wine 112/112 Catch2 cases; ThreadSanitizer clean on the threaded tests.
+
+---
+
+# Crosscheck #7 — 2026-11-03 (after P9)
+
+Scope: Spec v0.20, Plan, Tests, README, code at commit `6536815` (P9: changes since `5122c25`), CI run 41540018781. Spec ↔ Plan ↔ Tests ↔ code by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). N1 and N2 were reproduced with a small program; N3 checked in the code.
+
+| Area | Verdict |
+|------|---------|
+| CI | ✅ run 41540018781: every step of the linux, windows and licence jobs passed (nlohmann/json fetched and checked); the job logs could not be downloaded here (network error), so the test count and MSVC warnings are not confirmed |
+| PRJ-01a/02a (saving) | ✅ no autosave over a good file: nothing is saved without an open project, the old project is saved before switching, tmp + sync + rename; ❌ invalid UTF-8 makes saving throw → **N2** |
+| PRJ-02a (opening) | ❌ a wrong-typed `format`/`version` throws (crash at every start) → **N1**; ⚠️ repairs not written, skipped tracks lost on the next save → **N6**; failures not shown (Recent, start) → **N5** |
+| PRJ-01a (copying takes in) | ❌ name collisions in `takes/imported/` → **N3**; ⚠️ a failed copy still switches the project → **N4** |
+| Paths | ✅ relative/absolute, other drives, `/` separators; ⚠️ trailing separator, relative typed folders, take == folder → **N8** |
+| Spec ↔ tests | ✅ every Spec item has a test or is a design rule / sub-item; no duplicate IDs; no result rows for unknown tests |
+| Docs | ⚠️ stale "track list in memory only" text; REC-07 silent about project takes; default config without `[project]` → **N10** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| N1 | high | `projectFromJson` uses `json::value()` for `format` and `version`, which throws when the key has another type (`"version": "1"` → `type_error.302`, reproduced). The promise "never throws" is broken; since the last project is opened at start, such a file crashes mini-daw at every start. | Check the types explicitly; catch any exception around the whole parse (→ error "damaged project file"); also guard the open at start. Test with wrong-typed `format`/`version`/`tracks`. |
+| N2 | high | `projectToJson` → `dump()` throws on a string that is not valid UTF-8 (`type_error.316`, reproduced with "Pr\xfcfung"). Autosave runs every 0.5 s without a catch: such a track name or MIDI port name (from an old config, a driver, a hand-edited file) crashes the program, also at exit. | `dump(…, error_handler_t::replace)` (bad bytes become U+FFFD); catch exceptions in `saveProjectNow` and report them. Test. |
+| N3 | medium | Copies go to `takes/imported/<parent folder>/<file>`, and an existing file there of the same size is taken as the same take. Two different takes with the same parent folder and file name (e.g. `take-…/01-Gitaar.wav` from two projects): equal size → the track silently plays the other recording; different size → the earlier copy is overwritten while another track may still use it. On a failed copy, `remove(dest)` can delete a good earlier copy. | Never overwrite: reuse only a file with the same size **and** content; otherwise pick a free name (`-2`, `-3` …); remove only a file this call created. Test with a collision. |
+| N4 | medium | Save as / New with copying: when a take cannot be copied (disk full, missing), the project is switched anyway and keeps an absolute path to the outside take. | Keep the dialog open with the errors and do not switch (the new folder stays, without project.json, for another try); a missing take (nothing to copy) is only reported. |
+| N5 | medium | Open via File → Recent or at start: an error goes to the dialog's error text, which is not shown when the dialog is closed (only the log has it); a dead entry stays in the Recent list. | Show failures as project notes in the status line; mark or drop dead Recent entries. |
+| N6 | medium | After opening, the "saved" text is the repaired state, so the repairs are not written; on the next change autosave writes it and tracks that were skipped (unknown kind) are gone from the file without notice. | When opening needed repairs or skipped something: keep the original as `project.json.bak` and say so; then save the repaired state. |
+| N7 | low | Wrong numeric types accepted quietly: a negative input channel wraps to a huge number (rejected only when recording), a fractional MIDI channel is truncated. | Check the channel list (unsigned, < 64) and ranges; warn. |
+| N8 | low | Paths: a folder typed with a trailing separator gives an empty name (title, "… copy"); a relative typed folder is stored as such in `last`/`recent` (depends on the working folder); a take path equal to the project folder counts as inside. | Make typed folders absolute and normal (no trailing separator); a take must be a file below the folder. |
+| N9 | low | Save as / New into a folder inside the current project is allowed (nested project). | Refuse a target inside the open project. |
+| N10 | docs | SPEC-REC-01a and SPEC-PLAY-01a still say the track list is kept in memory only until P9; README says "The track list is not saved yet"; SPEC-REC-07 does not say that takes go into the open project; the default `config.ini` text has no commented `[project]` section; CI run 41540018781 not in Tests.md. | Update the texts, add `[project]` to the default config, log the run (with the log-download note). |
+| N11 | test gap | No tests for N1, N2, N3, a failed copy (N4), or the repaired-state save (N6). | Add them with the fixes. |
+| N12 | note | Copying takes in runs on the GUI thread (the window waits on a big take; written in the Spec); a failing save is retried every 0.5 s (log deduplicated); the folder is not synced after the rename; `takes/imported/` is not in the take browser (only `take-*`). | No change now. |
+
+## Actions taken (user: "yes fix N1–N11, N1 and N2 first")
+| # | Done |
+|---|------|
+| N1 | Header fields checked by type before use; the whole parse runs inside a catch-all → "The project file is damaged (…)"; a damaged last project at start leaves mini-daw running with a note. T-PRJ-03 (version "1" / 1.5, format 5, tracks an object, an array, empty text). Checked live: start with such a file → running, note in the status line. |
+| N2 | `dump()` with `error_handler_t::replace` (bad bytes → U+FFFD). T-PRJ-08. |
+| N3 | `importTakes` never overwrites: reuses a file only with the same content (`sameFileContent`), else a free `-2`, `-3` … name; removes only a file it started. T-PRJ-07. |
+| N4 | `importTakes` returns copied / missing / failed; Save as only switches when nothing failed (the dialog stays open with the reason). T-PRJ-07 (failed copy). |
+| N5 | Open failures also go to the status line (Recent, start); Recent marks missing projects "(not found)" and disables them. Checked live. |
+| N6 | When opening needed repairs: original kept as `project.json.bak`, the repaired state saved by the next autosave. Checked live (unknown kind "video": skipped, .bak keeps it). |
+| N7 | Input channels: 1–2 whole numbers 0..63, else warning and input 1; MIDI channel 0..16 integer, else warning and all. T-PRJ-03. |
+| N8 | Typed folders absolute + normal, trailing separator removed (`cleanFolder`); the folder itself is not "inside". T-PRJ-04. |
+| N9 | New / Save as refuse a folder inside the open project (or the project itself). |
+| N10 | SPEC-REC-01a, PLAY-01a, REC-07 and README updated; default config has a commented `[project]` section; CI run 41540018781 logged with the log-download note. |
+| N11 | T-PRJ-03 extended, T-PRJ-04 updated, T-PRJ-07, T-PRJ-08 new. |
+| N12 | No change (noted). |
+
+Result: Linux 119/119 ctest; MinGW build under Wine 118/118 Catch2 cases; live checks of N1, N5, N6 on the VM.

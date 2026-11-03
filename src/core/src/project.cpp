@@ -33,7 +33,7 @@ std::string storedPath(const fs::path& take, const fs::path& folder)
     const fs::path base = normalFolder(folder);
     const fs::path abs = normalFolder(take);
     const fs::path rel = abs.lexically_relative(base);
-    if (!rel.empty() && *rel.begin() != "..") {
+    if (!rel.empty() && *rel.begin() != ".." && rel != ".") {
         std::string out = pathToUtf8(rel);
         std::replace(out.begin(), out.end(), '\\', '/');
         return out;
@@ -53,7 +53,7 @@ fs::path loadedPath(const std::string& stored, const fs::path& folder)
 bool isInsideFolder(const fs::path& file, const fs::path& folder)
 {
     const fs::path rel = normalFolder(file).lexically_relative(normalFolder(folder));
-    return !rel.empty() && *rel.begin() != "..";
+    return !rel.empty() && *rel.begin() != ".." && rel != ".";  // the folder itself is not inside (N8)
 }
 
 std::string projectToJson(const ProjectData& data, const fs::path& folder)
@@ -85,11 +85,15 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
     root["version"] = kProjectFormatVersion;
     root["sampleRate"] = data.sampleRate;
     root["tracks"] = std::move(tracks);
-    return root.dump(2) + "\n";
+    // Bytes that are not valid UTF-8 (an odd driver name, a hand-edited file)
+    // become U+FFFD instead of throwing (crosscheck #7, N2).
+    return root.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
 }
 
-bool projectFromJson(const std::string& text, const fs::path& folder, ProjectData& data,
-                     std::vector<std::string>& warnings, std::string& error)
+namespace {
+
+bool parseProject(const std::string& text, const fs::path& folder, ProjectData& data,
+                  std::vector<std::string>& warnings, std::string& error)
 {
     data = {};
     const json root = json::parse(text, nullptr, false);  // no exceptions
@@ -97,11 +101,17 @@ bool projectFromJson(const std::string& text, const fs::path& folder, ProjectDat
         error = "The project file is not valid JSON.";
         return false;
     }
-    if (root.value("format", std::string()) != "mini-daw project") {
+    // Types checked before use: json::value() throws on a wrong type (N1).
+    if (!root.contains("format") || !root["format"].is_string() ||
+        root["format"].get<std::string>() != "mini-daw project") {
         error = "This is not a mini-daw project file.";
         return false;
     }
-    const int version = root.value("version", 0);
+    if (!root.contains("version") || !root["version"].is_number_integer()) {
+        error = "The project file has no valid format version.";
+        return false;
+    }
+    const auto version = root["version"].get<std::int64_t>();
     if (version < 1 || version > kProjectFormatVersion) {
         error = "The project file has format version " + std::to_string(version) + "; this mini-daw reads version " +
                 std::to_string(kProjectFormatVersion) + " (it may be from a newer mini-daw).";
@@ -144,12 +154,30 @@ bool projectFromJson(const std::string& text, const fs::path& folder, ProjectDat
         }
         t.kind = kind == "audio" ? TrackKind::Audio : TrackKind::Midi;
         if (t.kind == TrackKind::Audio) {
-            t.channels = get("inputChannels", std::vector<unsigned int>{0});
-            if (t.channels.empty() || t.channels.size() > 2) t.channels = {0};
+            // 1 or 2 whole numbers 0..63 (a negative number would wrap to a huge one: N7).
+            t.channels = {0};
+            if (j.contains("inputChannels")) {
+                const json& c = j["inputChannels"];
+                bool ok = c.is_array() && !c.empty() && c.size() <= 2;
+                std::vector<unsigned int> list;
+                for (const json& v : c.is_array() ? c : json::array()) {
+                    if (!v.is_number_unsigned() || v.get<std::uint64_t>() >= 64) ok = false;
+                    else list.push_back(v.get<unsigned int>());
+                }
+                if (ok) t.channels = list;
+                else warnings.push_back(where + "'inputChannels' must be 1 or 2 channel numbers from 0 to 63; using input 1.");
+            }
             t.monitor = get("monitor", false);
         } else {
             t.midiPort = get("midiInput", std::string());
-            t.midiChannel = std::clamp(get("midiChannel", 0), 0, 16);
+            if (j.contains("midiChannel")) {
+                const json& c = j["midiChannel"];
+                if (c.is_number_integer() && c.get<std::int64_t>() >= 0 && c.get<std::int64_t>() <= 16) {
+                    t.midiChannel = c.get<int>();
+                } else {
+                    warnings.push_back(where + "'midiChannel' must be 0 (all) to 16; using all channels.");
+                }
+            }
             t.midiOut = get("midiOutput", std::string());
         }
         t.armed = get("armed", false);
@@ -172,6 +200,22 @@ bool projectFromJson(const std::string& text, const fs::path& folder, ProjectDat
         data.tracks.push_back(std::move(t));
     }
     return true;
+}
+
+} // namespace
+
+bool projectFromJson(const std::string& text, const fs::path& folder, ProjectData& data,
+                     std::vector<std::string>& warnings, std::string& error)
+{
+    // Never throws (the last project is opened at start: a damaged file must
+    // give an error, not a crash at every start; crosscheck #7, N1).
+    try {
+        return parseProject(text, folder, data, warnings, error);
+    } catch (const std::exception& e) {
+        data = {};
+        error = std::string("The project file is damaged (") + e.what() + ").";
+        return false;
+    }
 }
 
 bool isProjectFolder(const fs::path& folder)
@@ -243,35 +287,70 @@ bool loadProject(const fs::path& folder, ProjectData& data, std::vector<std::str
     return true;
 }
 
-std::vector<std::string> importTakes(const fs::path& folder, std::vector<Track>& tracks,
-                                     std::vector<std::string>& copied)
+bool sameFileContent(const fs::path& a, const fs::path& b)
 {
-    std::vector<std::string> errors;
+    std::error_code ec;
+    const auto size = fs::file_size(a, ec);
+    if (ec || fs::file_size(b, ec) != size || ec) return false;
+    std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
+    if (!fa || !fb) return false;
+    std::vector<char> ba(1 << 16), bb(1 << 16);
+    while (fa && fb) {
+        fa.read(ba.data(), static_cast<std::streamsize>(ba.size()));
+        fb.read(bb.data(), static_cast<std::streamsize>(bb.size()));
+        if (fa.gcount() != fb.gcount() || !std::equal(ba.begin(), ba.begin() + fa.gcount(), bb.begin())) return false;
+    }
+    return fa.eof() && fb.eof();
+}
+
+ImportResult importTakes(const fs::path& folder, std::vector<Track>& tracks)
+{
+    ImportResult result;
     for (Track& t : tracks) {
         if (t.take.empty() || isInsideFolder(t.take, folder)) continue;
+        const std::string who = "Track " + std::to_string(t.number) + ": ";
         std::error_code ec;
-        if (!fs::exists(t.take, ec)) {
-            errors.push_back("Track " + std::to_string(t.number) + ": its take " + pathToUtf8(t.take) +
-                             " is missing and could not be copied into the project.");
+        if (!fs::is_regular_file(t.take, ec)) {
+            result.missing.push_back(who + "its take " + pathToUtf8(t.take) +
+                                     " is missing and could not be copied into the project.");
             continue;
         }
         const fs::path dir = folder / "takes" / "imported" / t.take.parent_path().filename();
-        const fs::path dest = dir / t.take.filename();
         fs::create_directories(dir, ec);
-        const bool same = fs::exists(dest, ec) && fs::file_size(dest, ec) == fs::file_size(t.take, ec);
-        if (!same) {
-            fs::copy_file(t.take, dest, fs::copy_options::overwrite_existing, ec);
+        // The first name that is free, or holds exactly this take already.
+        fs::path dest;
+        bool reuse = false;
+        for (int n = 1; n < 1000 && dest.empty(); ++n) {
+            const fs::path candidate =
+                n == 1 ? dir / t.take.filename()
+                       : dir / (t.take.stem().native() + fs::path("-" + std::to_string(n)).native() +
+                                t.take.extension().native());
+            if (!fs::exists(candidate, ec)) {
+                dest = candidate;
+            } else if (sameFileContent(candidate, t.take)) {
+                dest = candidate;
+                reuse = true;
+            }
+        }
+        if (dest.empty()) {
+            result.failed.push_back(who + "no free file name for " + pathToUtf8(t.take.filename()) + " in " +
+                                    pathToUtf8(dir) + ".");
+            continue;
+        }
+        if (!reuse) {
+            fs::copy_file(t.take, dest, fs::copy_options::none, ec);  // never overwrites
             if (ec) {
-                errors.push_back("Track " + std::to_string(t.number) + ": " + pathToUtf8(t.take) +
-                                 " could not be copied into the project: " + ec.message());
-                fs::remove(dest, ec);
+                result.failed.push_back(who + pathToUtf8(t.take) + " could not be copied into the project: " +
+                                        ec.message());
+                std::error_code rm;
+                fs::remove(dest, rm);  // only the file this call started (the name was free)
                 continue;
             }
-            copied.push_back(pathToUtf8(t.take) + " -> " + pathToUtf8(dest));
+            result.copied.push_back(pathToUtf8(t.take) + " -> " + pathToUtf8(dest));
         }
         t.take = dest;
     }
-    return errors;
+    return result;
 }
 
 std::vector<fs::path> listProjects(const fs::path& base)

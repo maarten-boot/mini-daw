@@ -85,7 +85,7 @@ mini-daw --audio-test 5
 
 The main window has a track list. *Add audio track* (one input, or two for stereo) and *Add MIDI track* (a MIDI input port, all channels or one). Tick *Arm* on the tracks to record, then press *Record* (or Ctrl+R); press it again to stop. Each recording goes into its own folder `take-YYYYMMDD-HHMMSS` inside the recording folder (Settings → Recording…; default `Documents\mini-daw` on Windows, `~/Music/mini-daw` on Linux), with one file per track: `01-Audio 1+2.wav`, `02-Keys.mid`, …
 
-Audio is 24-bit WAV. MIDI is a Standard MIDI File; by default with 960 ticks per quarter note at a fixed 120 BPM (0.52 ms resolution, opens cleanly in any DAW). For free playing without a tempo you can switch to SMPTE timing (1 ms ticks) in Settings → Recording… or with `midi_timing = smpte` under `[recording]`. Both keep your timing exactly; PPQ only adds a bar grid that does not mean anything for unmetered playing. The track list is not saved yet (projects come later).
+Audio is 24-bit WAV. MIDI is a Standard MIDI File; by default with 960 ticks per quarter note at a fixed 120 BPM (0.52 ms resolution, opens cleanly in any DAW). For free playing without a tempo you can switch to SMPTE timing (1 ms ticks) in Settings → Recording… or with `midi_timing = smpte` under `[recording]`. Both keep your timing exactly; PPQ only adds a bar grid that does not mean anything for unmetered playing. Tracks and takes are kept in a project (File → New project…).
 
 In `config.ini`, write a network folder without quotes (`folder = \\server\takes`); inside quotes, `\\` stands for one backslash.
 

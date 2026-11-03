@@ -48,14 +48,22 @@ bool loadProject(const std::filesystem::path& folder, ProjectData& data, std::ve
                  std::string& error);
 
 // Copies every take that is not inside `folder` to
-// `folder/takes/imported/<its take folder name>/<file>` (an existing file
-// there with the same size is reused) and points the track at the copy.
-// Returns one message per copied file in `copied`; errors (missing source,
-// disk full) are returned, and that track keeps its old path.
-std::vector<std::string> importTakes(const std::filesystem::path& folder, std::vector<Track>& tracks,
-                                     std::vector<std::string>& copied);
+// `folder/takes/imported/<its take folder name>/<file>` and points the track
+// at the copy. An existing file there is reused only when its content is the
+// same; otherwise the copy gets a free name (`<file>-2`, `-3`, ...), so an
+// earlier copy is never overwritten (crosscheck #7, N3). A track whose take
+// cannot be copied keeps its old path.
+struct ImportResult {
+    std::vector<std::string> copied;   // "source -> copy"
+    std::vector<std::string> missing;  // the take file is gone: nothing to copy
+    std::vector<std::string> failed;   // the copy failed (disk full, no permission)
+};
+ImportResult importTakes(const std::filesystem::path& folder, std::vector<Track>& tracks);
 
-// The take is inside the project folder.
+// The two files have the same size and content.
+bool sameFileContent(const std::filesystem::path& a, const std::filesystem::path& b);
+
+// `file` lies below `folder` (not the folder itself).
 bool isInsideFolder(const std::filesystem::path& file, const std::filesystem::path& folder);
 
 // Folders under `base` that hold a project (one level deep), by name.

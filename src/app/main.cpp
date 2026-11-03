@@ -573,7 +573,9 @@ void drawMenuBar(AppState& app, bool& quit)
         if (ImGui::BeginMenu("Recent projects", !rec && !app.config.project.recent.empty())) {
             const auto recent = app.config.project.recent;  // a copy: opening changes the list
             for (const auto& r : recent) {
-                if (ImGui::MenuItem(r.c_str())) openProject(app, minidaw::pathFromUtf8(r));
+                const bool there = minidaw::isProjectFolder(minidaw::pathFromUtf8(r));
+                const std::string label = there ? r : r + "  (not found)";  // N5
+                if (ImGui::MenuItem(label.c_str(), nullptr, false, there)) openProject(app, minidaw::pathFromUtf8(r));
             }
             ImGui::EndMenu();
         }
@@ -1039,15 +1041,36 @@ void autosaveProject(AppState& app)
 
 // Copy takes from outside into the project (the user's choice: a project
 // folder is complete on its own).
+// Returns false when a take could not be copied (missing takes are only reported).
+bool importIntoProject(AppState& app, const std::filesystem::path& folder, std::vector<minidaw::Track>& tracks)
+{
+    const minidaw::ImportResult r = minidaw::importTakes(folder, tracks);
+    for (const auto& c : r.copied) app.log.info("Copied into the project: " + c);
+    for (const auto& m : r.missing) {
+        app.log.warning(m);
+        app.projectNotes.push_back(m);
+    }
+    for (const auto& f : r.failed) {
+        app.log.error(f);
+        app.projectNotes.push_back(f);
+    }
+    return r.failed.empty();
+}
+
 void importIntoProject(AppState& app)
 {
-    if (app.projectFolder.empty()) return;
-    std::vector<std::string> copied;
-    for (const auto& e : minidaw::importTakes(app.projectFolder, app.tracks, copied)) {
-        app.log.warning(e);
-        app.projectNotes.push_back(e);
-    }
-    for (const auto& c : copied) app.log.info("Copied into the project: " + c);
+    if (!app.projectFolder.empty()) importIntoProject(app, app.projectFolder, app.tracks);
+}
+
+// A folder typed by the user: absolute, normal, no trailing separator (N8).
+std::filesystem::path cleanFolder(const std::filesystem::path& typed)
+{
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::absolute(typed, ec);
+    if (ec) p = typed;
+    p = p.lexically_normal();
+    if (p.filename().empty() && p.has_parent_path()) p = p.parent_path();
+    return p;
 }
 
 void rememberProjectInConfig(AppState& app)
@@ -1061,8 +1084,9 @@ void rememberProjectInConfig(AppState& app)
 void stopPlayback(AppState& app);
 void refreshTakeLength(AppState& app, minidaw::Track& t);
 
-bool openProject(AppState& app, const std::filesystem::path& folder)
+bool openProject(AppState& app, const std::filesystem::path& typedFolder)
 {
+    const std::filesystem::path folder = cleanFolder(typedFolder);
     if (app.session.recording()) {
         app.projectDialogError = "Stop the recording first.";
         return false;
@@ -1072,6 +1096,8 @@ bool openProject(AppState& app, const std::filesystem::path& folder)
     std::string err;
     if (!minidaw::loadProject(folder, d, warnings, err)) {
         app.projectDialogError = err;
+        // Also in the status line: Recent and the start have no dialog open (N5).
+        app.projectNotes.push_back("Could not open the project: " + err);
         app.log.error("Open project: " + err);
         return false;
     }
@@ -1088,6 +1114,19 @@ bool openProject(AppState& app, const std::filesystem::path& folder)
     importIntoProject(app);  // a project saved with outside takes (should not happen, but repairable)
     for (auto& t : app.tracks) refreshTakeLength(app, t);
     app.projectSavedText = minidaw::projectToJson(currentProject(app), folder);
+    if (!warnings.empty()) {
+        // Opening needed repairs: keep the original, then save the repaired
+        // state, so nothing skipped disappears without notice (N6).
+        std::error_code ec;
+        std::filesystem::copy_file(folder / minidaw::kProjectFileName,
+                                   folder / (std::string(minidaw::kProjectFileName) + ".bak"),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        const std::string note = ec ? "The project file needed repairs; the original could not be kept (" + ec.message() + ")."
+                                    : "The project file needed repairs (see above); the original is kept as project.json.bak.";
+        app.projectNotes.push_back(note);
+        app.log.warning(note);
+        app.projectSavedText.clear();  // the repaired state is written by the next autosave
+    }
     const unsigned int rate = app.audio.info().sampleRate;
     if (d.sampleRate && rate && d.sampleRate != rate) {
         const std::string note = "The project was saved at " + std::to_string(d.sampleRate) + " Hz; the stream runs at " +
@@ -1102,10 +1141,16 @@ bool openProject(AppState& app, const std::filesystem::path& folder)
 }
 
 // New: an empty project. Save as: the current tracks, with their takes copied in.
-bool createProject(AppState& app, const std::filesystem::path& folder, bool keepTracks)
+bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool keepTracks)
 {
+    const std::filesystem::path folder = cleanFolder(typedFolder);
     if (app.session.recording()) {
         app.projectDialogError = "Stop the recording first.";
+        return false;
+    }
+    if (!app.projectFolder.empty() &&
+        (folder == app.projectFolder || minidaw::isInsideFolder(folder, app.projectFolder))) {
+        app.projectDialogError = "Choose a folder outside the open project.";  // no nested projects (N9)
         return false;
     }
     std::string err;
@@ -1114,13 +1159,20 @@ bool createProject(AppState& app, const std::filesystem::path& folder, bool keep
         return false;
     }
     saveProjectNow(app);
+    std::vector<minidaw::Track> tracks = keepTracks ? app.tracks : std::vector<minidaw::Track>{};
+    if (keepTracks && !importIntoProject(app, folder, tracks)) {
+        // A take could not be copied: stay with the current project (N4).
+        app.projectDialogError = "Not every take could be copied into the new folder (see the notes below the "
+                                 "tracks and the log). Free some disk space and try again.";
+        return false;
+    }
     stopPlayback(app);
     app.projectFolder = folder;
-    app.projectNotes.clear();
     app.projectError.clear();
     if (keepTracks) {
-        importIntoProject(app);
+        app.tracks = std::move(tracks);
     } else {
+        app.projectNotes.clear();
         app.tracks.clear();
         app.tracksCreated = false;  // the default track comes back
         app.midiPortsDirty = true;
