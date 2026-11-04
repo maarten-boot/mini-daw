@@ -13,6 +13,14 @@
 // asks the host for 320 x 160, like plugins that adjust their size when they
 // open. The scale the host gives is shown in the hidden read-only parameter
 // "Editor scale" (normalized = scale / 4), so the tests can check it.
+//
+// MIDI mapping (IMidiMapping): controller 7 (volume) on any channel → Gain.
+// Controller state: the editor's last size (like real plugins keep their
+// window state), so the tests can check the controller state round-trip.
+//
+// Test hook: the hidden parameter "Restart request" (4), set by the host,
+// makes the controller call restartComponent: above 0.5 with kIoChanged |
+// kLatencyChanged, else with kParamValuesChanged.
 // Not shipped with mini-daw. Part of mini-daw, MIT licence.
 
 #include "public.sdk/source/main/pluginfactory.h"
@@ -21,6 +29,7 @@
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 
 #include "public.sdk/source/common/pluginview.h"
@@ -46,6 +55,7 @@ namespace {
 
 constexpr ParamID kGain = 1;
 constexpr ParamID kEditorScale = 2;  // read-only, hidden: the scale the host gave the editor
+constexpr ParamID kRestartRequest = 4;  // hidden test hook (see above)
 constexpr const char* kTestPlatform = "minidaw-test";
 
 // Class IDs (random, fixed): processor and controller.
@@ -147,11 +157,17 @@ private:
     double gain_ = 0.5;
 };
 
+struct EditorSize {
+    int32 width = 300;
+    int32 height = 150;
+};
+
 class TestSynthView : public CPluginView, public IPlugViewContentScaleSupport {
 public:
-    explicit TestSynthView(EditController* controller) : CPluginView(nullptr), controller_(controller)
+    TestSynthView(EditController* controller, EditorSize* size)
+        : CPluginView(nullptr), controller_(controller), size_(size)
     {
-        ViewRect r(0, 0, 300, 150);
+        ViewRect r(0, 0, size->width, size->height);
         setRect(r);
     }
 
@@ -190,6 +206,10 @@ public:
     tresult PLUGIN_API onSize(ViewRect* newSize) override
     {
         CPluginView::onSize(newSize);
+        if (newSize) {
+            size_->width = newSize->getWidth();
+            size_->height = newSize->getHeight();
+        }
 #if defined(_WIN32)
         if (hwnd_ && newSize) MoveWindow(hwnd_, 0, 0, newSize->getWidth(), newSize->getHeight(), TRUE);
 #endif
@@ -293,9 +313,10 @@ private:
     HWND hwnd_ = nullptr;
 #endif
     EditController* controller_;
+    EditorSize* size_;  // the controller's (kept in its state)
 };
 
-class TestSynthController : public EditController {
+class TestSynthController : public EditController, public IMidiMapping {
 public:
     static FUnknown* create(void*) { return static_cast<IEditController*>(new TestSynthController); }
     tresult PLUGIN_API initialize(FUnknown* context) override
@@ -305,12 +326,42 @@ public:
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5, ParameterInfo::kCanAutomate, kGain);
         parameters.addParameter(STR16("Editor scale"), nullptr, 0, 0.0,
                                 ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorScale);
+        parameters.addParameter(STR16("Restart request"), nullptr, 0, 0.0, ParameterInfo::kIsHidden, kRestartRequest);
         return kResultOk;
+    }
+    tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override
+    {
+        if (tag == kRestartRequest && value > 0.0 && componentHandler) {
+            componentHandler->restartComponent(value > 0.5 ? (kIoChanged | kLatencyChanged) : kParamValuesChanged);
+            return kResultOk;
+        }
+        return EditController::setParamNormalized(tag, value);
     }
     IPlugView* PLUGIN_API createView(FIDString name) override
     {
         if (!name || std::strcmp(name, ViewType::kEditor) != 0) return nullptr;
-        return new TestSynthView(this);
+        return new TestSynthView(this, &editorSize_);
+    }
+    tresult PLUGIN_API getMidiControllerAssignment(int32 busIndex, int16 /*channel*/, CtrlNumber cc,
+                                                   ParamID& id) override
+    {
+        if (busIndex != 0 || cc != kCtrlVolume) return kResultFalse;
+        id = kGain;
+        return kResultTrue;
+    }
+    tresult PLUGIN_API getState(IBStream* state) override
+    {
+        IBStreamer s(state, kLittleEndian);
+        return s.writeInt32(editorSize_.width) && s.writeInt32(editorSize_.height) ? kResultOk : kResultFalse;
+    }
+    tresult PLUGIN_API setState(IBStream* state) override
+    {
+        IBStreamer s(state, kLittleEndian);
+        int32 w = 0, h = 0;
+        if (!s.readInt32(w) || !s.readInt32(h) || w < 200 || h < 100 || w > 1200 || h > 800) return kResultFalse;
+        editorSize_.width = w;
+        editorSize_.height = h;
+        return kResultOk;
     }
     tresult PLUGIN_API setComponentState(IBStream* state) override
     {
@@ -319,6 +370,15 @@ public:
         if (s.readDouble(g)) setParamNormalized(kGain, g);
         return kResultOk;
     }
+
+    OBJ_METHODS(TestSynthController, EditController)
+    DEFINE_INTERFACES
+        DEF_INTERFACE(IMidiMapping)
+    END_DEFINE_INTERFACES(EditController)
+    REFCOUNT_METHODS(EditController)
+
+private:
+    EditorSize editorSize_;
 };
 
 } // namespace

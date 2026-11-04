@@ -110,11 +110,25 @@ def main() -> int:
                 if not re.fullmatch(r"[0-9a-f]{40}", ref):
                     errors.append(f"{wf.relative_to(root)}:{n}: action not pinned to a commit SHA: {m.group(1)}")
 
+    # VST trademark (SPEC-LIC-05, T-LIC-06) ------------------------------------
+    sentence = "VST is a registered trademark of Steinberg Media Technologies GmbH."
+    for doc in ("README.md", "THIRD_PARTY.md", "src/app/main.cpp"):
+        p = root / doc
+        if not p.exists() or sentence not in p.read_text(encoding="utf-8"):
+            errors.append(f"{doc}: the VST trademark sentence is missing ({sentence!r})")
+    readme = (root / "README.md").read_text(encoding="utf-8") if (root / "README.md").exists() else ""
+    first = re.search(r"VST", readme)
+    if first and readme[first.end():first.end() + 1] != "\u00ae":
+        errors.append("README.md: the first use of VST must be written VST\u00ae")
+    if re.search(r"\bVSTi\b", readme):
+        errors.append("README.md: no derived words such as 'VSTi' (Steinberg's VST Usage Guidelines)")
+
     for e in errors:
         print(f"FAIL: {e}")
     if errors:
         return 1
-    print(f"OK: LICENSE is MIT, {len(deps)} dependencies checked, no ASIO SDK files, all actions pinned")
+    print(f"OK: LICENSE is MIT, {len(deps)} dependencies checked, no ASIO SDK files, all actions pinned, "
+          "VST trademark text present")
     return 0
 
 

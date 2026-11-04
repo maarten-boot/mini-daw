@@ -30,3 +30,7 @@ Used to build or package mini-daw, not part of the program itself.
 | Component | Licence | Step | Notes |
 |-----------|---------|------|-------|
 | Steinberg ASIO SDK | GPLv3 or Steinberg proprietary | P11b | **Optional, off by default, never in this repository.** A binary built with it under GPLv3 is itself GPLv3. See README. |
+
+## Trademarks
+
+VST is a registered trademark of Steinberg Media Technologies GmbH. mini-daw hosts VST®3 instruments with the VST 3 SDK (MIT licence, listed above).

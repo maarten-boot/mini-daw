@@ -14,6 +14,11 @@
 // pointer, so the GUI frees an old one only when the audio thread has left
 // it. Instruments are loaded and unloaded by the GUI, never while a published
 // configuration uses them (detach first).
+//
+// Per instrument the audio thread keeps the notes it has started (from the
+// take and live) and its current gain; this follows the instrument when it
+// moves to another slot (crosscheck #9, Q3). Notes are released when playback
+// stops and when live input ends (the track is disarmed).
 
 #include "minidaw/instrument.hpp"
 #include "minidaw/midi_input.hpp"
@@ -41,6 +46,7 @@ public:
         bool live = false;                         // take live MIDI from the ring
         std::shared_ptr<const std::vector<MidiEvent>> playback;  // the take's events (file frames)
         std::int64_t takeStart = 0;                // timeline frame of the take's start
+        float gain = 1.0f;                         // the track's gain now (volume, mute, solo)
     };
 
     InstrumentRack();
@@ -62,16 +68,23 @@ public:
 
 private:
     struct Config;
+    // Audio thread only: the state of one instrument (found by instrument and load serial).
+    struct Voices {
+        const Vst3Instrument* owner = nullptr;
+        std::uint64_t serial = 0;
+        std::array<std::uint16_t, 128> heldPlay{};  // notes the playback started (bit per channel)
+        std::array<std::uint16_t, 128> heldLive{};  // notes live input started
+        bool wasPlaying = false;
+        bool wasLive = false;
+        float gain = 1.0f;                           // gain at the end of the last block (ramps)
+    };
+    Voices& voicesFor(const Config& c, const SlotSetup& s, std::size_t slot);
+
     std::atomic<Config*> config_{nullptr};
     std::atomic<Config*> inUse_{nullptr};
     std::unique_ptr<Config> owned_;
     std::array<std::unique_ptr<SpscRing<RawMidi>>, kMaxSlots> live_;
-    std::array<std::atomic<float>, kMaxSlots> gains_{};
-    std::array<int, kMaxSlots> slotTrack_{};        // GUI thread: which track each slot belongs to
-    // Audio thread only.
-    std::array<std::array<std::uint16_t, 128>, kMaxSlots> held_{};   // notes the playback started (bit per channel)
-    std::array<bool, kMaxSlots> wasPlaying_{};
-    std::array<float, kMaxSlots> curGain_{};
+    std::array<Voices, kMaxSlots> voices_{};         // audio thread only
     std::vector<float> scratchL_, scratchR_;
 };
 

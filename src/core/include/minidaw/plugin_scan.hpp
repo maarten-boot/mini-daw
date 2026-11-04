@@ -69,6 +69,12 @@ std::int64_t moduleStamp(const std::filesystem::path& module);
 // The classes of one module: moduleinfo.json, else load it.
 ScannedModule scanModule(const std::filesystem::path& module);
 
+// If `marker` exists, the previous scan crashed mini-daw while loading the
+// module it names: that module is marked Crashed in `cache` (added if it was
+// not there yet, the usual case for a first scan) and the marker is removed.
+// Returns the module's path, or empty if there was no marker (crosscheck #9, Q2).
+std::string recordScanCrash(const std::filesystem::path& marker, PluginCache& cache);
+
 class PluginScanner {
 public:
     // `retryCrashed`: also try modules marked as crashed or failed earlier.

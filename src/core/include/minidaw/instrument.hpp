@@ -59,6 +59,9 @@ public:
     const std::string& name() const;
     const std::string& classId() const;
     const std::filesystem::path& modulePath() const;
+    double sampleRate() const;   // the rate it was loaded for
+    // Changes with every load (unique in the process); 0 when nothing is loaded.
+    std::uint64_t serial() const;
 
     // The plugin's state (processor and controller), as bytes.
     bool getState(std::string& component, std::string& controller, std::string& error) const;
@@ -72,6 +75,17 @@ public:
     void idle();
     Steinberg::Vst::IEditController* controller() const;
 
+    // GUI thread: what the plugin asked for with restartComponent since the
+    // last call (cleared by the call).
+    struct RestartRequest {
+        bool any = false;
+        bool reload = false;          // reload the plugin (its busses changed, or it asked to be reloaded)
+        bool latencyChanged = false;  // its latency changed (see latencySamples)
+        int flags = 0;                // the raw VST3 flags, for the log
+    };
+    RestartRequest takeRestartRequest();
+    std::uint32_t latencySamples() const;  // the processor's latency (0 if none or nothing loaded)
+
     // Audio thread: processes `frames` frames with these events (sorted by
     // offset); writes the instrument's stereo output to `left` and `right`.
     void process(const InstrumentMidi* events, std::size_t count, std::uint32_t frames,
@@ -79,6 +93,8 @@ public:
 
 private:
     friend class InstrumentEditor;
+    friend class ComponentHandlerImpl;
+    void queueParameter(std::uint32_t id, double normalized, bool fromController);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -244,3 +244,52 @@ Scope: Spec v0.22, Plan, Tests, README, code at commit `497c975` (P9b: changes s
 | O8 | SPEC-PKG-01/02, UI-08, CI-01 and T-PKG-03, T-UI-13 updated. |
 
 Result: Linux 119/119; installer rules checked under Wine; 150 % scaling checked on Linux; the Windows makensis build to be confirmed by CI.
+
+# Crosscheck #9 — 2026-11-04 (after P10: VST3 instruments and editor windows)
+
+Scope: Spec v0.26, Plan, Tests, README, THIRD_PARTY.md, CLAUDE.md, code at commit `abdf558` (changes since `a5c68a8`: P10a–e, the error-dialog fix, the meter width fix), CI runs 41703163695, 41734020005, 41736545593 (all green). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the P10 code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Every reviewer finding below was checked against the code by Claude; one proposed fix (Q5) is disputed.
+
+| Area | Verdict |
+|------|---------|
+| CI | ✅ three green runs; Windows 130/130 including the editor in a real window (T-VST-19) |
+| VST-01 (scan) | ✅ moduleinfo.json, cache, error dialogs suppressed; ❌ a module that crashes mini-daw in its **first** scan is not recorded → scanned (and crashes) again → **Q2** |
+| VST-02 (instrument, rack) | ✅ hazard-pointer publish/retire, unload only after detach, VST3 setup/state/unload order; ❌ allocation in the audio callback → **Q1**; ⚠️ hung live notes and per-slot state after reconfiguration → **Q3**; ⚠️ parameter points dropped → **Q4**; ⚠️ take timing after a rate change → **Q6** |
+| VST-05 (editor) | ✅ view removed while its window exists, frame cleared, closed before the instrument unloads; ⚠️ `restartComponent` ignored → **Q5** |
+| VST-06 (state) | ✅ component, then controller (`setComponentState`, `setState`); ⚠️ a wrong-typed instrument field fails the whole project → **Q8** |
+| Audio-thread rules | ❌ Q1; otherwise no locks, no I/O; parameter queues and event list capped as designed |
+| Spec ↔ tests | ✅ no duplicate IDs, no result rows for unknown tests; ⚠️ SPEC-LIC-05 has no test; MIDI mapping, controller state, crash marker in the app untested → **Q11**, **Q12** |
+| Docs | ⚠️ README status and first "VST3" without ®; THIRD_PARTY.md without the trademark sentence; CLAUDE.md lacks the Wine display note → **Q11** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| Q1 | medium | `InstrumentRack::process` (`instrument_rack.cpp:122`) calls `std::stable_sort` on the block's events. libstdc++ and MSVC allocate a temporary buffer for it: allocation in the audio callback (design rule), a possible glitch with many notes. | Live events (offset 0) are already first and playback events already in time order: no sort needed, or an in-place insertion sort (stable, ≤ 512 elements). A test that counts allocations is not practical; keep the rule by construction and comment it. |
+| Q2 | medium | `checkScanMarker` (`main.cpp:1084`) marks the crashed module only if it is already in the cache. The usual case is a crash during the module's first scan: the marker is removed, nothing is recorded, the next Scan loads it again and mini-daw crashes again (contradicts SPEC-VST-01a "marked crashed and skipped"). | Move this into the core (`PluginCache::recordCrash` or the scanner's result) so a missing module is added as Crashed; test in T-VST-11 (marker for a module not in the cache). |
+| Q3 | medium | Notes can hang: (a) a live note held while the track is disarmed (or the slot reconfigured) loses its note-off — the ring is drained and live notes are not tracked; (b) `held_`, `wasPlaying_`, `curGain_` and `gains_` belong to the slot index and survive `configure()`: when tracks shift slots, playback note-offs go to the wrong instrument and the first block uses the previous track's gain; (c) more than 512 events in a block drops the rest, note-offs included. | Track live notes in `held_` too; give each slot an identity (track + instrument) and on change or live → off send note-offs to the old instrument first; reset the per-slot state when a slot changes owner; put the gain in `SlotSetup`; when the event list is full, keep note-offs (drop other events first). Tests in T-VST-14: held live note across disarm, slot shift. |
+| Q4 | medium | `instrument.cpp:374`: a parameter queue takes at most 4 points per block, further changes are dropped — but they are still echoed to the controller. A fast editor drag or a stream of controller/pitch-bend messages leaves the processor at an older value than the editor shows. | When the queue is full, overwrite the value of its last point (the latest value wins); echo only what reached the processor. Test: 10 changes of one parameter in one block → the processor ends at the last value. |
+| Q5 | low-medium (part disputed) | `restartComponent` flags are stored and never read. The reviewer suggests pushing all controller values to the processor on `kParamValuesChanged`; that is not what the flag means (it asks the host to re-read parameter values for its own displays — mini-daw has none) and could overwrite the processor's state. Real gaps: `kIoChanged` (busses changed) and `kLatencyChanged` (matters for P11 recording). | On `kIoChanged` / `kReloadComponent`: reload the instrument with its state (as after a rate change), from `idle()`; record `kLatencyChanged` for P11; `kParamValuesChanged`: nothing to do. Log every restart request. |
+| Q6 | medium-low | `syncRack` caches a take's events per track keyed by the take path only (`main.cpp:1266`); the frames depend on the rate (`smfToFrames(d, instrumentRate)`). After a sample-rate change the old frames are used: an instrument plays a MIDI take about 9 % off in time (48 → 44.1 kHz). | Key the cache by path and rate (or clear it in `reloadInstruments`). |
+| Q7 | low | `reloadInstruments` runs after every successful audio open, also when only the buffer size changed (instruments are set up for up to 4096 frames regardless): all plugins reload, editors close and reopen, a short silence. | Reload only when the rate changed. |
+| Q8 | low | `project.cpp:252`: `ins.value("module", …)` throws for a wrong-typed field; the top-level catch then fails the whole project, unlike the per-field warnings (N1). | Type-check `module`, `name`, `state`, `controllerState` like the other fields; extend T-VST-15. |
+| Q9 | low | `process()` echoes every parameter change to the controller, including those that came from the controller itself (editor edits): redundant, and a delayed echo can make a dragged control jitter. | Echo only changes that did not come from the controller (MIDI-mapped controllers, host changes). |
+| Q10 | notes | `ProcessContext` claims a valid tempo of 120 BPM: consistent with mini-daw's MIDI timing (960 ppq at 120 BPM), no tempo setting exists yet. `configure()` waits for the audio thread; a plugin blocked in `process()` would freeze the GUI (accepted: in-process hosting, SPEC-VST-02a). `getState` every 5 s on the GUI thread may take a moment with large plugins (not observed). | None now; revisit with a tempo setting (later) and if users report stalls. |
+| Q11 | docs | README: status "P2–P9b" and "its own editor window comes next"; its first line says "VST3" without ® (SPEC-LIC-05: first use carries ®). THIRD_PARTY.md (credits) lacks "VST is a registered trademark of Steinberg Media Technologies GmbH." SPEC-LIC-05 has no test. CLAUDE.md: the Wine test run needs a display (T-VST-19 fails without one). | Update README and THIRD_PARTY.md; T-LIC-06: `tools/check_licenses.py` checks the sentence in README, THIRD_PARTY.md and the instruments window source, and ® on the first "VST" in README; CLAUDE.md note. |
+| Q12 | tests | Untested: the MIDI-mapping path (controllers, pitch bend, channel pressure, program change → parameters; the test synth has no `IMidiMapping`); controller state (the test synth's controller has no `getState`/`setState`); Q2–Q4, Q6. | Test synth: map CC 7 → Gain, add controller state (one value); tests for each fix above. |
+
+## Actions taken (user: "yes fix Q1–Q12, Q1 first")
+| # | Done |
+|---|------|
+| Q1 | No sort in the rack: the block's events are built in time order (note-offs and live input at offset 0, then the take's events in file order). |
+| Q3 | Per-instrument audio state (`Voices`: held take notes, held live notes, playing / live flags, gain) found by instrument and load serial (`Vst3Instrument::serial()`), so it follows an instrument to another slot and is reset for a new one; live notes released when the track is disarmed; gains live in the published configuration (`SlotSetup::gain`, then `setGain`), so a new slot starts at its own gain; with a full event list a note-off takes the place of the last other event. T-VST-21. |
+| Q2 | `recordScanCrash` in the core marks or adds the crashed module and removes the marker; the scanner and the app both use it. T-VST-11 extended (first-scan crash → skipped by the next scan). |
+| Q4 | A full parameter queue gets the latest value at its last point's offset (replaced by the SDK, no allocation). T-VST-22 (fails without the fix). |
+| Q9 | Edits from the controller are not echoed back; MIDI-mapped and host changes are (the editor shows them). |
+| Q6 | The take event cache is cleared when the instruments' rate changes. |
+| Q7 | `reloadInstruments` returns when every instrument already runs at the stream rate. |
+| Q5 | `takeRestartRequest()` / `latencySamples()`; the GUI logs every request and reloads the instrument with its state (editor reopened) for kIoChanged / kReloadComponent; kParamValuesChanged needs nothing. Test synth hook; T-VST-23. |
+| Q8 | `module`, `name`, `state`, `controllerState` type-checked: warnings for the track, the project opens. T-VST-15 extended. |
+| Q10 | Notes only, no change. |
+| Q11 | README: VST® on first use, status P2–P10, the Edit button; THIRD_PARTY.md: Trademarks section; T-LIC-06 in `tools/check_licenses.py` (checked to fail without the ®); CLAUDE.md: the Wine tests need a display. |
+| Q12 | Test synth: controller 7 → Gain (IMidiMapping), controller state (editor size), restart hook. T-VST-21..23. Q6 and Q7 are in the GUI code (no unit test); checked by reading. |
+
+Spec v0.27 (SPEC-VST-01a, 02a). Linux 131/131, Wine 131/131 (8 runs; one earlier failed assertion in a freshly made Wine prefix, not reproduced).

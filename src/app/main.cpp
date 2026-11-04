@@ -163,6 +163,7 @@ struct AppState {
     std::string rackSignature;               // what the rack was configured for
     std::vector<std::pair<std::string, minidaw::SpscRing<minidaw::RawMidi>*>> rackTaps;
     std::map<int, std::pair<std::filesystem::path, std::shared_ptr<const std::vector<minidaw::MidiEvent>>>> takeEvents;
+    unsigned int takeEventsRate = 0;           // the rate takeEvents' frames were made for (Q6)
     double instrumentStateAt = 0.0;
     std::vector<std::string> instrumentNotes;
     // Plugin editor windows (P10d), by track number; closed before their
@@ -1083,19 +1084,9 @@ void stepScan(AppState& app)
 // At start: a scan that did not finish means a module crashed mini-daw.
 void checkScanMarker(AppState& app)
 {
-    std::error_code ec;
-    if (!std::filesystem::exists(pluginScanMarker(app), ec)) return;
-    minidaw::PluginScanner s;
-    s.start({}, app.pluginCache, pluginScanMarker(app));  // reads and removes the marker
-    const std::string crashed = s.crashedLastTime();
+    // Marks the module (adding it if this was its first scan) and removes the marker.
+    const std::string crashed = minidaw::recordScanCrash(pluginScanMarker(app), app.pluginCache);
     if (crashed.empty()) return;
-    for (auto& m : app.pluginCache.modules) {
-        if (m.path == crashed) {
-            m.status = minidaw::ModuleStatus::Crashed;
-            m.error = "mini-daw stopped while loading this module during a scan.";
-            m.classes.clear();
-        }
-    }
     std::string err;
     minidaw::savePluginCache(pluginCacheFile(app), app.pluginCache, err);
     const std::string note = "mini-daw stopped while scanning " + crashed + " last time; that module is skipped "
@@ -1204,7 +1195,13 @@ void openPluginWindow(AppState& app, const minidaw::Track& t);  // further down
 
 void reloadInstruments(AppState& app)
 {
-    if (app.instruments.empty()) return;
+    // Only a new sample rate needs new instruments (the block size does not:
+    // they take up to 4096 frames per call and larger blocks in parts) (Q7).
+    bool sameRate = true;
+    for (const auto& [n, inst] : app.instruments) {
+        if (inst->loaded() && inst->sampleRate() != static_cast<double>(instrumentRate(app))) sameRate = false;
+    }
+    if (app.instruments.empty() || sameRate) return;
     refreshInstrumentStates(app);
     const std::vector<int> editors = app.pluginWindows.openTracks();  // opened again afterwards
     restoreInstruments(app);
@@ -1237,6 +1234,12 @@ void openPluginWindow(AppState& app, const minidaw::Track& t)
 // it depends on changes.
 void syncRack(AppState& app, bool force)
 {
+    // A take's events are in frames at the instruments' rate: made again after a rate change (Q6).
+    if (app.takeEventsRate != instrumentRate(app)) {
+        app.takeEvents.clear();
+        app.takeEventsRate = instrumentRate(app);
+        force = true;
+    }
     std::string sig = app.playbackForRecording ? "R" : "P";
     for (const auto& t : app.tracks) {
         const auto it = app.instruments.find(t.number);
@@ -1262,6 +1265,7 @@ void syncRack(AppState& app, bool force)
         s.track = t.number;
         s.liveChannel = t.midiChannel;
         s.live = t.armed && !t.midiPort.empty();
+        s.gain = minidaw::trackGain(t, minidaw::anySolo(app.tracks));
         if (!t.take.empty() && !(t.armed && app.playbackForRecording)) {
             auto& cached = app.takeEvents[t.number];
             if (cached.first != t.take || !cached.second) {
@@ -1292,6 +1296,31 @@ void syncRack(AppState& app, bool force)
 void updateInstruments(AppState& app)
 {
     for (auto& [n, inst] : app.instruments) inst->idle();
+    // restartComponent requests (Q5). Parameter value / title changes need
+    // nothing here (mini-daw shows no plugin parameters); new busses or a
+    // reload request: the plugin is loaded again with its state.
+    std::vector<int> reload;
+    for (auto& [n, inst] : app.instruments) {
+        const minidaw::Vst3Instrument::RestartRequest r = inst->takeRestartRequest();
+        if (!r.any) continue;
+        char flags[16];
+        std::snprintf(flags, sizeof flags, "0x%X", static_cast<unsigned>(r.flags));
+        std::string text = "Track " + std::to_string(n) + ": " + inst->name() + " asked for a restart (flags " + flags + ")";
+        if (r.latencyChanged) text += "; latency now " + std::to_string(inst->latencySamples()) + " samples";
+        if (r.reload) text += "; loading it again with its settings";
+        app.log.info(text);
+        if (r.reload) reload.push_back(n);
+    }
+    if (!reload.empty()) {
+        refreshInstrumentStates(app);
+        for (const int n : reload) {
+            const bool editor = app.pluginWindows.isOpen(n);
+            for (auto& t : app.tracks) {
+                if (t.number != n) continue;
+                if (loadTrackInstrument(app, t) && editor) openPluginWindow(app, t);
+            }
+        }
+    }
     syncRack(app);
     const double now = ImGui::GetTime();
     if (!app.instruments.empty() && now >= app.instrumentStateAt) {

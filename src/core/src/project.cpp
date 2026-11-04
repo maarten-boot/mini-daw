@@ -247,12 +247,26 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
             if (j.contains("instrument")) {
                 const json& ins = j["instrument"];
                 bool ok = ins.is_object() && ins.contains("classId") && ins["classId"].is_string();
+                // The other fields are optional strings; a wrong type is a damaged field (Q8).
+                auto field = [&](const char* key, bool& good) {
+                    if (!ins.contains(key)) return std::string();
+                    if (!ins[key].is_string()) {
+                        good = false;
+                        return std::string();
+                    }
+                    return ins[key].get<std::string>();
+                };
                 if (ok) {
+                    bool names = true;
                     t.instrumentClass = ins["classId"].get<std::string>();
-                    t.instrumentModule = ins.value("module", std::string());
-                    t.instrumentName = ins.value("name", std::string());
-                    ok = base64Decode(ins.value("state", std::string()), t.instrumentState) &&
-                         base64Decode(ins.value("controllerState", std::string()), t.instrumentControllerState);
+                    t.instrumentModule = field("module", names);
+                    t.instrumentName = field("name", names);
+                    if (!names) warnings.push_back(where + "the instrument's module or name has a wrong value; ignored.");
+                    bool states = true;
+                    const std::string state = field("state", states);
+                    const std::string controllerState = field("controllerState", states);
+                    ok = states && base64Decode(state, t.instrumentState) &&
+                         base64Decode(controllerState, t.instrumentControllerState);
                     if (!ok) {
                         t.instrumentState.clear();
                         t.instrumentControllerState.clear();

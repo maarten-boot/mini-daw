@@ -50,6 +50,7 @@ constexpr int kNoMapping = -1;
 struct ParamChange {
     ParamID id = 0;
     ParamValue value = 0;
+    bool fromController = false;  // an edit in the plugin's controller: not echoed back (Q9)
 };
 
 } // namespace
@@ -61,7 +62,7 @@ public:
     tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API performEdit(ParamID id, ParamValue value) override
     {
-        owner_->setParameter(id, value);
+        owner_->queueParameter(id, value, /*fromController=*/true);
         return kResultOk;
     }
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
@@ -96,6 +97,7 @@ struct Vst3Instrument::Impl {
     std::filesystem::path modulePath;
     double sampleRate = 48000;
     bool active = false;
+    std::uint64_t serial = 0;
 
     HostProcessData data;
     EventList events{kMaxEvents};
@@ -137,6 +139,16 @@ const std::string& Vst3Instrument::classId() const
 const std::filesystem::path& Vst3Instrument::modulePath() const
 {
     return impl_->modulePath;
+}
+
+double Vst3Instrument::sampleRate() const
+{
+    return impl_->sampleRate;
+}
+
+std::uint64_t Vst3Instrument::serial() const
+{
+    return impl_->serial;
 }
 
 IEditController* Vst3Instrument::controller() const
@@ -245,6 +257,8 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
             return false;
         }
         m.processor->setProcessing(true);  // kNotImplemented is fine
+        static std::atomic<std::uint64_t> nextSerial{1};
+        m.serial = nextSerial.fetch_add(1);
         m.active = true;
         return true;
     } catch (const std::exception& e) {
@@ -276,6 +290,7 @@ void Vst3Instrument::unload()
     m.name.clear();
     m.classId.clear();
     m.modulePath.clear();
+    m.serial = 0;
     ParamChange scratch[64];
     while (m.toProcessor.read(scratch, 64) > 0) {
     }
@@ -336,9 +351,30 @@ bool Vst3Instrument::setState(const std::string& component, const std::string& c
 
 void Vst3Instrument::setParameter(std::uint32_t id, double normalized)
 {
+    queueParameter(id, normalized, false);
+}
+
+void Vst3Instrument::queueParameter(std::uint32_t id, double normalized, bool fromController)
+{
     std::lock_guard<std::mutex> lock(impl_->setParamMutex);  // not the audio thread
-    ParamChange c{id, normalized};
+    ParamChange c{id, normalized, fromController};
     impl_->toProcessor.write(&c, 1);
+}
+
+Vst3Instrument::RestartRequest Vst3Instrument::takeRestartRequest()
+{
+    RestartRequest r;
+    if (!impl_->handler) return r;
+    r.flags = impl_->handler->restartFlags.exchange(0);
+    r.any = r.flags != 0;
+    r.reload = (r.flags & (kReloadComponent | kIoChanged)) != 0;
+    r.latencyChanged = (r.flags & kLatencyChanged) != 0;
+    return r;
+}
+
+std::uint32_t Vst3Instrument::latencySamples() const
+{
+    return impl_->processor ? impl_->processor->getLatencySamples() : 0;
 }
 
 void Vst3Instrument::idle()
@@ -362,7 +398,9 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
         std::memset(right, 0, sizeof(float) * frames);
         return;
     }
-    auto addParam = [&](ParamID id, int32 offset, ParamValue value) {
+    // `echo`: also tell the controller (so the editor shows a change that did
+    // not come from it, e.g. a MIDI controller).
+    auto addParam = [&](ParamID id, int32 offset, ParamValue value, bool echo) {
         int32 index = 0;
         // Never more queues than made at load, never more points than reserved.
         bool known = false;
@@ -371,9 +409,23 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
         }
         if (!known && m.paramsIn.getParameterCount() >= kMaxParams) return;
         IParamValueQueue* q = m.paramsIn.addParameterData(id, index);
-        if (q && q->getPointCount() < kMaxPoints) q->addPoint(offset, value, index);
-        ParamChange c{id, value};
-        m.toController.write(&c, 1);  // so the editor shows it
+        if (!q) return;
+        if (q->getPointCount() < kMaxPoints) {
+            q->addPoint(offset, value, index);
+        } else {
+            // Full: the latest value replaces the last point's value, at that
+            // point's offset (the SDK replaces a point with the same offset:
+            // no allocation), so the processor ends at the newest value
+            // (crosscheck #9, Q4).
+            int32 lastOffset = 0;
+            ParamValue lastValue = 0;
+            q->getPoint(q->getPointCount() - 1, lastOffset, lastValue);
+            q->addPoint(lastOffset, value, index);
+        }
+        if (echo) {
+            ParamChange c{id, value, false};
+            m.toController.write(&c, 1);
+        }
     };
 
     std::size_t next = 0;
@@ -385,7 +437,7 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
 
         ParamChange pc[32];
         const std::size_t got = m.toProcessor.read(pc, 32);
-        for (std::size_t i = 0; i < got; ++i) addParam(pc[i].id, 0, pc[i].value);
+        for (std::size_t i = 0; i < got; ++i) addParam(pc[i].id, 0, pc[i].value, !pc[i].fromController);
 
         for (; next < count && events[next].offset < done + n; ++next) {
             const InstrumentMidi& e = events[next];
@@ -420,17 +472,17 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
                 if (m.hasEventInput) m.events.addEvent(ev);
             } else if (status == 0xB0 && e.data[1] < 128) {
                 const auto id = m.midiMap[ch][e.data[1]];
-                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[2] / 127.0);
+                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[2] / 127.0, true);
             } else if (status == 0xE0) {
                 const auto id = m.midiMap[ch][kPitchBend];
                 const int bend = e.data[1] | (e.data[2] << 7);
-                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, bend / 16383.0);
+                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, bend / 16383.0, true);
             } else if (status == 0xD0) {
                 const auto id = m.midiMap[ch][kAfterTouch];
-                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0);
+                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0, true);
             } else if (status == 0xC0) {
                 const auto id = m.midiMap[ch][kCtrlProgramChange];
-                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0);
+                if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0, true);
             }
         }
 

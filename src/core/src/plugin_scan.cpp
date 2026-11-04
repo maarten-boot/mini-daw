@@ -328,33 +328,37 @@ void PluginScanner::start(const std::vector<fs::path>& folders, PluginCache prev
     result_ = {};
     marker_ = std::move(markerFile);
     retry_ = retryCrashed;
-    crashedLastTime_.clear();
+    crashedLastTime_ = marker_.empty() ? std::string() : recordScanCrash(marker_, previous_);
+}
+
+std::string recordScanCrash(const fs::path& marker, PluginCache& cache)
+{
     std::error_code ec;
-    if (!marker_.empty() && fs::exists(marker_, ec)) {
-        // The previous scan did not finish this module: it crashed mini-daw.
-        crashedLastTime_ = readFile(marker_);
-        while (!crashedLastTime_.empty() && (crashedLastTime_.back() == '\n' || crashedLastTime_.back() == '\r')) {
-            crashedLastTime_.pop_back();
-        }
-        fs::remove(marker_, ec);
-        bool known = false;
-        for (auto& m : previous_.modules) {
-            if (m.path == crashedLastTime_) {
-                m.status = ModuleStatus::Crashed;
-                m.error = "mini-daw stopped while loading this module during a scan.";
-                m.classes.clear();
-                known = true;
-            }
-        }
-        if (!known && !crashedLastTime_.empty()) {
-            ScannedModule m;
-            m.path = crashedLastTime_;
-            m.stamp = moduleStamp(pathFromUtf8(m.path));
+    if (!fs::exists(marker, ec)) return {};
+    // The previous scan did not finish this module: it crashed mini-daw.
+    std::string crashed = readFile(marker);
+    while (!crashed.empty() && (crashed.back() == '\n' || crashed.back() == '\r')) crashed.pop_back();
+    fs::remove(marker, ec);
+    if (crashed.empty()) return {};
+    const char* why = "mini-daw stopped while loading this module during a scan.";
+    bool known = false;
+    for (auto& m : cache.modules) {
+        if (m.path == crashed) {
             m.status = ModuleStatus::Crashed;
-            m.error = "mini-daw stopped while loading this module during a scan.";
-            previous_.modules.push_back(std::move(m));
+            m.error = why;
+            m.classes.clear();
+            known = true;
         }
     }
+    if (!known) {
+        ScannedModule m;
+        m.path = crashed;
+        m.stamp = moduleStamp(pathFromUtf8(m.path));
+        m.status = ModuleStatus::Crashed;
+        m.error = why;
+        cache.modules.push_back(std::move(m));
+    }
+    return crashed;
 }
 
 std::string PluginScanner::current() const

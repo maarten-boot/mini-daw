@@ -33,7 +33,7 @@
 | P13 | Note and sound editing | — | later (not in v1) |
 | PL1 | Look and feel: clearer hover, active and selected states (e.g. the chosen instrument), so every click gives feedback; colours through roles, contrast ≥ the minimum (user feedback 2026-11-03). Also: the Take column gets narrow in a small window, so the output list can be cut off | UI-02, UI-06 | later |
 | PL2 | Preset menu in mini-daw for plugins that publish program lists (VST3 IUnitInfo), next to the plugin's own editor | VST-05 | later, idea |
-| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b (`Crosscheck-2026-11-02.md`) |
+| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b, #9 after P10 (`Crosscheck-2026-11-02.md`) |
 
 ## Notes
 - Every new Spec item gets at least one test case in `Tests.md`.

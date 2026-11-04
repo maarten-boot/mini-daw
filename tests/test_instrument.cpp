@@ -292,3 +292,147 @@ TEST_CASE("T-VST-19: the plugin editor in a Windows window; an edit in it reache
 }
 #endif
 
+
+TEST_CASE("T-VST-21: instrument rack: no hanging notes on disarm, slot shift or a full block; gain per instrument",
+          "[vst][T-VST-21]")
+{
+    std::string err;
+    Vst3Instrument a, b;
+    REQUIRE(a.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    REQUIRE(b.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    CHECK(a.serial() != b.serial());
+    InstrumentRack rack;
+    std::vector<float> out(2 * 1024);
+    auto run = [&](std::optional<std::uint64_t> timeline, unsigned frames = 512) {
+        std::fill(out.begin(), out.end(), 0.0f);
+        rack.process(out.data(), frames, 2, timeline);
+    };
+    auto peakOut = [&](unsigned from, unsigned to) {
+        float p = 0;
+        for (unsigned f = from; f < to; ++f) p = std::max(p, std::fabs(out[f * 2]));
+        return p;
+    };
+
+    SECTION("a live note held while the track is disarmed is released")
+    {
+        InstrumentRack::SlotSetup s;
+        s.instrument = &a;
+        s.track = 1;
+        s.live = true;
+        rack.configure({s});
+        RawMidi on{0, {0x90, 60, 127}, 3};
+        rack.liveRing(0)->write(&on, 1);
+        run(std::nullopt);
+        CHECK(peakOut(1, 512) == Approx(0.5f).margin(0.01));
+        s.live = false;  // disarmed: the key is still down, its note-off never comes
+        rack.configure({s});
+        run(std::nullopt);
+        CHECK(peakOut(1, 512) == 0.0f);
+    }
+
+    SECTION("notes and gain follow an instrument to another slot")
+    {
+        auto take = std::make_shared<std::vector<MidiEvent>>(std::vector<MidiEvent>{{0, {0x90, 69, 127}, 3}});
+        InstrumentRack::SlotSetup sa;
+        sa.instrument = &a;
+        sa.track = 1;
+        sa.playback = take;
+        InstrumentRack::SlotSetup sb;
+        sb.instrument = &b;
+        sb.track = 2;
+        sb.gain = 0.25f;
+        sb.live = true;
+        rack.configure({sa, sb});
+        run(std::uint64_t{0});  // a plays its take's note
+        CHECK(peakOut(1, 512) == Approx(0.5f).margin(0.01));
+        rack.configure({sb, sa});  // the slots swap (e.g. a track was moved or removed)
+        run(std::nullopt);         // stopped: a's note must be released (it is in slot 1 now)
+        CHECK(peakOut(1, 512) == 0.0f);
+        // b in slot 0 starts at its own gain 0.25 (no ramp from the gain slot 0 had before)
+        RawMidi on{0, {0x90, 60, 127}, 3};
+        rack.liveRing(0)->write(&on, 1);
+        run(std::nullopt);
+        CHECK(peakOut(1, 512) == Approx(0.125f).margin(0.005));
+    }
+
+    SECTION("a note-off still arrives when the block's event list is full")
+    {
+        std::vector<MidiEvent> ev;
+        ev.push_back({0, {0x90, 69, 127}, 3});
+        for (std::uint64_t f = 1; f <= 600; ++f) ev.push_back({f, {0xB0, 20, 1}, 3});  // controller 20: unmapped
+        ev.push_back({700, {0x80, 69, 0}, 3});
+        InstrumentRack::SlotSetup s;
+        s.instrument = &a;
+        s.track = 1;
+        s.playback = std::make_shared<std::vector<MidiEvent>>(ev);
+        rack.configure({s});
+        run(std::uint64_t{0}, 1024);  // 602 events in one block, room for 512
+        CHECK(peakOut(1, 690) == Approx(0.5f).margin(0.01));
+        CHECK(peakOut(701, 1024) == 0.0f);
+    }
+    rack.clear();
+}
+
+TEST_CASE("T-VST-22: MIDI controllers reach parameters (latest value wins); controller state round-trip",
+          "[vst][T-VST-22]")
+{
+    std::string err;
+    Vst3Instrument inst;
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    std::vector<float> l(4800), r(4800);
+
+    // Controller 7 is mapped to Gain by the plugin (IMidiMapping). Ten changes
+    // in one block (more than the 4 points a queue holds): the processor must
+    // end at the last value, 100/127, and the controller (editor) shows it.
+    std::vector<InstrumentMidi> ev{msg(0, 0x90, 69, 127)};
+    for (std::uint8_t k = 1; k <= 10; ++k) ev.push_back(msg(k, 0xB0, 7, static_cast<std::uint8_t>(10 * k)));
+    inst.process(ev.data(), ev.size(), 4800, {}, l.data(), r.data());
+    CHECK(peak(l, 2400, 4800) == Approx(100.0 / 127).margin(0.01));
+    inst.idle();
+    CHECK(inst.controller()->getParamNormalized(1) == Approx(100.0 / 127));
+
+    // Pitch bend and other controllers are not mapped: ignored, no change.
+    const InstrumentMidi other[] = {msg(0, 0xB0, 1, 0), msg(1, 0xE0, 0, 0)};
+    inst.process(other, 2, 4800, {}, l.data(), r.data());
+    CHECK(peak(l, 2400, 4800) == Approx(100.0 / 127).margin(0.01));
+
+    // Controller state: the test synth keeps its editor size there.
+    InstrumentEditor ed;
+    REQUIRE(ed.create(inst, "minidaw-test", err));
+    REQUIRE(ed.attach(nullptr, err));
+    CHECK(ed.resize({500, 400}) == InstrumentEditor::Size{500, 400});
+    ed.close();
+    std::string comp, ctrl;
+    REQUIRE(inst.getState(comp, ctrl, err));
+    CHECK(ctrl.size() == 8);
+    Vst3Instrument again;
+    REQUIRE(again.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    REQUIRE(again.setState(comp, ctrl, err));
+    InstrumentEditor ed2;
+    REQUIRE(ed2.create(again, "minidaw-test", err));
+    CHECK(ed2.size() == InstrumentEditor::Size{500, 400});
+    CHECK(again.controller()->getParamNormalized(1) == Approx(100.0 / 127));  // the gain, from the component state
+}
+
+TEST_CASE("T-VST-23: restart requests from the plugin are reported once", "[vst][T-VST-23]")
+{
+    std::string err;
+    Vst3Instrument inst;
+    CHECK_FALSE(inst.takeRestartRequest().any);  // nothing loaded
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    CHECK_FALSE(inst.takeRestartRequest().any);
+
+    inst.controller()->setParamNormalized(4, 1.0);  // test hook: busses and latency changed
+    Vst3Instrument::RestartRequest r = inst.takeRestartRequest();
+    CHECK(r.any);
+    CHECK(r.reload);
+    CHECK(r.latencyChanged);
+    CHECK_FALSE(inst.takeRestartRequest().any);     // reported once
+
+    inst.controller()->setParamNormalized(4, 0.25); // parameter values changed: nothing to reload
+    r = inst.takeRestartRequest();
+    CHECK(r.any);
+    CHECK_FALSE(r.reload);
+    CHECK_FALSE(r.latencyChanged);
+    CHECK(inst.latencySamples() == 0);
+}

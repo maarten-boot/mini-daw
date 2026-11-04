@@ -139,6 +139,20 @@ TEST_CASE("T-VST-11: plugin cache and scanner (reuse, crash marker)", "[vst][T-V
     }
     CHECK(scan.result().instruments().size() == 1);
 
+    // At start-up (the app): the module crashed during its first scan, so it
+    // is not in the cache yet. It is added as crashed and the next scan skips it.
+    PluginCache empty;
+    std::ofstream(marker) << pathToUtf8(folder / "minidaw-testsynth.vst3") << "\n";
+    CHECK(recordScanCrash(marker, empty) == pathToUtf8(folder / "minidaw-testsynth.vst3"));
+    CHECK_FALSE(fs::exists(marker));
+    REQUIRE(empty.modules.size() == 1);
+    CHECK(empty.modules[0].status == ModuleStatus::Crashed);
+    scan.start({folder}, empty, marker);
+    while (scan.step()) {
+    }
+    CHECK(scan.result().instruments().empty());
+    CHECK(recordScanCrash(marker, empty).empty());  // no marker: nothing
+
     // A damaged cache file: empty, no crash.
     std::ofstream(cacheFile) << "{ not json";
     CHECK(loadPluginCache(cacheFile).modules.empty());

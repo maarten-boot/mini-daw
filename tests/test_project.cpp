@@ -324,6 +324,18 @@ TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[p
     CHECK(back.tracks[0].instrumentState.empty());
     CHECK(w.size() == 1);
 
+    // Wrong-typed fields: warnings for that track, the project still opens (crosscheck #9, Q8).
+    const std::string typed = R"({"format":"mini-daw project","version":1,"tracks":[{"number":1,"name":"K","kind":"midi",
+        "instrument":{"classId":"0123456789ABCDEF0123456789ABCDEF","module":42,"name":["x"],"state":7}}]})";
+    w.clear();
+    REQUIRE(projectFromJson(typed, dir.path(), back, w, err));
+    INFO(err);
+    REQUIRE(back.tracks.size() == 1);
+    CHECK(back.tracks[0].instrumentClass.size() == 32);
+    CHECK(back.tracks[0].instrumentModule.empty());
+    CHECK(back.tracks[0].instrumentState.empty());
+    CHECK(w.size() == 2);  // module/name, and the state
+
     // Extra instrument folders in the config.
     AppConfig cfg;
     cfg.instruments.folders = {"D:\\VST3 extra", "/opt/vst3"};
