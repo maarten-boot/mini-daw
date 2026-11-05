@@ -1235,21 +1235,14 @@ minidaw::Track* findTrack(AppState& app, int number)
 // (no references into it may be held across this call). Returns its number.
 int ensureLinkedTrack(AppState& app, int midiNumber)
 {
-    if (const minidaw::Track* l = minidaw::linkedSoundTrack(app.tracks, midiNumber)) return l->number;
-    const auto owner = std::find_if(app.tracks.begin(), app.tracks.end(),
-                                    [&](const minidaw::Track& t) { return t.number == midiNumber; });
-    if (owner == app.tracks.end()) return 0;
-    minidaw::Track s;
-    s.number = minidaw::nextTrackNumber(app.tracks);
-    s.kind = minidaw::TrackKind::Audio;
-    s.name = owner->name + " sound";
-    s.channels = {0};
-    s.instrumentOf = midiNumber;
-    owner->soundFromRecording = false;
-    app.tracks.insert(owner + 1, s);
-    app.log.info("Track " + std::to_string(s.number) + " \"" + s.name + "\" holds the sound of track " +
-                 std::to_string(midiNumber) + "'s instrument");
-    return s.number;
+    const bool had = minidaw::linkedSoundTrack(app.tracks, midiNumber) != nullptr;
+    const int n = minidaw::addLinkedSoundTrack(app.tracks, midiNumber);
+    if (n != 0 && !had) {
+        const minidaw::Track* s = findTrack(app, n);
+        app.log.info("Track " + std::to_string(n) + " \"" + (s ? s->name : std::string()) +
+                     "\" holds the sound of track " + std::to_string(midiNumber) + "'s instrument");
+    }
+    return n;
 }
 
 // Opens the plugin's own editor window for a track (SPEC-VST-05a).
@@ -2179,6 +2172,13 @@ void drawTransport(AppState& app)
             app.loggedRecordingError = err;
         }
     } else {
+        const bool anyArmed =
+            std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
+        if (const int n = minidaw::overdubTrackCount(app.tracks); anyArmed && n > 0) {
+            ImGui::TextWrapped("Overdub: Record also plays the takes of %d track%s that %s not armed, so you can "
+                               "record along with them. Disarm a track to hear its take instead of re-recording it.",
+                               n, n == 1 ? "" : "s", n == 1 ? "is" : "are");
+        }
         if (ImGui::SmallButton("Recording settings...")) {
             app.pendingRecording = app.config.recording;
             app.showRecordingSettings = true;
@@ -2228,14 +2228,17 @@ void drawTracksPanel(AppState& app)
     const bool anyArmed =
         std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
     if (!app.tracks.empty() && !anyArmed) {
-        ImGui::TextUnformatted("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI track's port "
-                               "opens when it is armed.");
+        ImGui::TextWrapped("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI track's port "
+                           "opens when it is armed. Tracks that are not armed play along (overdub).");
     }
 
     const float em = ImGui::GetFontSize();
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
     int removeIndex = -1;
     int renderRequest = 0;  // a MIDI track whose Render was clicked (handled after the table)
+    // Linked sound tracks made / removed when the output changes (after the table: they change app.tracks).
+    int linkRequest = 0;
+    int unlinkRequest = 0;
     const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
     bool monitoring = false;
     if (!app.tracks.empty() && ImGui::BeginTable("tracks", 9, flags)) {
@@ -2271,6 +2274,11 @@ void drawTracksPanel(AppState& app)
             } else {
                 ImGui::BeginDisabled(rec);
                 if (ImGui::Checkbox("##arm", &t.armed) && t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Armed tracks record when you press Record (Ctrl+R).\n"
+                                      "Tracks that are not armed play their takes meanwhile, so you can record "
+                                      "along with them (overdub).");
+                }
                 ImGui::SameLine();
                 ImGui::TextUnformatted(t.armed ? "armed" : "-");  // not by colour alone (SPEC-UI-07)
                 ImGui::EndDisabled();
@@ -2427,12 +2435,14 @@ void drawTracksPanel(AppState& app)
                                                             : t.midiOut;
                 if (ImGui::BeginCombo("##out", out.c_str())) {
                     if (ImGui::Selectable("(no MIDI output)", !hasInst && t.midiOut.empty())) {
+                        if (hasInst) unlinkRequest = t.number;
                         unloadInstrument(app, t.number);
                         t.instrumentClass.clear();
                         t.midiOut.clear();
                     }
                     for (const auto& name : app.midiPlayer.outputPorts()) {
                         if (ImGui::Selectable(name.c_str(), !hasInst && t.midiOut == name)) {
+                            if (hasInst) unlinkRequest = t.number;
                             unloadInstrument(app, t.number);
                             t.instrumentClass.clear();
                             t.midiOut = name;
@@ -2445,6 +2455,8 @@ void drawTracksPanel(AppState& app)
                         ImGui::PushID(c.classId.c_str());
                         if (ImGui::Selectable(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
                             chooseInstrument(app, t, c);
+                            // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
+                            if (app.instruments.count(t.number) != 0) linkRequest = t.number;
                         }
                         ImGui::PopID();
                     }
@@ -2487,6 +2499,13 @@ void drawTracksPanel(AppState& app)
         // Links stay consistent: a removed MIDI track's linked track becomes a normal
         // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
         minidaw::removeTrack(app.tracks, static_cast<std::size_t>(removeIndex));
+    }
+    if (linkRequest != 0) ensureLinkedTrack(app, linkRequest);
+    // An empty sound track goes with its instrument; one with a take stays (and is kept while a
+    // recording or a render of this track may still fill it).
+    if (unlinkRequest != 0 && !rec && app.renderTrack != unlinkRequest &&
+        minidaw::removeUnusedLinkedTrack(app.tracks, unlinkRequest)) {
+        app.log.info("Track " + std::to_string(unlinkRequest) + ": its empty sound track was removed with the instrument");
     }
     for (const auto& w : app.midiWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     for (const auto& m : app.midi.takeMessages()) {

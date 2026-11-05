@@ -30,6 +30,7 @@
 | P11a | Linked sound track per instrument track, "Sound from" switch (instrument / this recording), kept in the project | VST-03a | done (2026-11-05) |
 | P11b | Live recording of the instrument's sound (Recorder takes from the rack, also without an input device) | VST-03, 03a | done (2026-11-05) |
 | P11c | Offline render of a MIDI take through a second instance, progress and Cancel | VST-04, 04a | done (2026-11-05) |
+| P11d | After the user's Windows test: linked sound track made when the instrument is chosen (removed again while empty); overdub hint and Arm tooltip | VST-03a, PLAY-05a | done (2026-11-05) |
 | — | **Milestone v2: VST3 instruments** | | |
 | P14 | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default; was "P11b" until 2026-11-05, renamed when P11 got its own a–c) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |

@@ -143,6 +143,42 @@ void removeTrack(std::vector<Track>& tracks, std::size_t index)
     tracks.erase(tracks.begin() + static_cast<std::ptrdiff_t>(index));
 }
 
+int addLinkedSoundTrack(std::vector<Track>& tracks, int midiNumber)
+{
+    if (const Track* l = linkedSoundTrack(tracks, midiNumber)) return l->number;
+    const auto owner = std::find_if(tracks.begin(), tracks.end(), [&](const Track& t) {
+        return t.number == midiNumber && t.kind == TrackKind::Midi;
+    });
+    if (owner == tracks.end()) return 0;
+    Track s;
+    s.number = nextTrackNumber(tracks);
+    s.kind = TrackKind::Audio;
+    s.name = owner->name + " sound";
+    s.channels = {0};
+    s.instrumentOf = midiNumber;
+    owner->soundFromRecording = false;
+    tracks.insert(owner + 1, s);
+    return s.number;
+}
+
+bool removeUnusedLinkedTrack(std::vector<Track>& tracks, int midiNumber)
+{
+    const Track* l = linkedSoundTrack(tracks, midiNumber);
+    if (l == nullptr || !l->take.empty()) return false;
+    removeTrack(tracks, static_cast<std::size_t>(l - tracks.data()));
+    return true;
+}
+
+int overdubTrackCount(const std::vector<Track>& tracks)
+{
+    return static_cast<int>(std::count_if(tracks.begin(), tracks.end(), [&](const Track& t) {
+        if (t.armed || t.take.empty()) return false;
+        const Track* owner = soundOwner(tracks, t);
+        if (t.instrumentOf > 0 && owner != nullptr) return owner->soundFromRecording && !owner->armed;
+        return true;
+    }));
+}
+
 std::vector<Track> tracksToRecord(const std::vector<Track>& tracks, const std::function<bool(int)>& instrumentLoaded)
 {
     std::vector<Track> out = tracks;

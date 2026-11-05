@@ -80,6 +80,20 @@ inline bool placedAsAudioInput(const Track& t) { return t.kind == TrackKind::Aud
 // removed MIDI track's linked track becomes a normal audio track; removing a
 // linked track sets its MIDI track back to "Sound from: instrument".
 void removeTrack(std::vector<Track>& tracks, std::size_t index);
+// MIDI track `midiNumber`'s linked sound track (SPEC-VST-03a), made if
+// missing: right below the MIDI track, named "<name> sound", silent
+// ("Sound from" = instrument). Returns its number; 0 if `midiNumber` is not a
+// MIDI track. May insert into `tracks` (references into it become invalid).
+int addLinkedSoundTrack(std::vector<Track>& tracks, int midiNumber);
+// Removes MIDI track `midiNumber`'s linked sound track if it holds no take
+// (its instrument was taken away before anything was recorded or rendered).
+// Returns true if one was removed.
+bool removeUnusedLinkedTrack(std::vector<Track>& tracks, int midiNumber);
+// How many tracks Record would play while the armed tracks record (an
+// overdub, SPEC-PLAY-05a): not armed, with a take. A linked sound track counts
+// only when it plays its recording ("Sound from") and its MIDI track is not
+// armed (an armed instrument track plays live).
+int overdubTrackCount(const std::vector<Track>& tracks);
 // The tracks as a recording should see them (R4, R9): MIDI tracks whose
 // instrument is not loaded record no sound (their instrument class is
 // cleared in the copy), and linked tracks are never armed themselves.

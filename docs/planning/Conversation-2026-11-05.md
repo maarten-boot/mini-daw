@@ -45,3 +45,15 @@ Continues `Conversation-2026-11-04.md` (P10d, crosscheck #9 and its fixes were d
 ## 7. Demo checklist
 > yes write the demo checklist
 - `docs/Demo-checklist.md`: preparing the machine (CI build of run 42036513972), one rehearsal that also covers T-VST-20 and T-VST-30, a 5-minute demo flow with talking points, what to do if something goes wrong, and reporting back afterwards.
+
+## 8. Windows test with Arturia instruments
+> show me what tests i have to do on a windows machine with a arturia vst plugin
+> i thought the installers was gone ? / where is the installer ? / yes put it in dist/windows
+- Listed the open manual tests (T-VST-17, 20, 30; optional T-PLAY-13, T-MON-06/07, T-PKG-03). The installer is still built by CI; `dist/windows` now holds the CI download of run 42043283751 (`5f404af`; run green on all three jobs).
+> ok all works, no crash, multiple instruments work open/close record playback. Confusing: when i create a midi instrument track and press arm i would expect a linked audio track directly below the midi track … I do not understand how to work the overdub.
+- Recorded as a pass with notes (Tests.md). The linked track is made only when Record starts (or on Render). Proposed: make it as soon as an instrument is chosen; explained overdub and proposed a visible hint. Waiting for the user's choice.
+
+## 9. Linked track at instrument choice; overdub hint
+> yes do both
+- Core: `addLinkedSoundTrack`, `removeUnusedLinkedTrack`, `overdubTrackCount` (track.cpp); GUI: the linked track is made when an instrument is chosen (after the table, as it changes the track list), removed again while empty when the output changes back; overdub line under the transport, Arm tooltip, hint text. Spec v0.30 (SPEC-VST-03a, new SPEC-PLAY-05a), Plan P11d, T-VST-31, demo checklist steps 2, 4, 8 updated.
+- Linux 138/138, Wine 138/138, GUI checked on Xvfb with the test synth.

@@ -208,3 +208,59 @@ TEST_CASE("T-VST-24: linked sound track and the Sound from rule", "[track][T-VST
     removeTrack(b, 9);  // out of range: nothing
     CHECK(b.size() == 2);
 }
+
+TEST_CASE("T-VST-31: linked track made with the instrument; overdub count", "[track][T-VST-31]")
+{
+    // MIDI 1 "Keys", an audio track 2 the user made below it, MIDI 3 without instrument.
+    std::vector<Track> tracks(3);
+    tracks[0].number = 1;
+    tracks[0].name = "Keys";
+    tracks[0].kind = TrackKind::Midi;
+    tracks[1].number = 2;
+    tracks[1].name = "Guitar";
+    tracks[1].kind = TrackKind::Audio;
+    tracks[2].number = 3;
+    tracks[2].kind = TrackKind::Midi;
+
+    // Made right below its MIDI track, before the user's audio track; silent (Sound from instrument).
+    tracks[0].soundFromRecording = true;  // not possible without a linked track; reset when it is made
+    const int n = addLinkedSoundTrack(tracks, 1);
+    REQUIRE(tracks.size() == 4);
+    CHECK(n == 4);
+    CHECK(tracks[1].number == 4);
+    CHECK(tracks[1].name == "Keys sound");
+    CHECK(tracks[1].kind == TrackKind::Audio);
+    CHECK(tracks[1].instrumentOf == 1);
+    CHECK(tracks[1].take.empty());
+    CHECK_FALSE(tracks[0].soundFromRecording);
+    CHECK(tracks[2].name == "Guitar");
+    // Only one per MIDI track; none for an audio track or a missing track.
+    CHECK(addLinkedSoundTrack(tracks, 1) == 4);
+    CHECK(addLinkedSoundTrack(tracks, 2) == 0);
+    CHECK(addLinkedSoundTrack(tracks, 9) == 0);
+    CHECK(tracks.size() == 4);
+
+    // Instrument taken away before anything was recorded: the empty sound track goes.
+    CHECK(removeUnusedLinkedTrack(tracks, 1));
+    REQUIRE(tracks.size() == 3);
+    CHECK(linkedSoundTrack(tracks, 1) == nullptr);
+    CHECK_FALSE(removeUnusedLinkedTrack(tracks, 1));  // none left
+    // With a take it stays.
+    addLinkedSoundTrack(tracks, 1);
+    linkedSoundTrack(tracks, 1)->take = "04-Keys sound.wav";
+    CHECK_FALSE(removeUnusedLinkedTrack(tracks, 1));
+    CHECK(tracks.size() == 4);
+
+    // Overdub count: tracks 1 (MIDI take), 4 (its sound), 2 (audio), 3 (MIDI, no take).
+    tracks[0].take = "01-Keys.mid";
+    tracks[2].take = "02-Guitar.wav";
+    CHECK(overdubTrackCount(tracks) == 2);  // Keys (instrument plays it) and Guitar; the sound track is silent
+    tracks[0].soundFromRecording = true;
+    CHECK(overdubTrackCount(tracks) == 3);  // the sound track plays its recording too
+    tracks[0].armed = true;                 // re-record Keys: neither it nor its old sound plays
+    CHECK(overdubTrackCount(tracks) == 1);
+    tracks[2].armed = true;
+    CHECK(overdubTrackCount(tracks) == 0);
+    tracks[0].armed = false;
+    CHECK(overdubTrackCount(tracks) == 2);
+}
