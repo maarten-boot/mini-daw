@@ -125,6 +125,7 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
         if (t.kind == TrackKind::Audio) {
             j["inputChannels"] = t.channels;
             j["monitor"] = t.monitor;
+            if (t.instrumentOf > 0) j["instrumentOf"] = t.instrumentOf;  // P11: the sound of that MIDI track
         } else {
             j["midiInput"] = t.midiPort;
             j["midiChannel"] = t.midiChannel;
@@ -136,6 +137,7 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
                                    {"state", base64Encode(t.instrumentState)},
                                    {"controllerState", base64Encode(t.instrumentControllerState)}};
             }
+            if (t.soundFromRecording) j["soundFrom"] = "recording";  // P11; default "instrument"
         }
         j["armed"] = t.armed;
         j["volumeDb"] = t.volumeDb;
@@ -233,6 +235,11 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
                 else warnings.push_back(where + "'inputChannels' must be 1 or 2 channel numbers from 0 to 63; using input 1.");
             }
             t.monitor = get("monitor", false);
+            t.instrumentOf = get("instrumentOf", 0);
+            if (t.instrumentOf < 0) {
+                warnings.push_back(where + "'instrumentOf' must be a track number; ignored.");
+                t.instrumentOf = 0;
+            }
         } else {
             t.midiPort = get("midiInput", std::string());
             if (j.contains("midiChannel")) {
@@ -244,6 +251,11 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
                 }
             }
             t.midiOut = get("midiOutput", std::string());
+            const std::string from = get("soundFrom", std::string("instrument"));
+            if (from != "instrument" && from != "recording") {
+                warnings.push_back(where + "'soundFrom' must be \"instrument\" or \"recording\"; using instrument.");
+            }
+            t.soundFromRecording = from == "recording";
             if (j.contains("instrument")) {
                 const json& ins = j["instrument"];
                 bool ok = ins.is_object() && ins.contains("classId") && ins["classId"].is_string();
@@ -296,6 +308,24 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
             warnings.push_back(where + "its take " + pathToUtf8(t.take) + " is missing.");
         }
         data.tracks.push_back(std::move(t));
+    }
+    // Links between a MIDI track and the audio track with its sound (P11):
+    // the MIDI track must exist, and have at most one linked track.
+    for (Track& t : data.tracks) {
+        if (t.kind != TrackKind::Audio || t.instrumentOf == 0) continue;
+        const Track* owner = soundOwner(data.tracks, t);
+        const Track* first = linkedSoundTrack(data.tracks, t.instrumentOf);
+        if (owner == nullptr || first != &t) {
+            warnings.push_back("Track " + std::to_string(t.number) + ": it held the sound of track " +
+                               std::to_string(t.instrumentOf) + (owner ? ", which already has one" : ", which is missing") +
+                               "; it is a normal audio track now.");
+            t.instrumentOf = 0;
+        }
+    }
+    for (Track& t : data.tracks) {
+        if (t.kind == TrackKind::Midi && t.soundFromRecording && linkedSoundTrack(data.tracks, t.number) == nullptr) {
+            t.soundFromRecording = false;  // nothing recorded to play
+        }
     }
     return true;
 }

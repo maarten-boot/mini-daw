@@ -38,6 +38,16 @@ struct Track {
     float volumeDb = 0.0f;                   // -60 (= silent) .. +6
     bool mute = false;
     bool solo = false;
+
+    // The sound of an instrument (P11, SPEC-VST-03a). An audio track with
+    // `instrumentOf` = N holds the recorded or rendered sound of MIDI track
+    // N's instrument (its "linked" track); it has no input and is not armed
+    // itself. MIDI track N's `soundFromRecording` chooses what plays: false =
+    // the instrument plays the MIDI take (the linked track is silent), true =
+    // the linked track's WAV plays (the instrument gets no take MIDI; live
+    // playing on an armed track still sounds).
+    int instrumentOf = 0;                    // audio: 0 = an input track
+    bool soundFromRecording = false;         // MIDI with an instrument
 };
 
 inline constexpr float kMinVolumeDb = -60.0f;  // and below: silent
@@ -47,6 +57,19 @@ inline constexpr float kMaxVolumeDb = 6.0f;
 // soloed and this one is not; else its volume (SPEC-PLAY-04).
 float trackGain(const Track& track, bool anySolo);
 bool anySolo(const std::vector<Track>& tracks);
+
+// P11: the linked audio track of MIDI track `midiNumber` (see Track), or null.
+const Track* linkedSoundTrack(const std::vector<Track>& tracks, int midiNumber);
+Track* linkedSoundTrack(std::vector<Track>& tracks, int midiNumber);
+// The MIDI track a linked audio track belongs to, or null.
+const Track* soundOwner(const std::vector<Track>& tracks, const Track& linked);
+// Playback gain with the "Sound from" rule (SPEC-VST-03a): trackGain, except
+// that a linked audio track is silent unless its MIDI track takes its sound
+// from the recording, and is also silent when that MIDI track is muted; the
+// MIDI track's solo counts for its linked track too.
+float playbackGain(const Track& track, const std::vector<Track>& tracks);
+// Whether the MIDI track's instrument should get the take's MIDI in playback.
+inline bool instrumentPlaysTake(const Track& midi) { return !midi.soundFromRecording; }
 
 // Length of the track's take in frames at `sampleRate` (WAV: its frames;
 // MIDI: its end of track); 0 if there is none or it cannot be read.

@@ -95,6 +95,39 @@ bool anySolo(const std::vector<Track>& tracks)
     return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return t.solo; });
 }
 
+const Track* linkedSoundTrack(const std::vector<Track>& tracks, int midiNumber)
+{
+    for (const Track& t : tracks) {
+        if (t.kind == TrackKind::Audio && t.instrumentOf == midiNumber && midiNumber > 0) return &t;
+    }
+    return nullptr;
+}
+
+Track* linkedSoundTrack(std::vector<Track>& tracks, int midiNumber)
+{
+    return const_cast<Track*>(linkedSoundTrack(static_cast<const std::vector<Track>&>(tracks), midiNumber));
+}
+
+const Track* soundOwner(const std::vector<Track>& tracks, const Track& linked)
+{
+    if (linked.kind != TrackKind::Audio || linked.instrumentOf <= 0) return nullptr;
+    for (const Track& t : tracks) {
+        if (t.kind == TrackKind::Midi && t.number == linked.instrumentOf) return &t;
+    }
+    return nullptr;
+}
+
+float playbackGain(const Track& track, const std::vector<Track>& tracks)
+{
+    const bool solo = anySolo(tracks);
+    const Track* owner = soundOwner(tracks, track);
+    if (owner == nullptr) return trackGain(track, solo);
+    if (!owner->soundFromRecording || owner->mute) return 0.0f;
+    Track t = track;
+    t.solo = track.solo || owner->solo;
+    return trackGain(t, solo);
+}
+
 std::uint64_t takeLengthFrames(const Track& track, unsigned int sampleRate)
 {
     if (track.take.empty()) return 0;

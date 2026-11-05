@@ -26,7 +26,10 @@
 | P10c | Test synth (a VST3 instrument built with the tests) | — | done (2026-11-03) |
 | P10d | Plugin editor window (Windows first, Linux later): an "Edit" button per instrument track opens the plugin's own window (presets, sounds), which can stay open while playing and be closed again | VST-05, 05a | done (2026-11-04) on Linux/Wine (tests, live under Wine); real plugins on Windows by the user; Linux editor later (P12) |
 | P10e | Instrument and its state in the project | VST-06, 06a | done (2026-11-03) |
-| P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | pending |
+| P11 | Record VST3 output live, render MIDI through VST3 | VST-03, 04, NF-03 | done (2026-11-05) on Linux/Wine; Windows by the user |
+| P11a | Linked sound track per instrument track, "Sound from" switch (instrument / this recording), kept in the project | VST-03a | done (2026-11-05) |
+| P11b | Live recording of the instrument's sound (Recorder takes from the rack, also without an input device) | VST-03, 03a | done (2026-11-05) |
+| P11c | Offline render of a MIDI take through a second instance, progress and Cancel | VST-04, 04a | done (2026-11-05) |
 | — | **Milestone v2: VST3 instruments** | | |
 | P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |

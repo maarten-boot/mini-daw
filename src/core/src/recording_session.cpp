@@ -82,6 +82,16 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
         if (t->kind == TrackKind::Audio) {
             audioTakes.push_back({path, t->channels});
         } else {
+            // An instrument track with a linked audio track: its sound is
+            // recorded too, into that track's file (P11, SPEC-VST-03a).
+            if (!t->instrumentClass.empty()) {
+                if (const Track* linked = linkedSoundTrack(tracks, t->number)) {
+                    TakeSpec spec;
+                    spec.path = folder / pathFromUtf8(takeFileName(*linked));
+                    spec.instrumentTrack = t->number;
+                    audioTakes.push_back(spec);
+                }
+            }
             midiTakes_.push_back({*t, path, midi.disconnects(t->midiPort)});
             const bool known = std::any_of(portEvents_.begin(), portEvents_.end(),
                                            [&](const PortEvents& p) { return p.port == t->midiPort; });

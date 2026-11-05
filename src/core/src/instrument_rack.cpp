@@ -57,6 +57,8 @@ InstrumentRack::InstrumentRack()
     for (auto& r : live_) r = std::make_unique<SpscRing<RawMidi>>(1024);
     scratchL_.resize(kChunk);
     scratchR_.resize(kChunk);
+    for (auto& c : capL_) c.resize(kChunk);
+    for (auto& c : capR_) c.resize(kChunk);
 }
 
 InstrumentRack::~InstrumentRack()
@@ -130,6 +132,8 @@ void InstrumentRack::process(float* out, unsigned int frames, unsigned int outCh
         c = config_.load(std::memory_order_seq_cst);
         inUse_.store(c, std::memory_order_seq_cst);
     } while (c != config_.load(std::memory_order_seq_cst));
+    capTrack_.fill(0);
+    capFrames_ = frames;
     if (c == nullptr) return;
 
     // Events of one block, in time order by construction (no sort: a sort may
@@ -141,6 +145,7 @@ void InstrumentRack::process(float* out, unsigned int frames, unsigned int outCh
         const SlotSetup& s = c->slots[i];
         if (s.instrument == nullptr || !s.instrument->loaded()) continue;
         Voices& v = voicesFor(*c, s, i);
+        capTrack_[i] = s.track;
         std::size_t n = 0;
         const bool playing = timeline.has_value();
 
@@ -213,6 +218,11 @@ void InstrumentRack::process(float* out, unsigned int frames, unsigned int outCh
             t.position = playing ? static_cast<std::int64_t>(*timeline) + done : 0;
             s.instrument->process(first, count, part, t, scratchL_.data(), scratchR_.data());
             next += count;
+            if (done < kChunk) {  // keep the sound for recording (P11)
+                const unsigned int keep = std::min<unsigned int>(part, kChunk - done);
+                std::copy(scratchL_.begin(), scratchL_.begin() + keep, capL_[i].begin() + done);
+                std::copy(scratchR_.begin(), scratchR_.begin() + keep, capR_[i].begin() + done);
+            }
             if (out != nullptr && outChannels > 0) {
                 for (unsigned int f = 0; f < part; ++f) {
                     const float k = static_cast<float>(done + f + 1) / static_cast<float>(frames);
@@ -231,6 +241,19 @@ void InstrumentRack::process(float* out, unsigned int frames, unsigned int outCh
         v.gain = g1;
     }
     inUse_.store(nullptr, std::memory_order_release);
+}
+
+bool InstrumentRack::instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const
+{
+    if (track <= 0 || frames != capFrames_ || frames > kChunk) return false;
+    for (std::size_t i = 0; i < kMaxSlots; ++i) {
+        if (capTrack_[i] == track) {
+            left = capL_[i].data();
+            right = capR_[i].data();
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace minidaw

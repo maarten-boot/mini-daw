@@ -98,6 +98,7 @@ struct Vst3Instrument::Impl {
     double sampleRate = 48000;
     bool active = false;
     std::uint64_t serial = 0;
+    bool offline = false;  // loaded for rendering (P11)
 
     HostProcessData data;
     EventList events{kMaxEvents};
@@ -157,7 +158,7 @@ IEditController* Vst3Instrument::controller() const
 }
 
 bool Vst3Instrument::load(const std::filesystem::path& module, const std::string& classId, double sampleRate,
-                          std::string& error)
+                          std::string& error, bool offline)
 {
     unload();
     Impl& m = *impl_;
@@ -200,6 +201,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
         m.classId = classId;
         m.modulePath = module;
         m.sampleRate = sampleRate;
+        m.offline = offline;
 
         if (m.controller) {
             m.handler = std::make_unique<ComponentHandlerImpl>(this);
@@ -222,7 +224,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
         m.hasEventInput = m.component->getBusCount(kEvent, kInput) > 0;
         if (m.hasEventInput) m.component->activateBus(kEvent, kInput, 0, true);
 
-        ProcessSetup setup{kRealtime, kSample32, static_cast<int32>(kMaxBlock), sampleRate};
+        ProcessSetup setup{offline ? kOffline : kRealtime, kSample32, static_cast<int32>(kMaxBlock), sampleRate};
         if (m.processor->setupProcessing(setup) != kResultOk) {
             error = "The plugin does not accept " + std::to_string(static_cast<int>(sampleRate)) +
                     " Hz, 32-bit float processing.";
@@ -448,7 +450,7 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
             ev.busIndex = 0;
             ev.sampleOffset = offset;
             ev.ppqPosition = 0;
-            ev.flags = Event::kIsLive;
+            ev.flags = m.offline ? 0 : Event::kIsLive;  // rendered notes are not played live
             if (status == 0x90 && e.data[2] > 0) {
                 ev.type = Event::kNoteOnEvent;
                 ev.noteOn.channel = ch;

@@ -356,8 +356,11 @@ int AudioStream::audioCallback(void* output, void* input, unsigned int frames, d
             while (peak > prev && !slot.compare_exchange_weak(prev, peak, std::memory_order_relaxed)) {
             }
         }
-        self->recorder_.process(samples, frames, channels, blockFrame);
     }
+    // Recording: input channels, and the instruments' sound of this block (P11),
+    // so instruments can be recorded without an input device too.
+    self->recorder_.process(static_cast<const float*>(input), frames, input ? self->cbInputChannels_ : 0, blockFrame,
+                            &self->rack_);
     return 0;
 }
 

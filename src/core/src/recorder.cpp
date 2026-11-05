@@ -31,7 +31,8 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
         error = "Nothing to record: no takes were given.";
         return false;
     }
-    if (sampleRate == 0 || inputChannels == 0) {
+    const bool needsInput = std::any_of(takes.begin(), takes.end(), [](const TakeSpec& t) { return t.instrumentTrack <= 0; });
+    if (sampleRate == 0 || (needsInput && inputChannels == 0)) {
         error = "Nothing to record: the audio stream has no input.";
         return false;
     }
@@ -47,6 +48,7 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
     const auto ringFrames = static_cast<std::size_t>(std::ceil(options.ringSeconds * sampleRate));
     // Check everything before creating any file.
     for (const auto& spec : takes) {
+        if (spec.instrumentTrack > 0) continue;  // stereo instrument sound
         if (spec.channels.empty() || spec.channels.size() > 2) {
             error = "A take must record 1 or 2 channels.";
             return false;
@@ -64,7 +66,7 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
     for (const auto& spec : takes) {
         auto t = std::make_unique<Take>();
         t->spec = spec;
-        t->channels = static_cast<unsigned int>(spec.channels.size());
+        t->channels = spec.instrumentTrack > 0 ? 2u : static_cast<unsigned int>(spec.channels.size());
         t->ring = std::make_unique<SpscRing<float>>(std::max<std::size_t>(ringFrames, 1) * t->channels);
         t->gaps = std::make_unique<SpscRing<Gap>>(kGapSlots);
         if (!t->writer.open(spec.path, sampleRate, t->channels, error)) {
@@ -91,10 +93,14 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
     return true;
 }
 
-void Recorder::process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame)
+void Recorder::process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame,
+                       const InstrumentSource* instruments)
 {
     inProcess_.fetch_add(1);
-    if (active_.load() && input != nullptr && channels == inputChannels_) {
+    // With input takes, a block without the expected input is skipped for all
+    // takes (they stay in step); a recording of instruments only needs no input.
+    const bool inputOk = input != nullptr && channels == inputChannels_ && channels > 0;
+    if (active_.load() && frames > 0 && (inputChannels_ == 0 || inputOk)) {
         if (!haveStart_.load(std::memory_order_relaxed)) {
             startFrame_.store(blockFrame, std::memory_order_relaxed);
             haveStart_.store(true, std::memory_order_release);
@@ -102,6 +108,7 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
         for (auto& tp : takes_) {
             Take& t = *tp;
             const std::size_t need = static_cast<std::size_t>(frames) * t.channels;
+            const bool instrument = t.spec.instrumentTrack > 0;
             // After a loss, the gap must be announced before the next block, so
             // the disk thread can put the silence in the right place.
             const bool fits = t.ring->canWrite(need) && (t.openGap == 0 || t.gaps->canWrite(1));
@@ -116,9 +123,19 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
                 t.openGap = 0;
             }
             std::size_t k = 0;
-            for (unsigned int f = 0; f < frames; ++f) {
-                const float* frame = input + static_cast<std::size_t>(f) * channels;
-                for (unsigned int c = 0; c < t.channels; ++c) t.ring->slot(k++) = frame[t.spec.channels[c]];
+            if (instrument) {
+                const float* l = nullptr;
+                const float* r = nullptr;
+                const bool sound = instruments != nullptr && instruments->instrumentOutput(t.spec.instrumentTrack, frames, l, r);
+                for (unsigned int f = 0; f < frames; ++f) {
+                    t.ring->slot(k++) = sound ? l[f] : 0.0f;
+                    t.ring->slot(k++) = sound ? r[f] : 0.0f;
+                }
+            } else {
+                for (unsigned int f = 0; f < frames; ++f) {
+                    const float* frame = input + static_cast<std::size_t>(f) * channels;
+                    for (unsigned int c = 0; c < t.channels; ++c) t.ring->slot(k++) = frame[t.spec.channels[c]];
+                }
             }
             t.ring->commitWrite(need);
             t.queued += frames;

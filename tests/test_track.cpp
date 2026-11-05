@@ -139,3 +139,40 @@ TEST_CASE("T-PLAY-11: take folders listed and opened as tracks", "[track][T-PLAY
     CHECK(tracksFromTakeFolder(dir.path() / "other", err).empty());
     CHECK(err.find("No takes") != std::string::npos);
 }
+
+TEST_CASE("T-VST-24: linked sound track and the Sound from rule", "[track][T-VST-24]")
+{
+    std::vector<Track> tracks(3);
+    tracks[0].number = 1;
+    tracks[0].kind = TrackKind::Midi;
+    tracks[0].instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
+    tracks[1].number = 2;
+    tracks[1].kind = TrackKind::Audio;
+    tracks[1].instrumentOf = 1;  // the sound of track 1
+    tracks[1].volumeDb = -6.0f;
+    tracks[2].number = 3;
+    tracks[2].kind = TrackKind::Audio;
+    REQUIRE(linkedSoundTrack(tracks, 1) == &tracks[1]);
+    CHECK(linkedSoundTrack(tracks, 3) == nullptr);
+    CHECK(soundOwner(tracks, tracks[1]) == &tracks[0]);
+    CHECK(soundOwner(tracks, tracks[2]) == nullptr);
+
+    // Sound from the instrument (default): the linked track is silent, the instrument plays the take.
+    CHECK(instrumentPlaysTake(tracks[0]));
+    CHECK(playbackGain(tracks[1], tracks) == 0.0f);
+    CHECK(playbackGain(tracks[0], tracks) == Catch::Approx(1.0f));
+    CHECK(playbackGain(tracks[2], tracks) == Catch::Approx(1.0f));
+
+    // Sound from the recording: the linked track plays at its own volume, the instrument gets no take MIDI.
+    tracks[0].soundFromRecording = true;
+    CHECK_FALSE(instrumentPlaysTake(tracks[0]));
+    CHECK(playbackGain(tracks[1], tracks) == Catch::Approx(0.501f).margin(0.001));
+    // Muting the MIDI track silences its sound either way.
+    tracks[0].mute = true;
+    CHECK(playbackGain(tracks[1], tracks) == 0.0f);
+    tracks[0].mute = false;
+    // Soloing the MIDI track lets its linked track sound too; other tracks go silent.
+    tracks[0].solo = true;
+    CHECK(playbackGain(tracks[1], tracks) == Catch::Approx(0.501f).margin(0.001));
+    CHECK(playbackGain(tracks[2], tracks) == 0.0f);
+}

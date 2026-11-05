@@ -342,3 +342,49 @@ TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[p
     REQUIRE(saveConfigFile(dir.path() / "c.ini", cfg).empty());
     CHECK(loadConfigFile(dir.path() / "c.ini").config.instruments == cfg.instruments);
 }
+
+TEST_CASE("T-VST-27: the linked sound track and Sound from are kept in the project; bad links are repaired",
+          "[project][vst][T-VST-27]")
+{
+    test::TempDir dir;
+    ProjectData data;
+    Track m;
+    m.number = 1;
+    m.kind = TrackKind::Midi;
+    m.name = "Keys";
+    m.instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
+    m.soundFromRecording = true;
+    Track l;
+    l.number = 2;
+    l.kind = TrackKind::Audio;
+    l.name = "Keys sound";
+    l.channels = {0};
+    l.instrumentOf = 1;
+    data.tracks = {m, l};
+    std::vector<std::string> w;
+    std::string err;
+    ProjectData back;
+    REQUIRE(projectFromJson(projectToJson(data, dir.path()), dir.path(), back, w, err));
+    CHECK(w.empty());
+    REQUIRE(back.tracks.size() == 2);
+    CHECK(back.tracks[0].soundFromRecording);
+    CHECK(back.tracks[1].instrumentOf == 1);
+
+    // A link to a missing track, a second link to the same track, a bad Sound from value.
+    const std::string bad = R"({"format":"mini-daw project","version":1,"tracks":[
+        {"number":1,"name":"K","kind":"midi","soundFrom":"loud"},
+        {"number":2,"name":"A","kind":"audio","instrumentOf":1},
+        {"number":3,"name":"B","kind":"audio","instrumentOf":1},
+        {"number":4,"name":"C","kind":"audio","instrumentOf":9},
+        {"number":5,"name":"D","kind":"midi","soundFrom":"recording"}]})";
+    w.clear();
+    REQUIRE(projectFromJson(bad, dir.path(), back, w, err));
+    REQUIRE(back.tracks.size() == 5);
+    CHECK_FALSE(back.tracks[0].soundFromRecording);  // "loud": instrument
+    CHECK(back.tracks[1].instrumentOf == 1);         // the first link stays
+    CHECK(back.tracks[2].instrumentOf == 0);         // a second one becomes a normal audio track
+    CHECK(back.tracks[3].instrumentOf == 0);         // track 9 does not exist
+    CHECK_FALSE(back.tracks[4].soundFromRecording);  // nothing recorded to play
+    CHECK(w.size() == 3);
+}
+

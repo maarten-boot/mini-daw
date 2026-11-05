@@ -454,3 +454,34 @@ TEST_CASE("T-REC-30: a MIDI device unplugged during a take is reported", "[sessi
     CHECK(res.midi[1].disconnects == 0);
     CHECK(res.lostData());           // --record-test exits with 1
 }
+
+TEST_CASE("T-VST-28: an armed instrument track also records its sound into its linked track's file",
+          "[session][vst][T-VST-28]")
+{
+    test::TempDir dir;
+    FakeAudio audio;
+    FakeMidi midi;
+    midi.openPort("Keys");
+    Track keys = midiTrack(1, "Keys", "Keys");
+    keys.instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
+    Track sound = audioTrack(2, "Keys sound", {0}, /*armed=*/false);
+    sound.instrumentOf = 1;
+    Track plain = midiTrack(3, "Plain", "Keys");  // no instrument: MIDI only
+    RecordingSession session;
+    std::string err;
+    REQUIRE(session.start({keys, sound, plain}, settingsFor(dir), audio, midi, err));
+    INFO(err);
+    audio.feed(480);
+    audio.feed(480);
+    audio.rec.drainForTest();
+    const SessionResult res = session.stop();
+    CHECK_FALSE(res.lostData());
+    CHECK(std::filesystem::exists(res.folder / "01-Keys.mid"));
+    CHECK(std::filesystem::exists(res.folder / "03-Plain.mid"));
+    WavData w;
+    REQUIRE(readWav(res.folder / "02-Keys sound.wav", w, err));
+    CHECK(w.channels == 2);
+    CHECK(w.frames() == 960);
+    CHECK(entries(res.folder) == 3);  // no WAV for the track without an instrument
+}
+

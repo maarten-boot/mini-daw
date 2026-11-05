@@ -2,6 +2,9 @@
 
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
+#include "minidaw/render.hpp"
+#include "minidaw/wav.hpp"
+#include "test_support.hpp"
 
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 
@@ -10,6 +13,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -436,3 +441,98 @@ TEST_CASE("T-VST-23: restart requests from the plugin are reported once", "[vst]
     CHECK_FALSE(r.latencyChanged);
     CHECK(inst.latencySamples() == 0);
 }
+
+TEST_CASE("T-VST-26: the rack gives each instrument's sound before the track gain, for recording",
+          "[vst][T-VST-26]")
+{
+    std::string err;
+    Vst3Instrument a;
+    REQUIRE(a.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    InstrumentRack rack;
+    InstrumentRack::SlotSetup s;
+    s.instrument = &a;
+    s.track = 7;
+    s.live = true;
+    s.gain = 0.0f;  // the track is muted: the output gets nothing, the recording still gets the sound
+    rack.configure({s});
+    RawMidi on{0, {0x90, 69, 127}, 3};
+    rack.liveRing(0)->write(&on, 1);
+    std::vector<float> out(2 * 512, 0.0f);
+    rack.process(out.data(), 512, 2, std::nullopt);
+    float outPeak = 0;
+    for (float v : out) outPeak = std::max(outPeak, std::fabs(v));
+    CHECK(outPeak == 0.0f);
+    const float* l = nullptr;
+    const float* r = nullptr;
+    REQUIRE(rack.instrumentOutput(7, 512, l, r));
+    float p = 0;
+    for (int f = 1; f < 512; ++f) p = std::max(p, std::fabs(l[f]));
+    CHECK(p == Approx(0.5f).margin(0.01));
+    CHECK_FALSE(rack.instrumentOutput(8, 512, l, r));    // no such track
+    CHECK_FALSE(rack.instrumentOutput(7, 256, l, r));    // not this block's length
+    rack.clear();
+    rack.process(out.data(), 512, 2, std::nullopt);
+    CHECK_FALSE(rack.instrumentOutput(7, 512, l, r));    // gone with the configuration
+}
+
+TEST_CASE("T-VST-29: a MIDI take is rendered through its instrument, with its settings, faster than real time",
+          "[vst][T-VST-29]")
+{
+    test::TempDir dir;
+    std::string err;
+    // The track's settings: gain 0.25.
+    Vst3Instrument live;
+    REQUIRE(live.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    live.setParameter(1, 0.25);
+    std::vector<float> l(512), r(512);
+    live.process(nullptr, 0, 512, {}, l.data(), r.data());
+    RenderJob job;
+    REQUIRE(live.getState(job.state, job.controllerState, err));
+    job.module = MINIDAW_TEST_VST3;
+    job.classId = testSynthClass();
+    job.sampleRate = 48000;
+    job.events = {{5000, {0x80, 69, 0}, 3}, {1000, {0x90, 69, 127}, 3}};  // out of order on purpose
+    job.takeFrames = 6000;
+    job.out = dir.path() / "render.wav";
+
+    OfflineRenderer render;
+    REQUIRE(render.start(job, err));
+    CHECK_FALSE(render.start(job, err));  // one at a time
+    while (!render.done()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(render.progress() == 1.0);
+    const RenderResult res = render.finish();
+    INFO(res.error);
+    REQUIRE(res.ok);
+    CHECK(res.peak == Approx(0.25f).margin(0.01));
+    WavData w;
+    REQUIRE(readWav(job.out, w, err));
+    REQUIRE(w.channels == 2);
+    CHECK(w.frames() == res.frames);
+    CHECK(w.frames() >= 6000 + 24000 - 512);     // the take plus 0.5 s of silence (the block over the end counts)
+    CHECK(w.frames() < 6000 + 24000 + 2 * 512);
+    auto peakIn = [&](std::uint64_t a, std::uint64_t b) {
+        float p = 0;
+        for (std::uint64_t f = a; f < b; ++f) p = std::max(p, std::fabs(w.samples[2 * f]));
+        return p;
+    };
+    CHECK(peakIn(0, 1000) == 0.0f);                          // nothing before the note
+    CHECK(peakIn(1001, 5000) == Approx(0.25f).margin(0.01)); // the note, at the saved gain
+    CHECK(peakIn(5001, w.frames()) < 1e-4f);                  // released at its note-off
+
+    // Cancel: no file is left.
+    job.takeFrames = 48000 * 600;  // ten minutes
+    job.events = {{0, {0x90, 60, 100}, 3}};
+    job.out = dir.path() / "cancelled.wav";
+    REQUIRE(render.start(job, err));
+    render.cancel();
+    const RenderResult c = render.finish();
+    CHECK(c.cancelled);
+    CHECK_FALSE(c.ok);
+    CHECK_FALSE(std::filesystem::exists(job.out));
+
+    // A module that cannot be loaded: refused at start.
+    job.module = dir.path() / "missing.vst3";
+    CHECK_FALSE(render.start(job, err));
+    CHECK_FALSE(err.empty());
+}
+

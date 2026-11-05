@@ -231,3 +231,81 @@ TEST_CASE("process() after stop() does nothing", "[recorder]")
     rec.process(in.data(), 64, 1);  // must not crash or write
     CHECK(rec.framesCaptured() == 0);
 }
+
+namespace {
+// The rack stand-in: track 5's instrument makes frame-numbered values, track 6 has none.
+class FakeInstruments : public InstrumentSource {
+public:
+    std::uint64_t at = 0;  // stream frame of the block
+    mutable std::vector<float> l, r;
+    bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const override
+    {
+        if (track != 5) return false;
+        l.resize(frames);
+        r.resize(frames);
+        for (unsigned int f = 0; f < frames; ++f) {
+            l[f] = marker(at + f, 10);
+            r[f] = marker(at + f, 11);
+        }
+        left = l.data();
+        right = r.data();
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("T-VST-25: instrument takes record the instrument's stereo sound in step with the inputs",
+          "[recorder][T-VST-25]")
+{
+    test::TempDir dir;
+    FakeInstruments inst;
+    std::string err;
+    constexpr unsigned int block = 128;
+
+    SECTION("with an input take")
+    {
+        Recorder rec;
+        TakeSpec in{dir / "in.wav", {1}};
+        TakeSpec synth{dir / "synth.wav", {}, 5};
+        TakeSpec none{dir / "none.wav", {}, 6};
+        REQUIRE(rec.start({in, synth, none}, 48000, 2, err));
+        std::vector<float> buf(block * 2);
+        for (std::uint64_t b = 0; b < 20; ++b) {
+            for (unsigned int f = 0; f < block; ++f) buf[f * 2 + 1] = marker(b * block + f, 1);
+            inst.at = b * block;
+            rec.process(buf.data(), block, 2, b * block, &inst);
+        }
+        rec.process(nullptr, block, 2, 0, &inst);  // no input: skipped for all takes, they stay in step
+        const RecordingResult res = rec.stop();
+        REQUIRE(res.error.empty());
+        WavData a, s, n;
+        REQUIRE(readWav(dir / "in.wav", a, err));
+        REQUIRE(readWav(dir / "synth.wav", s, err));
+        REQUIRE(readWav(dir / "none.wav", n, err));
+        CHECK(a.frames() == 20 * block);
+        REQUIRE(s.channels == 2);
+        REQUIRE(s.frames() == 20 * block);
+        CHECK(n.frames() == 20 * block);
+        std::uint64_t bad = 0;
+        for (std::uint64_t f = 0; f < s.frames(); ++f) {
+            if (toStep(a.samples[f]) != toStep(marker(f, 1))) ++bad;
+            if (toStep(s.samples[2 * f]) != toStep(marker(f, 10))) ++bad;
+            if (toStep(s.samples[2 * f + 1]) != toStep(marker(f, 11))) ++bad;
+            if (n.samples[2 * f] != 0.0f) ++bad;  // no instrument: silence
+        }
+        CHECK(bad == 0);
+    }
+
+    SECTION("without an input device")
+    {
+        Recorder rec;
+        REQUIRE(rec.start({{dir / "synth.wav", {}, 5}}, 48000, 0, err));
+        for (std::uint64_t b = 0; b < 4; ++b) {
+            inst.at = b * block;
+            rec.process(nullptr, block, 0, b * block, &inst);
+        }
+        CHECK(rec.stop().takes.at(0).frames == 4 * block);
+        Recorder needsInput;
+        CHECK_FALSE(needsInput.start({{dir / "in.wav", {0}}}, 48000, 0, err));  // an input take still needs input
+    }
+}

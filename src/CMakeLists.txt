@@ -10,6 +10,7 @@ add_library(minidaw_core STATIC
     core/src/devices.cpp
     core/src/instrument.cpp
     core/src/instrument_rack.cpp
+    core/src/render.cpp
     core/src/log.cpp
     core/src/meter.cpp
     core/src/monitor.cpp

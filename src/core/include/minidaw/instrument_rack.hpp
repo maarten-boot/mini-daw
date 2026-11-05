@@ -22,6 +22,7 @@
 
 #include "minidaw/instrument.hpp"
 #include "minidaw/midi_input.hpp"
+#include "minidaw/recorder.hpp"
 #include "minidaw/smf.hpp"
 
 #include <array>
@@ -33,7 +34,7 @@
 
 namespace minidaw {
 
-class InstrumentRack {
+class InstrumentRack : public InstrumentSource {
 public:
     static constexpr std::size_t kMaxSlots = 16;
     static constexpr std::size_t kMaxEventsPerBlock = 512;
@@ -65,6 +66,10 @@ public:
     // Audio thread: adds every instrument's output to `out` (interleaved, 1
     // or 2 channels). `timeline`: the block's timeline position while playing.
     void process(float* out, unsigned int frames, unsigned int outChannels, std::optional<std::uint64_t> timeline);
+    // Audio thread, after process(): each instrument's sound in that block,
+    // before its track's gain (for recording it, P11). Blocks longer than
+    // kChunk frames: only the first kChunk are kept (false then).
+    bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const override;
 
 private:
     struct Config;
@@ -86,6 +91,10 @@ private:
     std::array<std::unique_ptr<SpscRing<RawMidi>>, kMaxSlots> live_;
     std::array<Voices, kMaxSlots> voices_{};         // audio thread only
     std::vector<float> scratchL_, scratchR_;
+    // Audio thread only: the last block's sound per slot (pre-gain), for instrumentOutput.
+    std::array<std::vector<float>, kMaxSlots> capL_, capR_;
+    std::array<int, kMaxSlots> capTrack_{};          // track of each captured slot; 0 = none
+    unsigned int capFrames_ = 0;
 };
 
 } // namespace minidaw

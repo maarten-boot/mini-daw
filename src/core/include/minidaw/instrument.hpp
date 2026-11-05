@@ -52,8 +52,10 @@ public:
     Vst3Instrument& operator=(const Vst3Instrument&) = delete;
 
     // GUI thread.
+    // `offline`: set up for rendering faster than real time (VST3 kOffline);
+    // process() then runs on a worker thread instead of the audio thread.
     bool load(const std::filesystem::path& module, const std::string& classId, double sampleRate,
-              std::string& error);
+              std::string& error, bool offline = false);
     void unload();
     bool loaded() const;
     const std::string& name() const;

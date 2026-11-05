@@ -31,6 +31,19 @@ namespace minidaw {
 struct TakeSpec {
     std::filesystem::path path;           // WAV file to write
     std::vector<unsigned int> channels;   // input channels (0-based), 1 or 2
+    // P11 (SPEC-VST-03a): > 0 = record the stereo sound of this MIDI track's
+    // instrument instead of input channels (`channels` is then unused).
+    int instrumentTrack = 0;
+};
+
+// Audio thread: the sound each instrument made in the current block (P11).
+// The InstrumentRack provides it; the Recorder asks after the rack ran.
+class InstrumentSource {
+public:
+    virtual ~InstrumentSource() = default;
+    // The instrument of MIDI track `track` in this block, before the track's
+    // gain: `frames` samples per channel. False if it has none (silence).
+    virtual bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const = 0;
 };
 
 struct RecorderOptions {
@@ -73,10 +86,13 @@ public:
 
     bool recording() const { return active_.load(); }
 
-    // Audio thread only. `input` is interleaved with `channels` channels;
-    // `blockFrame` is the stream frame of its first sample. No locks, no
+    // Audio thread only. `input` is interleaved with `channels` channels
+    // (null: no input device; input takes then count the block as lost);
+    // `blockFrame` is the stream frame of its first sample; `instruments`
+    // gives the instrument takes their sound (null: silence). No locks, no
     // allocation, no I/O.
-    void process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame = 0);
+    void process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame = 0,
+                 const InstrumentSource* instruments = nullptr);
 
     // Stream frame of the first recorded sample, once the first block arrived.
     std::optional<std::uint64_t> startFrame() const
