@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,6 +71,19 @@ const Track* soundOwner(const std::vector<Track>& tracks, const Track& linked);
 float playbackGain(const Track& track, const std::vector<Track>& tracks);
 // Whether the MIDI track's instrument should get the take's MIDI in playback.
 inline bool instrumentPlaysTake(const Track& midi) { return !midi.soundFromRecording; }
+// How a new take of this track is placed on the timeline (SPEC-PLAY-05):
+// with the audio latency estimate for audio inputs, with the MIDI one for MIDI
+// tracks — and for a linked track too, because its sound comes from the same
+// (late) MIDI notes as its MIDI take (crosscheck #10, R3).
+inline bool placedAsAudioInput(const Track& t) { return t.kind == TrackKind::Audio && t.instrumentOf <= 0; }
+// Removes tracks[index], keeping links consistent (crosscheck #10, R2): a
+// removed MIDI track's linked track becomes a normal audio track; removing a
+// linked track sets its MIDI track back to "Sound from: instrument".
+void removeTrack(std::vector<Track>& tracks, std::size_t index);
+// The tracks as a recording should see them (R4, R9): MIDI tracks whose
+// instrument is not loaded record no sound (their instrument class is
+// cleared in the copy), and linked tracks are never armed themselves.
+std::vector<Track> tracksToRecord(const std::vector<Track>& tracks, const std::function<bool(int)>& instrumentLoaded);
 
 // Length of the track's take in frames at `sampleRate` (WAV: its frames;
 // MIDI: its end of track); 0 if there is none or it cannot be read.
@@ -94,6 +108,11 @@ std::string safeFileName(std::string_view name);
 
 // "NN-<safe name>.wav" / ".mid".
 std::string takeFileName(const Track& track);
+
+// A new file for rendering into `folder` for linked track `linked` (P11,
+// crosscheck #10 R1): "NN-<name>-render.wav", or "-render-2.wav", "-3", ...
+// when that exists, so a render never overwrites a take that may be playing.
+std::filesystem::path newRenderPath(const std::filesystem::path& folder, const Track& linked);
 
 // "take-YYYYMMDD-HHMMSS".
 std::string takeFolderName(const std::tm& localTime);

@@ -31,7 +31,8 @@ bool RecordingSession::start(const std::vector<Track>& tracks, const RecordingSe
     }
     std::vector<const Track*> armed;
     for (const auto& t : tracks) {
-        if (t.armed) armed.push_back(&t);
+        // A linked sound track records with its MIDI track, never on its own (R9).
+        if (t.armed && !(t.kind == TrackKind::Audio && t.instrumentOf > 0)) armed.push_back(&t);
     }
     if (armed.empty()) {
         error = "No track is armed. Arm at least one track to record.";

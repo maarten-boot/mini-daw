@@ -175,4 +175,36 @@ TEST_CASE("T-VST-24: linked sound track and the Sound from rule", "[track][T-VST
     tracks[0].solo = true;
     CHECK(playbackGain(tracks[1], tracks) == Catch::Approx(0.501f).margin(0.001));
     CHECK(playbackGain(tracks[2], tracks) == 0.0f);
+    tracks[0].solo = false;
+
+    // Placement: a linked track like its MIDI take, an input track as audio (R3).
+    CHECK_FALSE(placedAsAudioInput(tracks[0]));
+    CHECK_FALSE(placedAsAudioInput(tracks[1]));
+    CHECK(placedAsAudioInput(tracks[2]));
+
+    // What a recording sees (R4, R9): no sound from an instrument that is not loaded; linked tracks not armed.
+    tracks[1].armed = true;
+    auto rec = tracksToRecord(tracks, [](int) { return false; });
+    CHECK(rec[0].instrumentClass.empty());
+    CHECK_FALSE(rec[1].armed);
+    CHECK(tracks[0].instrumentClass.size() == 32);  // the originals are unchanged
+    rec = tracksToRecord(tracks, [](int n) { return n == 1; });
+    CHECK(rec[0].instrumentClass.size() == 32);
+    tracks[1].armed = false;
+
+    // Removing the linked track: Sound from goes back to the instrument (R2).
+    std::vector<Track> a = tracks;
+    removeTrack(a, 1);
+    REQUIRE(a.size() == 2);
+    CHECK_FALSE(a[0].soundFromRecording);
+    CHECK(instrumentPlaysTake(a[0]));
+    // Removing the MIDI track: the linked track becomes a normal audio track.
+    std::vector<Track> b = tracks;
+    removeTrack(b, 0);
+    REQUIRE(b.size() == 2);
+    CHECK(b[0].instrumentOf == 0);
+    CHECK(soundOwner(b, b[0]) == nullptr);
+    CHECK(playbackGain(b[0], b) == Catch::Approx(0.501f).margin(0.001));  // it plays again on its own
+    removeTrack(b, 9);  // out of range: nothing
+    CHECK(b.size() == 2);
 }

@@ -31,12 +31,12 @@
 | P11b | Live recording of the instrument's sound (Recorder takes from the rack, also without an input device) | VST-03, 03a | done (2026-11-05) |
 | P11c | Offline render of a MIDI take through a second instance, progress and Cancel | VST-04, 04a | done (2026-11-05) |
 | — | **Milestone v2: VST3 instruments** | | |
-| P11b | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default) | TECH-02, LIC-03/04 | later |
+| P14 | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default; was "P11b" until 2026-11-05, renamed when P11 got its own a–c) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |
 | P13 | Note and sound editing | — | later (not in v1) |
 | PL1 | Look and feel: clearer hover, active and selected states (e.g. the chosen instrument), so every click gives feedback; colours through roles, contrast ≥ the minimum (user feedback 2026-11-03). Also: the Take column gets narrow in a small window, so the output list can be cut off | UI-02, UI-06 | later |
 | PL2 | Preset menu in mini-daw for plugins that publish program lists (VST3 IUnitInfo), next to the plugin's own editor | VST-05 | later, idea |
-| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b, #9 after P10 (`Crosscheck-2026-11-02.md`) |
+| PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b, #9 after P10, #10 after P11 (`Crosscheck-2026-11-02.md`) |
 
 ## Notes
 - Every new Spec item gets at least one test case in `Tests.md`.

@@ -243,17 +243,19 @@ void InstrumentRack::process(float* out, unsigned int frames, unsigned int outCh
     inUse_.store(nullptr, std::memory_order_release);
 }
 
-bool InstrumentRack::instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const
+InstrumentSound InstrumentRack::instrumentOutput(int track, unsigned int frames, const float*& left,
+                                                 const float*& right) const
 {
-    if (track <= 0 || frames != capFrames_ || frames > kChunk) return false;
+    if (track <= 0 || frames != capFrames_) return InstrumentSound::None;
     for (std::size_t i = 0; i < kMaxSlots; ++i) {
         if (capTrack_[i] == track) {
+            if (frames > kChunk) return InstrumentSound::Lost;
             left = capL_[i].data();
             right = capR_[i].data();
-            return true;
+            return InstrumentSound::Sound;
         }
     }
-    return false;
+    return InstrumentSound::None;
 }
 
 } // namespace minidaw

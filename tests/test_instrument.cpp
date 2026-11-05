@@ -3,6 +3,7 @@
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
 #include "minidaw/render.hpp"
+#include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
 #include "test_support.hpp"
 
@@ -464,15 +465,18 @@ TEST_CASE("T-VST-26: the rack gives each instrument's sound before the track gai
     CHECK(outPeak == 0.0f);
     const float* l = nullptr;
     const float* r = nullptr;
-    REQUIRE(rack.instrumentOutput(7, 512, l, r));
+    REQUIRE(rack.instrumentOutput(7, 512, l, r) == InstrumentSound::Sound);
     float p = 0;
     for (int f = 1; f < 512; ++f) p = std::max(p, std::fabs(l[f]));
     CHECK(p == Approx(0.5f).margin(0.01));
-    CHECK_FALSE(rack.instrumentOutput(8, 512, l, r));    // no such track
-    CHECK_FALSE(rack.instrumentOutput(7, 256, l, r));    // not this block's length
+    CHECK(rack.instrumentOutput(8, 512, l, r) == InstrumentSound::None);    // no such track
+    CHECK(rack.instrumentOutput(7, 256, l, r) == InstrumentSound::None);    // not this block's length
+    std::vector<float> big(2 * 9000, 0.0f);  // longer than the capture (8192 frames): lost, not silence (R7)
+    rack.process(big.data(), 9000, 2, std::nullopt);
+    CHECK(rack.instrumentOutput(7, 9000, l, r) == InstrumentSound::Lost);
     rack.clear();
     rack.process(out.data(), 512, 2, std::nullopt);
-    CHECK_FALSE(rack.instrumentOutput(7, 512, l, r));    // gone with the configuration
+    CHECK(rack.instrumentOutput(7, 512, l, r) == InstrumentSound::None);    // gone with the configuration
 }
 
 TEST_CASE("T-VST-29: a MIDI take is rendered through its instrument, with its settings, faster than real time",
@@ -519,6 +523,28 @@ TEST_CASE("T-VST-29: a MIDI take is rendered through its instrument, with its se
     CHECK(peakIn(1001, 5000) == Approx(0.25f).margin(0.01)); // the note, at the saved gain
     CHECK(peakIn(5001, w.frames()) < 1e-4f);                  // released at its note-off
 
+    // Render again (crosscheck #10, R1): a new file each time; cancelling the
+    // second leaves the first (which the linked track plays) untouched.
+    Track linked;
+    linked.number = 2;
+    linked.name = "Keys sound";
+    linked.kind = TrackKind::Audio;
+    const auto first = newRenderPath(dir.path(), linked);
+    CHECK(first.filename() == "02-Keys sound-render.wav");
+    std::filesystem::copy_file(job.out, first);
+    const auto second = newRenderPath(dir.path(), linked);
+    CHECK(second.filename() == "02-Keys sound-render-2.wav");
+    const auto firstSize = std::filesystem::file_size(first);
+    job.out = second;
+    job.takeFrames = 48000 * 600;
+    REQUIRE(render.start(job, err));
+    render.cancel();
+    CHECK(render.finish().cancelled);
+    CHECK_FALSE(std::filesystem::exists(second));
+    REQUIRE(std::filesystem::exists(first));
+    CHECK(std::filesystem::file_size(first) == firstSize);
+    job.takeFrames = 6000;
+
     // Cancel: no file is left.
     job.takeFrames = 48000 * 600;  // ten minutes
     job.events = {{0, {0x90, 60, 100}, 3}};
@@ -529,6 +555,34 @@ TEST_CASE("T-VST-29: a MIDI take is rendered through its instrument, with its se
     CHECK(c.cancelled);
     CHECK_FALSE(c.ok);
     CHECK_FALSE(std::filesystem::exists(job.out));
+
+    // More than the 1024 events a render block takes (R12): held back to the
+    // next block, none lost — the last note-off still ends the sound.
+    job.out = dir.path() / "many.wav";
+    job.events.clear();
+    for (std::uint64_t k = 0; k < 1500; ++k) job.events.push_back({100, {0xB0, 20, 1}, 3});  // unmapped controller
+    job.events.push_back({100, {0x90, 69, 127}, 3});
+    job.events.push_back({2000, {0x80, 69, 0}, 3});
+    job.takeFrames = 2500;
+    REQUIRE(render.start(job, err));
+    while (!render.done()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    REQUIRE(render.finish().ok);
+    REQUIRE(readWav(job.out, w, err));
+    CHECK(peakIn(512, 1024) > 0.2f);           // the held-back note played in the next block
+    CHECK(peakIn(2048, w.frames()) < 1e-4f);   // and its note-off ends it (no hanging note)
+
+    // A note that never ends: the tail stops at maxTailSeconds (R12).
+    job.out = dir.path() / "tail.wav";
+    job.events = {{0, {0x90, 69, 127}, 3}};
+    job.takeFrames = 4800;
+    job.maxTailSeconds = 1.0;
+    REQUIRE(render.start(job, err));
+    while (!render.done()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const RenderResult tail = render.finish();
+    REQUIRE(tail.ok);
+    CHECK(tail.frames >= 4800 + 48000);
+    CHECK(tail.frames < 4800 + 48000 + 2 * 512);
+    job.maxTailSeconds = 10.0;
 
     // A module that cannot be loaded: refused at start.
     job.module = dir.path() / "missing.vst3";

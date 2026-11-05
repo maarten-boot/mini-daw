@@ -32,7 +32,7 @@ if(MINIDAW_WITH_ASIO)
             "Licence: the ASIO SDK is GPLv3 or Steinberg-proprietary. A binary built with ASIO\n"
             "under GPLv3 must be distributed under GPLv3. The mini-daw source code itself stays MIT.")
     endif()
-    message(FATAL_ERROR "ASIO support is planned for step P11b and is not implemented yet.")
+    message(FATAL_ERROR "ASIO support is planned for step P14 and is not implemented yet.")
 endif()
 
 # Make warnings visible for our own code only.

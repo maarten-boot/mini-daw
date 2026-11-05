@@ -175,6 +175,7 @@ struct AppState {
     minidaw::OfflineRenderer renderer;
     int renderTrack = 0;                     // the MIDI track being rendered; 0 = none
     std::filesystem::path renderOut;
+    std::filesystem::path renderTake;        // the MIDI take it renders (the result is kept only for it, R8)
 
     // Playback (P8). Declared last: destroyed first (its thread reads `audio`).
     minidaw::MidiPlayer midiPlayer;
@@ -1275,12 +1276,11 @@ void openPluginWindow(AppState& app, const minidaw::Track& t)
 // to the take. The linked track is made if needed.
 void startRender(AppState& app, int number)
 {
-    if (app.renderTrack != 0) return;
-    const int linkedNumber = ensureLinkedTrack(app, number);  // may move tracks: look them up again below
+    if (app.renderTrack != 0 || app.session.recording()) return;
+    // Everything is checked before the linked track is made (R8).
     minidaw::Track* t = findTrack(app, number);
-    minidaw::Track* linked = findTrack(app, linkedNumber);
     const auto it = app.instruments.find(number);
-    if (t == nullptr || linked == nullptr || it == app.instruments.end() || t->take.empty()) return;
+    if (t == nullptr || it == app.instruments.end() || t->take.empty()) return;
     refreshInstrumentStates(app);  // the settings as they are now
     std::string err;
     minidaw::SmfData d;
@@ -1288,6 +1288,11 @@ void startRender(AppState& app, int number)
         app.instrumentNotes.push_back("Track " + std::to_string(number) + ": the take could not be read: " + err);
         return;
     }
+    const bool hadLinked = minidaw::linkedSoundTrack(app.tracks, number) != nullptr;
+    const int linkedNumber = ensureLinkedTrack(app, number);  // may move tracks: look them up again
+    t = findTrack(app, number);
+    minidaw::Track* linked = findTrack(app, linkedNumber);
+    if (t == nullptr || linked == nullptr) return;
     minidaw::RenderJob job;
     job.module = it->second->modulePath();
     job.classId = it->second->classId();
@@ -1296,14 +1301,21 @@ void startRender(AppState& app, int number)
     job.sampleRate = instrumentRate(app);
     job.events = minidaw::smfToFrames(d, job.sampleRate);
     job.takeFrames = t->takeFrames;
-    std::string file = minidaw::takeFileName(*linked);
-    file = file.substr(0, file.size() - 4) + "-render.wav";
-    job.out = t->take.parent_path() / minidaw::pathFromUtf8(file);
+    job.out = minidaw::newRenderPath(t->take.parent_path(), *linked);  // never over a take that plays (R1)
     app.renderOut = job.out;
+    app.renderTake = t->take;
     if (!app.renderer.start(std::move(job), err)) {
         const std::string note = "Track " + std::to_string(number) + ": rendering could not start: " + err;
         app.instrumentNotes.push_back(note);
         app.log.warning(note);
+        if (!hadLinked) {  // no empty linked track left behind
+            for (std::size_t i = 0; i < app.tracks.size(); ++i) {
+                if (app.tracks[i].number == linkedNumber) {
+                    minidaw::removeTrack(app.tracks, i);
+                    break;
+                }
+            }
+        }
         return;
     }
     app.renderTrack = number;
@@ -1329,6 +1341,8 @@ void pollRender(AppState& app)
         return;
     }
     minidaw::Track* t = findTrack(app, number);
+    // Only for the same track with the same take (a track number can be reused, R8).
+    if (t != nullptr && (t->kind != minidaw::TrackKind::Midi || t->take != app.renderTake)) t = nullptr;
     minidaw::Track* linked = t ? minidaw::linkedSoundTrack(app.tracks, number) : nullptr;
     char buf[160];
     std::snprintf(buf, sizeof buf, "%.1f s, peak %.1f dBFS", static_cast<double>(r.frames) / instrumentRate(app),
@@ -1869,6 +1883,10 @@ bool startPlayback(AppState& app, bool forRecording)
     std::vector<minidaw::MidiPlaybackTrack> midiTracks;
     for (const auto& t : app.tracks) {
         if (t.take.empty() || (forRecording && t.armed)) continue;
+        // While recording, an armed instrument track's old recorded sound does
+        // not play either: the instrument plays live (no doubled sound, R6).
+        const minidaw::Track* owner = minidaw::soundOwner(app.tracks, t);
+        if (forRecording && owner != nullptr && owner->armed) continue;
         if (t.kind == minidaw::TrackKind::Audio) {
             clips.push_back({t.number, t.take, t.takeStart});
         } else if (!t.midiOut.empty() && !app.instruments.count(t.number)) {  // instruments: via the rack
@@ -1977,7 +1995,7 @@ void toggleRecording(AppState& app)
             if (res.folder.empty() || !std::filesystem::exists(file, ec)) continue;
             t.take = file;
             t.takeStart = minidaw::placeRecordedTake(timeline, app.recordStartPosition, app.overdub,
-                                                     t.kind == minidaw::TrackKind::Audio, lat);
+                                                     minidaw::placedAsAudioInput(t), lat);
             refreshTakeLength(app, t);
             char buf[200];
             std::snprintf(buf, sizeof buf, "Track %d plays %s from %.3f s%s", t.number,
@@ -1986,8 +2004,9 @@ void toggleRecording(AppState& app)
                           app.overdub ? " (overdub: moved earlier by the latency estimate)" : "");
             app.log.info(buf);
         }
-        // The instruments' recorded sound (P11): on their linked tracks, where
-        // it was made on the timeline (it is the output, so no latency shift).
+        // The instruments' recorded sound (P11): on their linked tracks, placed
+        // like their MIDI takes (in an overdub moved earlier by the MIDI latency
+        // estimate, as the notes it was made from: R3).
         for (auto& l : app.tracks) {
             const minidaw::Track* owner = minidaw::soundOwner(app.tracks, l);
             if (owner == nullptr || !owner->armed) continue;
@@ -1995,12 +2014,17 @@ void toggleRecording(AppState& app)
             std::error_code ec;
             if (res.folder.empty() || !std::filesystem::exists(file, ec)) continue;
             l.take = file;
-            l.takeStart = minidaw::placeRecordedTake(timeline, app.recordStartPosition, false, true, lat);
+            l.takeStart = minidaw::placeRecordedTake(timeline, app.recordStartPosition, app.overdub,
+                                                     minidaw::placedAsAudioInput(l), lat);
             refreshTakeLength(app, l);
             app.log.info("Track " + std::to_string(l.number) + " holds the recorded sound " +
                          minidaw::pathToUtf8(file.filename()));
         }
         stopPlayback(app);
+        return;
+    }
+    if (app.renderTrack != 0) {  // Ctrl+R while rendering (R5)
+        app.recordError = "A render is running; record when it has finished (or cancel it).";
         return;
     }
     syncMidiPorts(app, true);
@@ -2017,7 +2041,10 @@ void toggleRecording(AppState& app)
     startPlayback(app, true);
     minidaw::RecordingSettings recSettings = app.config.recording;
     recSettings.folder = minidaw::pathToUtf8(activeTakesFolder(app));  // into the project, if one is open
-    if (!app.session.start(app.tracks, recSettings, app.audio, app.midi, app.recordError)) {
+    // Only loaded instruments record their sound (R4); linked tracks are not armed themselves (R9).
+    const std::vector<minidaw::Track> toRecord =
+        minidaw::tracksToRecord(app.tracks, [&](int n) { return app.instruments.count(n) != 0; });
+    if (!app.session.start(toRecord, recSettings, app.audio, app.midi, app.recordError)) {
         app.log.error("Not recording: " + app.recordError);
         stopPlayback(app);
         return;
@@ -2113,8 +2140,11 @@ void drawTransport(AppState& app)
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!rec && !running);
+    ImGui::BeginDisabled(!rec && (!running || app.renderTrack != 0));  // not while rendering (R5)
     if (ImGui::Button(rec ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
+    if (!rec && app.renderTrack != 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
+    }
     ImGui::EndDisabled();
     ImGui::SameLine();
     const double pos = rate ? static_cast<double>(player.position()) / rate : 0.0;
@@ -2453,10 +2483,10 @@ void drawTracksPanel(AppState& app)
     if (renderRequest != 0) startRender(app, renderRequest);
     if (removeIndex >= 0) {
         if (app.tracks[removeIndex].kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
-        // Its linked sound track (P11) stays, as a normal audio track.
-        if (minidaw::Track* l = minidaw::linkedSoundTrack(app.tracks, app.tracks[removeIndex].number)) l->instrumentOf = 0;
         unloadInstrument(app, app.tracks[removeIndex].number);
-        app.tracks.erase(app.tracks.begin() + removeIndex);
+        // Links stay consistent: a removed MIDI track's linked track becomes a normal
+        // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
+        minidaw::removeTrack(app.tracks, static_cast<std::size_t>(removeIndex));
     }
     for (const auto& w : app.midiWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     for (const auto& m : app.midi.takeMessages()) {

@@ -464,7 +464,7 @@ TEST_CASE("T-VST-28: an armed instrument track also records its sound into its l
     midi.openPort("Keys");
     Track keys = midiTrack(1, "Keys", "Keys");
     keys.instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
-    Track sound = audioTrack(2, "Keys sound", {0}, /*armed=*/false);
+    Track sound = audioTrack(2, "Keys sound", {0}, /*armed=*/true);  // armed by mistake: ignored (R9)
     sound.instrumentOf = 1;
     Track plain = midiTrack(3, "Plain", "Keys");  // no instrument: MIDI only
     RecordingSession session;

@@ -315,6 +315,10 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
         if (t.kind != TrackKind::Audio || t.instrumentOf == 0) continue;
         const Track* owner = soundOwner(data.tracks, t);
         const Track* first = linkedSoundTrack(data.tracks, t.instrumentOf);
+        if (owner != nullptr && first == &t) {
+            t.armed = false;  // records with its MIDI track (R9)
+            t.monitor = false;
+        }
         if (owner == nullptr || first != &t) {
             warnings.push_back("Track " + std::to_string(t.number) + ": it held the sound of track " +
                                std::to_string(t.instrumentOf) + (owner ? ", which already has one" : ", which is missing") +

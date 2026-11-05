@@ -48,6 +48,18 @@ std::string takeFileName(const Track& track)
     return prefix + safeFileName(track.name) + (track.kind == TrackKind::Midi ? ".mid" : ".wav");
 }
 
+std::filesystem::path newRenderPath(const std::filesystem::path& folder, const Track& linked)
+{
+    std::string base = takeFileName(linked);
+    base = base.substr(0, base.size() - 4) + "-render";  // without ".wav"
+    std::error_code ec;
+    for (int n = 1;; ++n) {
+        const std::string name = base + (n == 1 ? std::string() : "-" + std::to_string(n)) + ".wav";
+        const std::filesystem::path p = folder / pathFromUtf8(name);
+        if (!std::filesystem::exists(p, ec)) return p;
+    }
+}
+
 std::string takeFolderName(const std::tm& t)
 {
     char buf[64];
@@ -115,6 +127,32 @@ const Track* soundOwner(const std::vector<Track>& tracks, const Track& linked)
         if (t.kind == TrackKind::Midi && t.number == linked.instrumentOf) return &t;
     }
     return nullptr;
+}
+
+void removeTrack(std::vector<Track>& tracks, std::size_t index)
+{
+    if (index >= tracks.size()) return;
+    const Track& gone = tracks[index];
+    if (gone.kind == TrackKind::Midi) {
+        if (Track* l = linkedSoundTrack(tracks, gone.number)) l->instrumentOf = 0;
+    } else if (gone.instrumentOf > 0) {
+        for (Track& t : tracks) {
+            if (t.kind == TrackKind::Midi && t.number == gone.instrumentOf) t.soundFromRecording = false;
+        }
+    }
+    tracks.erase(tracks.begin() + static_cast<std::ptrdiff_t>(index));
+}
+
+std::vector<Track> tracksToRecord(const std::vector<Track>& tracks, const std::function<bool(int)>& instrumentLoaded)
+{
+    std::vector<Track> out = tracks;
+    for (Track& t : out) {
+        if (t.kind == TrackKind::Midi && !t.instrumentClass.empty() && !instrumentLoaded(t.number)) {
+            t.instrumentClass.clear();  // its sound would be silence: keep the linked track's take
+        }
+        if (t.kind == TrackKind::Audio && t.instrumentOf > 0) t.armed = false;
+    }
+    return out;
 }
 
 float playbackGain(const Track& track, const std::vector<Track>& tracks)

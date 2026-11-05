@@ -38,12 +38,19 @@ struct TakeSpec {
 
 // Audio thread: the sound each instrument made in the current block (P11).
 // The InstrumentRack provides it; the Recorder asks after the rack ran.
+enum class InstrumentSound {
+    Sound,  // left/right hold the block's sound
+    None,   // no instrument for that track in this block: silence
+    Lost,   // there was sound but it could not be kept (block too long): lost frames
+};
+
 class InstrumentSource {
 public:
     virtual ~InstrumentSource() = default;
     // The instrument of MIDI track `track` in this block, before the track's
-    // gain: `frames` samples per channel. False if it has none (silence).
-    virtual bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const = 0;
+    // gain: `frames` samples per channel.
+    virtual InstrumentSound instrumentOutput(int track, unsigned int frames, const float*& left,
+                                             const float*& right) const = 0;
 };
 
 struct RecorderOptions {

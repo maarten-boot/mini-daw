@@ -19,3 +19,19 @@ Continues `Conversation-2026-11-04.md` (P10d, crosscheck #9 and its fixes were d
 - Tests T-VST-24..29 (automated), T-VST-30 manual. Live on Linux with the virtual keyboard: record, render, Sound from both ways, mute check (see Tests.md).
 - Found on the way: my recorder change first counted blocks without input as lost (an existing test caught it: the old rule kept); the renderer could have given an event held back from a full block a negative offset (fixed before testing); the Wine prefix had been cleared again and made without a display, which also explains yesterday's single failed assertion (T-VST-19, no window) — CLAUDE.md updated.
 - Spec v0.28 (SPEC-VST-03a, 04a); Linux 137/137, Wine 137/137 (3 runs).
+
+## 3. CI after P11
+> pushed it, check the CI run
+- Run 42023013738 (`0d1fbd9`, P11): windows, linux and licence green. Windows 139/139 in 30 s (MSVC builds the renderer; T-VST-24..29 pass on the real runner), no MSVC warnings (`warning C…`) in the log.
+
+## 4. Crosscheck #10
+> do the crosscheck #10
+- Written up in `Crosscheck-2026-11-02.md` (Claude + independent reviewer; each reviewer claim checked against the code).
+- Medium: R1 a cancelled/failed re-render deletes the file that plays; R2 removing the linked track can leave the MIDI track silent; R3 the instrument WAV in an overdub is not shifted like its MIDI take (my Spec rule was wrong); R4 a silent take can replace a good one when the plugin did not load. Low: R5 Record during a render, R6 doubled sound while recording with "Sound from: recording", R7 blocks over 8192 frames, R8 render leftovers / target, R9 hand-edited armed linked track. Docs: R10 "P11b" twice (ASIO → P14), R11 real-time rendering. Tests R12.
+- Waiting for the user's go.
+
+## 5. Crosscheck #10 fixes
+> yes fix R1–R12, R1 first
+- R1: a new file per render (not .tmp + rename: renaming over a file the player has open fails on Windows). R2/R4/R9: core helpers `removeTrack`, `tracksToRecord`. R3: `placedAsAudioInput` — the linked sound is placed like its MIDI take. R5–R8 in the GUI; R7 as `InstrumentSound::Lost`. R10: ASIO step renamed P14. R11: Spec. R12: tests.
+- My first 1500-event render test had note-on and note-off in the same held-back block (silent): fixed the test.
+- Spec v0.29; Linux 137/137, Wine 137/137 (2 runs). Details in `Crosscheck-2026-11-02.md`.

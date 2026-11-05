@@ -29,7 +29,7 @@ Used to build or package mini-daw, not part of the program itself.
 
 | Component | Licence | Step | Notes |
 |-----------|---------|------|-------|
-| Steinberg ASIO SDK | GPLv3 or Steinberg proprietary | P11b | **Optional, off by default, never in this repository.** A binary built with it under GPLv3 is itself GPLv3. See README. |
+| Steinberg ASIO SDK | GPLv3 or Steinberg proprietary | P14 | **Optional, off by default, never in this repository.** A binary built with it under GPLv3 is itself GPLv3. See README. |
 
 ## Trademarks
 

@@ -293,3 +293,50 @@ Scope: Spec v0.26, Plan, Tests, README, THIRD_PARTY.md, CLAUDE.md, code at commi
 | Q12 | Test synth: controller 7 → Gain (IMidiMapping), controller state (editor size), restart hook. T-VST-21..23. Q6 and Q7 are in the GUI code (no unit test); checked by reading. |
 
 Spec v0.27 (SPEC-VST-01a, 02a). Linux 131/131, Wine 131/131 (8 runs; one earlier failed assertion in a freshly made Wine prefix, not reproduced).
+
+# Crosscheck #10 — 2026-11-05 (after P11: instrument sound recorded and rendered)
+
+Scope: Spec v0.28, Plan, Tests, README, THIRD_PARTY.md, code at commit `0d1fbd9` (changes since `5cecb3d`), CI run 42023013738 (green). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the P11 code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Every reviewer finding was checked against the code by Claude; R3 changes the Spec (Claude's own placement rule was wrong).
+
+| Area | Verdict |
+|------|---------|
+| CI | ✅ windows 139/139 (MSVC, no warnings), linux, licence |
+| Audio thread | ✅ capture buffers made at start; the recorder reads the same block's capture; no lock, allocation or I/O; ⚠️ blocks over 8192 frames silently become silence → **R7** |
+| VST-03a (live recording, linked track) | ❌ overdub placement of the instrument WAV → **R3**; ⚠️ silent take over a good one → **R4**; removing the linked track → **R2**; hand-edited armed linked track → **R9** |
+| VST-04a (render) | ❌ a cancelled or failed re-render deletes the take that plays → **R1**; ⚠️ Record during a render → **R5**; leftovers → **R8** |
+| Plan / docs | ⚠️ "P11b" used twice (the new live recording and the older ASIO step) → **R10**; SPEC-VST-04 still promises real-time rendering → **R11** |
+| Spec ↔ tests | ✅ no duplicate IDs, no result rows for unknown tests; ⚠️ GUI rules untested → **R12** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| R1 | medium | The render file name is the same for every render of a track (`NN-<linked>-render.wav`), and after a first render it is the linked track's take. A second Render opens it for writing (truncating the file the player may be reading; on Windows the open can fail), and Cancel or a failure then deletes it: the linked track points at a missing file (`render.cpp:57, 113`). | Render into `…-render.tmp` and rename over the old file only on success (after stopping playback of that file); a cancelled or failed render removes only its `.tmp`. Test in T-VST-29: render, render again and cancel → the first file still there and intact. |
+| R2 | medium | Removing the **linked** track while "Sound from: this recording" is set leaves the MIDI track with `soundFromRecording = true`: its instrument gets no take MIDI, and the switch was on the removed row, so nothing plays the take and nothing can change it (the project repair only helps after reopening). | On removing a linked track: set its MIDI track's `soundFromRecording = false`. A core helper (`removeTrack(tracks, index)`) doing both directions, tested. |
+| R3 | medium | Overdub placement: the MIDI take is moved earlier by the MIDI latency estimate, the instrument WAV is not (`placeRecordedTake(…, overdub=false, …)`; SPEC-VST-03a says "no latency shift"). But the instrument played the same late notes: its sound is as late as the MIDI. With "Sound from: this recording" the overdub plays late by the latency compared to "Sound from: instrument". My rule in the Spec was wrong. | The linked WAV gets the same shift as its MIDI take (`takeStart` of the MIDI take). Spec: "placed like its MIDI take". Test: a core function for placement, or a session test with overdub. |
+| R4 | medium | A take for the linked track is recorded whenever the MIDI track names an instrument (`recording_session.cpp:85`), even if the plugin did not load ("not loaded"): a silent WAV then replaces a good recorded or rendered take on the linked track. | Record the instrument's sound only if it is loaded: the GUI passes that (e.g. clear the field for tracks whose instrument is not loaded, or a `soundRecorded` flag in the track list given to the session), the same rule as for making the linked track. Test in T-VST-28. |
+| R5 | low-medium | Record can start while a render runs (only Render is blocked during a recording). When the render ends it puts its file on the linked track, replacing the take just recorded (or being replaced by it). | Record waits: disabled while a render runs (with a tooltip), and Render disabled while recording (already). |
+| R6 | low | With "Sound from: this recording" and the MIDI track armed, Record plays the old linked WAV while the live instrument sounds: doubled sound during the recording (overdub semantics, not specified). | During a recording, an armed instrument track's linked take is not played (as for audio takes of armed tracks); Spec. |
+| R7 | low | A block longer than 8192 frames gives silence in the instrument WAV without a loss report (`instrument_rack.cpp: frames > kChunk`), against SPEC-REC-05 (loss always reported). | Count it as lost frames (a gap) instead of silence, so the take result reports it; such blocks are rare (devices allow up to 8192). |
+| R8 | low | `startRender` makes the linked track before its checks: if the render cannot start (take unreadable, plugin refused), an empty linked track stays. A render whose track was removed and a new one made with the same number would attach to the new one (numbers are reused). | Check first, make the linked track only when the render starts; remember the render's target by track number and the take path, and attach only if both still match. |
+| R9 | low | A hand-edited project with `"armed": true` on a linked track: the session would record an input take and the instrument take into the same file. | The project loader clears `armed` and `monitor` on linked tracks; the session ignores arming of linked tracks. |
+| R10 | docs | "P11b" means both the new live recording step and the older "Optional ASIO backend" (Plan, THIRD_PARTY.md, the CMake message, the Spec's WASAPI note). | Rename the ASIO step to P14 everywhere (the new P11a–c stay). |
+| R11 | docs | SPEC-VST-04: "offline or in real time" — only offline exists (the user's choice for P11, "Offline first"). | Spec: real-time rendering is not planned for now (offline covers it); note it in the Plan as an open idea. |
+| R12 | tests | No tests for the GUI rules: removing either track of a link, Record vs. Render, the render target; none for more than 1024 events in a render block, the 10 s tail limit, or a re-render. | Move the rules into core functions where possible (R2, R3, R8) and test them; render tests for the event cap, tail limit and re-render (R1). |
+
+## Actions taken (user: "yes fix R1–R12, R1 first")
+| # | Done |
+|---|------|
+| R1 | Each render writes a new file (`newRenderPath`: `-render.wav`, `-render-2.wav`, …); a cancelled or failed render removes only its own new file. T-VST-29: render again and cancel → the first file intact. (Chosen over .tmp + rename: renaming over a file the player has open fails on Windows.) |
+| R2 | `removeTrack` in the core: removing a linked track sets its MIDI track back to "Sound from: instrument"; removing a MIDI track unlinks its linked track. Used by the GUI; T-VST-24. |
+| R3 | `placedAsAudioInput`: a linked track's take is placed like its MIDI take (overdub shift by the MIDI estimate); used for every new take. Spec changed. T-VST-24 (the rule). |
+| R4 | `tracksToRecord`: instruments that are not loaded record no sound (the linked take stays). T-VST-24. |
+| R5 | Record disabled (tooltip) and Ctrl+R refused while a render runs; Render also refused while recording. |
+| R6 | While recording, an armed instrument track's old linked take does not play. |
+| R7 | `InstrumentSound::Lost` for blocks over 8192 frames: the recorder counts them as lost frames (gap, silence in place). T-VST-25, T-VST-26. |
+| R8 | Render checks the take and the instrument before making the linked track, removes a linked track it made when the plugin refuses, and keeps the result only if the MIDI track still has the same take. |
+| R9 | The project loader clears `armed` / `monitor` on linked tracks; the session and `tracksToRecord` ignore their arming. T-VST-27, T-VST-28. |
+| R10 | The ASIO step is now P14 (Plan, THIRD_PARTY.md, CMake message, Spec note); P11a–c keep their names. |
+| R11 | SPEC-VST-04: done offline; real-time rendering not planned for now. |
+| R12 | Tests as listed above; T-VST-29 also: 1500 events in one block (held back, note still sounds and ends), the tail limit. |
+
+Spec v0.29. Linux 137/137, Wine 137/137 (2 runs).

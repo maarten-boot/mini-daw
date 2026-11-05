@@ -68,8 +68,9 @@ public:
     void process(float* out, unsigned int frames, unsigned int outChannels, std::optional<std::uint64_t> timeline);
     // Audio thread, after process(): each instrument's sound in that block,
     // before its track's gain (for recording it, P11). Blocks longer than
-    // kChunk frames: only the first kChunk are kept (false then).
-    bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const override;
+    // kChunk frames are not kept: Lost (counted by the recorder, R7).
+    InstrumentSound instrumentOutput(int track, unsigned int frames, const float*& left,
+                                     const float*& right) const override;
 
 private:
     struct Config;

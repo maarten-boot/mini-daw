@@ -111,7 +111,14 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
             const bool instrument = t.spec.instrumentTrack > 0;
             // After a loss, the gap must be announced before the next block, so
             // the disk thread can put the silence in the right place.
-            const bool fits = t.ring->canWrite(need) && (t.openGap == 0 || t.gaps->canWrite(1));
+            const float* l = nullptr;
+            const float* r = nullptr;
+            const InstrumentSound sound = instrument && instruments != nullptr
+                                              ? instruments->instrumentOutput(t.spec.instrumentTrack, frames, l, r)
+                                              : InstrumentSound::None;
+            // An instrument block that could not be kept is a loss like a full ring (R7).
+            const bool fits = t.ring->canWrite(need) && (t.openGap == 0 || t.gaps->canWrite(1)) &&
+                              sound != InstrumentSound::Lost;
             if (!fits) {
                 t.openGap += frames;
                 t.dropped.fetch_add(frames, std::memory_order_relaxed);
@@ -124,12 +131,10 @@ void Recorder::process(const float* input, unsigned int frames, unsigned int cha
             }
             std::size_t k = 0;
             if (instrument) {
-                const float* l = nullptr;
-                const float* r = nullptr;
-                const bool sound = instruments != nullptr && instruments->instrumentOutput(t.spec.instrumentTrack, frames, l, r);
+                const bool has = sound == InstrumentSound::Sound;
                 for (unsigned int f = 0; f < frames; ++f) {
-                    t.ring->slot(k++) = sound ? l[f] : 0.0f;
-                    t.ring->slot(k++) = sound ? r[f] : 0.0f;
+                    t.ring->slot(k++) = has ? l[f] : 0.0f;
+                    t.ring->slot(k++) = has ? r[f] : 0.0f;
                 }
             } else {
                 for (unsigned int f = 0; f < frames; ++f) {

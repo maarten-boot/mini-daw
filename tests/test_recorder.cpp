@@ -238,9 +238,12 @@ class FakeInstruments : public InstrumentSource {
 public:
     std::uint64_t at = 0;  // stream frame of the block
     mutable std::vector<float> l, r;
-    bool instrumentOutput(int track, unsigned int frames, const float*& left, const float*& right) const override
+    bool lose = false;  // the next block is "too long": lost
+    InstrumentSound instrumentOutput(int track, unsigned int frames, const float*& left,
+                                     const float*& right) const override
     {
-        if (track != 5) return false;
+        if (track != 5) return InstrumentSound::None;
+        if (lose) return InstrumentSound::Lost;
         l.resize(frames);
         r.resize(frames);
         for (unsigned int f = 0; f < frames; ++f) {
@@ -249,7 +252,7 @@ public:
         }
         left = l.data();
         right = r.data();
-        return true;
+        return InstrumentSound::Sound;
     }
 };
 } // namespace
@@ -304,7 +307,12 @@ TEST_CASE("T-VST-25: instrument takes record the instrument's stereo sound in st
             inst.at = b * block;
             rec.process(nullptr, block, 0, b * block, &inst);
         }
-        CHECK(rec.stop().takes.at(0).frames == 4 * block);
+        inst.lose = true;  // a block whose sound could not be kept: counted as lost, silence in its place (R7)
+        rec.process(nullptr, block, 0, 4 * block, &inst);
+        const RecordingResult res = rec.stop();
+        CHECK(res.takes.at(0).frames == 5 * block);
+        CHECK(res.takes.at(0).droppedFrames == block);
+        CHECK(res.lostData());
         Recorder needsInput;
         CHECK_FALSE(needsInput.start({{dir / "in.wav", {0}}}, 48000, 0, err));  // an input take still needs input
     }

@@ -370,6 +370,13 @@ TEST_CASE("T-VST-27: the linked sound track and Sound from are kept in the proje
     CHECK(back.tracks[0].soundFromRecording);
     CHECK(back.tracks[1].instrumentOf == 1);
 
+    // A hand-edited linked track that is armed and monitored: never on its own (R9).
+    data.tracks[1].armed = true;
+    data.tracks[1].monitor = true;
+    REQUIRE(projectFromJson(projectToJson(data, dir.path()), dir.path(), back, w, err));
+    CHECK_FALSE(back.tracks[1].armed);
+    CHECK_FALSE(back.tracks[1].monitor);
+
     // A link to a missing track, a second link to the same track, a bad Sound from value.
     const std::string bad = R"({"format":"mini-daw project","version":1,"tracks":[
         {"number":1,"name":"K","kind":"midi","soundFrom":"loud"},
