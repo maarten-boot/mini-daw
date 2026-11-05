@@ -35,3 +35,13 @@ Continues `Conversation-2026-11-04.md` (P10d, crosscheck #9 and its fixes were d
 - R1: a new file per render (not .tmp + rename: renaming over a file the player has open fails on Windows). R2/R4/R9: core helpers `removeTrack`, `tracksToRecord`. R3: `placedAsAudioInput` — the linked sound is placed like its MIDI take. R5–R8 in the GUI; R7 as `InstrumentSound::Lost`. R10: ASIO step renamed P14. R11: Spec. R12: tests.
 - My first 1500-event render test had note-on and note-off in the same held-back block (silent): fixed the test.
 - Spec v0.29; Linux 137/137, Wine 137/137 (2 runs). Details in `Crosscheck-2026-11-02.md`.
+
+## 6. CI after the crosscheck #10 fixes; demo readiness
+> pushed it, check the CI run
+> do we have suficcient for a demo aready ?
+- Run 42036513972 (`4be4d48`): windows, linux and licence green.
+- Demo: yes for a short one, after one rehearsal on the demo machine with this build. Confirmed on real Windows so far: start-up, contrast, devices, audio recording, Arturia live play. Not yet tried by the user on Windows: playback/overdub, projects, installer pages, plugin editor (T-VST-20), instrument recording/render/Sound from (T-VST-30). Weak spots: the pulsing input noise, the narrow Take column, little hover/selection feedback (PL1). Suggested a 5-minute flow; offered a one-page checklist.
+
+## 7. Demo checklist
+> yes write the demo checklist
+- `docs/Demo-checklist.md`: preparing the machine (CI build of run 42036513972), one rehearsal that also covers T-VST-20 and T-VST-30, a 5-minute demo flow with talking points, what to do if something goes wrong, and reporting back afterwards.
