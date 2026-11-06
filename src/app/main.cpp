@@ -51,6 +51,8 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #else
 #include <spawn.h>
 #include <sys/wait.h>
@@ -2143,14 +2145,31 @@ void drawTransport(AppState& app)
     const double pos = rate ? static_cast<double>(player.position()) / rate : 0.0;
     ImGui::Text("%s  %s / %s", rec ? "RECORDING" : playing ? "PLAYING" : "STOPPED", clockText(pos).c_str(),
                 clockText(rate ? static_cast<double>(length) / rate : 0.0).c_str());
-    if (!rec && !playing && length > 0 && rate > 0) {
-        // Position slider, while stopped.
+    // Everything below has a fixed height, so the track table never moves
+    // when lines come and go while recording or after it (user test 2026-11-06, SPEC-UI-10).
+    {
+        // Position slider: always there, usable while stopped.
         float seconds = static_cast<float>(pos);
+        const float rateF = rate > 0 ? static_cast<float>(rate) : 48000.0f;
+        ImGui::BeginDisabled(rec || playing || length == 0 || rate == 0);
         ImGui::SetNextItemWidth(30 * ImGui::GetFontSize());
-        const float rateF = static_cast<float>(rate);
-        if (ImGui::SliderFloat("Position (s)", &seconds, 0.0f, static_cast<float>(length) / rateF, "%.1f s")) {
+        if (ImGui::SliderFloat("Position (s)", &seconds, 0.0f, std::max(0.1f, static_cast<float>(length) / rateF),
+                               "%.1f s")) {
             player.locate(static_cast<std::uint64_t>(std::max(0.0f, seconds) * rateF));
         }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(rec);
+        if (ImGui::SmallButton("Recording settings...")) {
+            app.pendingRecording = app.config.recording;
+            app.showRecordingSettings = true;
+        }
+        ImGui::EndDisabled();
+    }
+    const float infoHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
+    if (!ImGui::BeginChild("transport-info", ImVec2(0, infoHeight))) {
+        ImGui::EndChild();
+        return;
     }
     if (player.underrunFrames() > 0 && player.playing()) {
         ImGui::TextWrapped("Note: the disk was too slow for playback (%llu frames played as silence).",
@@ -2179,11 +2198,7 @@ void drawTransport(AppState& app)
                                "record along with them. Disarm a track to hear its take instead of re-recording it.",
                                n, n == 1 ? "" : "s", n == 1 ? "is" : "are");
         }
-        if (ImGui::SmallButton("Recording settings...")) {
-            app.pendingRecording = app.config.recording;
-            app.showRecordingSettings = true;
-        }
-        ImGui::TextWrapped("Stopped. Takes go to %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
+        ImGui::TextWrapped("Takes go to %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     }
     if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
     if (!app.lastTake.empty()) {
@@ -2193,6 +2208,7 @@ void drawTransport(AppState& app)
             ImGui::TextWrapped("%s", line.c_str());
         }
     }
+    ImGui::EndChild();
 }
 
 void drawTracksPanel(AppState& app)
@@ -2225,9 +2241,7 @@ void drawTracksPanel(AppState& app)
         ImGui::TextUnformatted("(audio tracks need an audio input device: Settings > Audio devices)");
     }
     if (app.tracks.empty()) ImGui::TextUnformatted("No tracks. Add an audio or MIDI track.");
-    const bool anyArmed =
-        std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
-    if (!app.tracks.empty() && !anyArmed) {
+    if (!app.tracks.empty()) {  // always shown, so arming the first track does not move the table
         ImGui::TextWrapped("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI track's port "
                            "opens when it is armed. Tracks that are not armed play along (overdub).");
     }
@@ -2771,6 +2785,30 @@ void drawStatusLine(const AppState& app)
 
 std::string g_lastGlfwError;
 
+// Shows the main window, which was kept hidden while mini-daw started, at its
+// place: maximised at once if it was (SPEC-UI-09). Showing it first and then
+// maximising showed the normal-size window on a black screen for the start-up
+// time (user test 2026-11-06).
+void showMainWindow(GLFWwindow* window, bool maximized)
+{
+#if defined(_WIN32)
+    if (maximized) {
+        // One step: maximised, with the saved normal place kept for un-maximising.
+        HWND hwnd = glfwGetWin32Window(window);
+        WINDOWPLACEMENT wp{};
+        wp.length = sizeof wp;
+        if (GetWindowPlacement(hwnd, &wp)) {
+            wp.showCmd = SW_SHOWMAXIMIZED;
+            if (SetWindowPlacement(hwnd, &wp)) return;
+        }
+    }
+#else
+    if (maximized) glfwMaximizeWindow(window);  // while hidden: the window manager shows it maximised
+#endif
+    glfwShowWindow(window);
+    if (maximized && !glfwGetWindowAttrib(window, GLFW_MAXIMIZED)) glfwMaximizeWindow(window);
+}
+
 int runGui(AppState& app)
 {
     glfwSetErrorCallback([](int code, const char* text) {
@@ -2879,8 +2917,6 @@ int runGui(AppState& app)
         });
     }
 
-    glfwShowWindow(window);
-    if (restored && app.config.window.maximized) glfwMaximizeWindow(window);
     // The normal (not maximised, not minimised) place, kept up to date for saving at the end.
     minidaw::ScreenRect normalPlace{};
     const auto noteNormalPlace = [&]() {
@@ -2893,6 +2929,9 @@ int runGui(AppState& app)
     } else {
         noteNormalPlace();
     }
+    // Shown only after the start-up work below (devices, project, instruments),
+    // right before the first frame, so no empty window waits for it.
+    const bool startMaximized = restored && app.config.window.maximized;
 
     setContrast(app, app.config.contrast, false);
     setFontSize(app, app.config.fontSize, false);
@@ -2911,6 +2950,8 @@ int runGui(AppState& app)
             app.log.warning(note);
         }
     }
+
+    showMainWindow(window, startMaximized);
 
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {

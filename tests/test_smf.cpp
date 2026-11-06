@@ -155,7 +155,9 @@ TEST_CASE("T-REC-18: the frame clock never shows a half-written pair", "[smf][T-
     });
     std::size_t bad = 0;
     std::size_t reads = 0;
-    while (!stop) {
+    // Also after the writer is done: on a busy machine it can finish before this
+    // loop runs once (2026-11-06: "reads > 0" failed during a parallel build).
+    while (!stop || reads == 0) {
         std::uint64_t f = 0;
         std::int64_t t = 0;
         if (clock.read(f, t)) {
