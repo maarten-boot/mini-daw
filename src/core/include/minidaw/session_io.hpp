@@ -26,6 +26,8 @@ public:
                                 const RecorderOptions& options) = 0;
     virtual RecordingResult stopRecording() = 0;
     virtual const Recorder& recorder() const = 0;
+    // Auto record (P16) starts and ends parts on it.
+    virtual Recorder& recorder() = 0;
     // Audio timeline (SPEC-REC-04a); empty while no stream runs.
     virtual std::optional<std::uint64_t> frameAtTime(std::int64_t ns) const = 0;
     virtual std::optional<std::uint64_t> currentFrame() const = 0;

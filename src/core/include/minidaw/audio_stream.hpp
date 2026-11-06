@@ -116,6 +116,7 @@ public:
                         const RecorderOptions& options = {}) override;
     RecordingResult stopRecording() override;
     const Recorder& recorder() const override { return recorder_; }
+    Recorder& recorder() override { return recorder_; }
 
     // SessionAudio
     bool streamRunning() const override { return info_.running; }

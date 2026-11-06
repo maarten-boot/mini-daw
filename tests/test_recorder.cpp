@@ -317,3 +317,103 @@ TEST_CASE("T-VST-25: instrument takes record the instrument's stereo sound in st
         CHECK_FALSE(needsInput.start({{dir / "in.wav", {0}}}, 48000, 0, err));  // an input take still needs input
     }
 }
+
+TEST_CASE("T-REC-33: parts mode: a part starts in the past, ends exactly, nothing between parts",
+          "[recorder][T-REC-33]")
+{
+    test::TempDir dir;
+    constexpr unsigned int rate = 1000;  // 1 frame = 1 ms, easy numbers
+    constexpr unsigned int block = 100;
+    Recorder rec;
+    std::string err;
+    RecorderOptions opt;
+    opt.parts = true;
+    opt.partBufferSeconds = 2.0;  // 2000 frames remembered
+    opt.startDiskThread = false;
+    opt.syncToDisk = false;
+    REQUIRE(rec.start({{dir / "unused.wav", {1}}}, rate, 2, err, opt));
+    std::uint64_t fed = 0;  // recorder frames fed so far
+    auto feed = [&](unsigned int blocks) {
+        std::vector<float> in(block * 2);
+        for (unsigned int b = 0; b < blocks; ++b) {
+            for (unsigned int f = 0; f < block; ++f) {
+                in[f * 2] = 0.0f;
+                in[f * 2 + 1] = marker(fed + f, 0);
+            }
+            rec.process(in.data(), block, 2, 5000 + fed);
+            fed += block;
+        }
+    };
+    auto check = [&](const std::filesystem::path& p, std::uint64_t from, std::uint64_t frames) {
+        WavData w;
+        REQUIRE(readWav(p, w, err));
+        REQUIRE(w.frames() == frames);
+        bool same = true;
+        for (std::uint64_t i = 0; i < frames; ++i) same = same && toStep(w.samples[i]) == toStep(marker(from + i, 0));
+        CHECK(same);
+    };
+
+    feed(30);  // 0 .. 2999: waiting, nothing written
+    rec.drainForTest();
+    CHECK_FALSE(std::filesystem::exists(dir / "unused.wav"));
+    CHECK(rec.startFrame() == std::optional<std::uint64_t>(5000));
+
+    // Part 1 begins 500 frames in the past; it ends at 3500 while the disk is behind.
+    rec.beginPart(1, 2500, {dir / "p1.wav"});
+    rec.drainForTest();
+    feed(10);  // .. 3999
+    rec.endPart(3500);
+    rec.drainForTest();
+    auto done = rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].part == 1);
+    CHECK(done[0].frames == 1000);
+    CHECK(done[0].error.empty());
+    check(dir / "p1.wav", 2500, 1000);
+
+    // Part 2: the disk already wrote past its end (4600): the rest is cut off.
+    rec.beginPart(2, 4200, {dir / "p2.wav"});
+    feed(10);  // .. 4999
+    rec.drainForTest();
+    rec.endPart(4600);
+    rec.drainForTest();
+    done = rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].frames == 400);
+    check(dir / "p2.wav", 4200, 400);
+
+    // Part 3 asks for more than is remembered: it starts 2000 frames back.
+    feed(20);  // .. 6999
+    rec.drainForTest();
+    rec.beginPart(3, 0, {dir / "p3.wav"});
+    feed(5);  // .. 7499
+    // Stop with the part open: it ends with the last frame.
+    const RecordingResult res = rec.stop();
+    CHECK(res.takes.empty());
+    CHECK(res.error.empty());
+    done = rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].part == 3);
+    check(dir / "p3.wav", 5000, 2500);
+}
+
+TEST_CASE("T-REC-33: parts mode notes when a take was loud", "[recorder][T-REC-33]")
+{
+    test::TempDir dir;
+    Recorder rec;
+    std::string err;
+    RecorderOptions opt;
+    opt.parts = true;
+    opt.startDiskThread = false;
+    opt.activityLevel = 0.01f;  // -40 dBFS
+    REQUIRE(rec.start({{dir / "x.wav", {0}}}, 48000, 1, err, opt));
+    std::vector<float> quiet(256, 0.009f);
+    std::vector<float> loud(256, 0.009f);
+    loud[100] = -0.02f;
+    rec.process(quiet.data(), 256, 1, 1000);
+    CHECK(rec.lastActiveFrame() == 0);
+    rec.process(loud.data(), 256, 1, 1256);
+    rec.process(quiet.data(), 256, 1, 1512);
+    CHECK(rec.lastActiveFrame() == 1512);  // the end of the loud block
+    rec.stop();
+}

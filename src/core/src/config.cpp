@@ -260,6 +260,18 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             } else {
                 cfg.recording.latencyCorrectionMs = static_cast<int>(v);
             }
+        } else if (section == "recording" && (key == "auto_pause_seconds" || key == "auto_threshold_db")) {
+            const bool pause = key == "auto_pause_seconds";
+            const long lo = pause ? 1 : -60;
+            const long hi = pause ? 60 : -20;
+            char* end = nullptr;
+            const long v = std::strtol(value.c_str(), &end, 10);
+            if (value.empty() || end == value.c_str() || *end != '\0' || v < lo || v > hi) {
+                warn(key + " '" + value + "' must be a whole number from " + std::to_string(lo) + " to " +
+                     std::to_string(hi) + ". Using " + (pause ? "5" : "-40") + ".");
+            } else {
+                (pause ? cfg.recording.autoPauseSeconds : cfg.recording.autoThresholdDb) = static_cast<int>(v);
+            }
         } else if (section == "instruments" && key.size() >= 7 && key.compare(0, 6, "folder") == 0 &&
                    key.find_first_not_of("0123456789", 6) == std::string::npos) {
             if (!value.empty() && cfg.instruments.folders.size() < 8) cfg.instruments.folders.push_back(value);
@@ -391,6 +403,10 @@ std::string defaultConfigText()
            "; latency plus this many ms (-500 to 500), so they line up with what you\n"
            "; heard. Raise it if overdubs land late, lower it if they land early.\n"
            "latency_correction_ms = 0\n"
+           "; Auto record: a part ends after this many seconds without playing (1 to 60),\n"
+           "; and an audio input counts as playing from this level in dBFS (-60 to -20).\n"
+           "auto_pause_seconds = 5\n"
+           "auto_threshold_db = -40\n"
            "\n"
            "[project]\n"
            "; The project open when mini-daw closed; it is opened again at the next start.\n"
@@ -496,6 +512,8 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "recording", "midi_timing", midiTimingName(config.recording.midiTiming));
     text = setConfigValue(text, "recording", "latency_correction_ms",
                           std::to_string(config.recording.latencyCorrectionMs));
+    text = setConfigValue(text, "recording", "auto_pause_seconds", std::to_string(config.recording.autoPauseSeconds));
+    text = setConfigValue(text, "recording", "auto_threshold_db", std::to_string(config.recording.autoThresholdDb));
     text = setConfigValue(text, "project", "last", quoteConfigString(config.project.last));
     for (std::size_t i = 0; i < 8; ++i) {
         const std::string v = i < config.instruments.folders.size() ? config.instruments.folders[i] : std::string();

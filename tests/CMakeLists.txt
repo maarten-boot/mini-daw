@@ -13,6 +13,7 @@ add_executable(minidaw_tests
     test_session.cpp
     test_smf.cpp
     test_track.cpp
+    test_auto_record.cpp
     test_monitor.cpp
     test_log.cpp
     test_player.cpp

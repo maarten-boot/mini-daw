@@ -37,7 +37,7 @@
 | P13 | Note and sound editing | — | later (not in v1) |
 | P15 | Main window reopens at its last size and place, maximised if it was; `[window]` in the config (user request 2026-11-06) | UI-09 | done (2026-11-06); Windows check by the user (T-UI-15) |
 | P15b | After the user's Windows test: start without an empty or half-sized window (hidden until the first frame, maximised in one step); fixed-height transport area so the table does not jump | UI-09, UI-10 | done (2026-11-06) |
-| P16 | Auto record: parts start at your playing and end after a pause, saved with date and time; tracks unchanged | REC-08 | proposed (2026-11-06), waiting for the user's go |
+| P16 | Auto record: parts start at your playing and end after a pause, saved with date and time; tracks unchanged. Recorder parts mode (memory of the last 4 s, parts opened/closed by the disk thread), AutoPartTracker, session auto mode, GUI button and status, settings | REC-08 | done (2026-11-06) on Linux/Wine; Windows by the user |
 | PL1 | Look and feel: clearer hover, active and selected states (e.g. the chosen instrument), so every click gives feedback; colours through roles, contrast ≥ the minimum (user feedback 2026-11-03). Also: the Take column gets narrow in a small window, so the output list can be cut off | UI-02, UI-06 | later |
 | PL2 | Preset menu in mini-daw for plugins that publish program lists (VST3 IUnitInfo), next to the plugin's own editor | VST-05 | later, idea |
 | PX | Crosscheck Spec ↔ Plan ↔ code | — | recurring. #1 after P2, #2 after P4, #3 after P5 (`Crosscheck-2026-11-01.md`), #4 after P6a/b, #5 after P7/P7b, #6 after P8, #7 after P9, #8 after P9b, #9 after P10, #10 after P11 (`Crosscheck-2026-11-02.md`) |

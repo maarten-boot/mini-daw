@@ -20,6 +20,8 @@
 //                               ; network path: folder = \\server\takes (no quotes)
 //   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
 //   latency_correction_ms = 0 ; overdub: shift new audio takes earlier by this much more
+//   auto_pause_seconds = 5    ; auto record: a part ends after this many quiet seconds (1 .. 60)
+//   auto_threshold_db = -40   ; auto record: an audio input counts as playing from here (-60 .. -20)
 //
 //   [window]
 //   remember = true           ; reopen at the size and place it had when closed
@@ -79,6 +81,10 @@ struct RecordingSettings {
     // Overdub (SPEC-PLAY-05): added to the estimated round-trip latency by
     // which a new audio take is moved earlier. Whole ms, -500..500.
     int latencyCorrectionMs = 0;
+    // Auto record (SPEC-REC-08): a part ends after this many quiet seconds
+    // (1..60); an audio input counts as playing from this level (-60..-20 dBFS).
+    int autoPauseSeconds = 5;
+    int autoThresholdDb = -40;
     friend bool operator==(const RecordingSettings&, const RecordingSettings&) = default;
 };
 

@@ -46,6 +46,17 @@ public:
     // updateHeader() plus the padding byte for an odd-sized data chunk; closes.
     bool close(std::string& error);
 
+    // Keep only the first `frames` frames: close() cuts the rest off (auto
+    // record, P16: a part ends at a frame that may already be in the file).
+    // No more writes after this.
+    void keepOnlyFrames(std::uint64_t frames)
+    {
+        if (isOpen() && frames < frames_) {
+            frames_ = frames;
+            broken_ = true;  // close() cuts the file back to frames_ and writes the header
+        }
+    }
+
     bool isOpen() const { return file_ != nullptr; }
     std::uint64_t framesWritten() const { return frames_; }
     std::uint64_t clippedSamples() const { return clipped_; }

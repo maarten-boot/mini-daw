@@ -139,6 +139,7 @@ struct AppState {
     std::string recordError;
     std::string loggedRecordingError;      // the disk error already written to the log
     std::vector<std::string> lastTake;     // summary of the last recording
+    std::vector<std::string> autoParts;    // auto record (P16): the last parts, newest first
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
 
@@ -1372,7 +1373,9 @@ void syncRack(AppState& app, bool force)
         app.takeEventsRate = instrumentRate(app);
         force = true;
     }
-    std::string sig = app.playbackForRecording ? "R" : "P";
+    // Auto record counts as recording for the armed tracks (P16).
+    const bool armedRecord = app.playbackForRecording || app.session.autoMode();
+    std::string sig = armedRecord ? "R" : "P";
     for (const auto& t : app.tracks) {
         const auto it = app.instruments.find(t.number);
         if (t.kind != minidaw::TrackKind::Midi || it == app.instruments.end()) continue;
@@ -1401,7 +1404,7 @@ void syncRack(AppState& app, bool force)
         s.gain = minidaw::playbackGain(t, app.tracks);
         // The take's MIDI goes to the instrument unless the track plays its
         // recorded sound instead ("Sound from", P11).
-        if (!t.take.empty() && !(t.armed && app.playbackForRecording) && minidaw::instrumentPlaysTake(t)) {
+        if (!t.take.empty() && !(t.armed && armedRecord) && minidaw::instrumentPlaysTake(t)) {
             auto& cached = app.takeEvents[t.number];
             if (cached.first != t.take || !cached.second) {
                 minidaw::SmfData d;
@@ -1863,6 +1866,8 @@ std::uint64_t songLength(const AppState& app)
 // started by Record; the armed tracks are left out (they are recorded now).
 bool startPlayback(AppState& app, bool forRecording)
 {
+    // Auto record (P16): the armed tracks are being recorded, so their takes do not play.
+    const bool skipArmed = forRecording || app.session.autoMode();
     std::uint64_t position = app.audio.player().position();
     // Play at (or past) the end starts from the beginning again (crosscheck #6, M2).
     if (!forRecording && position >= songLength(app)) position = 0;
@@ -1877,11 +1882,11 @@ bool startPlayback(AppState& app, bool forRecording)
     std::vector<minidaw::PlaybackClip> clips;
     std::vector<minidaw::MidiPlaybackTrack> midiTracks;
     for (const auto& t : app.tracks) {
-        if (t.take.empty() || (forRecording && t.armed)) continue;
+        if (t.take.empty() || (skipArmed && t.armed)) continue;
         // While recording, an armed instrument track's old recorded sound does
         // not play either: the instrument plays live (no doubled sound, R6).
         const minidaw::Track* owner = minidaw::soundOwner(app.tracks, t);
-        if (forRecording && owner != nullptr && owner->armed) continue;
+        if (skipArmed && owner != nullptr && owner->armed) continue;
         if (t.kind == minidaw::TrackKind::Audio) {
             clips.push_back({t.number, t.take, t.takeStart});
         } else if (!t.midiOut.empty() && !app.instruments.count(t.number)) {  // instruments: via the rack
@@ -1910,7 +1915,7 @@ bool startPlayback(AppState& app, bool forRecording)
                          app.playWarnings);
     // Only takes that really play make it an overdub (a skipped clip does not, M6).
     const bool instrumentPlays = std::any_of(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
-        return !t.take.empty() && app.instruments.count(t.number) && !(forRecording && t.armed);
+        return !t.take.empty() && app.instruments.count(t.number) && !(skipArmed && t.armed);
     });
     app.overdub = audioStarted > 0 || app.midiPlayer.trackCount() > 0 || instrumentPlays;
     if (forRecording) app.recordStartPosition = position;
@@ -1918,7 +1923,7 @@ bool startPlayback(AppState& app, bool forRecording)
     for (const auto& w : app.playWarnings) app.log.warning("Playback: " + w);
     char buf[160];
     const auto instrumentTakes = static_cast<std::size_t>(std::count_if(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
-        return !t.take.empty() && app.instruments.count(t.number) && !(forRecording && t.armed);
+        return !t.take.empty() && app.instruments.count(t.number) && !(skipArmed && t.armed);
     }));
     std::snprintf(buf, sizeof buf, "%s from %.3f s: %zu audio, %zu MIDI-out and %zu instrument take(s)",
                   forRecording ? "Recording timeline started" : "Playback started",
@@ -1930,7 +1935,7 @@ bool startPlayback(AppState& app, bool forRecording)
 
 void togglePlay(AppState& app)
 {
-    if (app.session.recording()) return;  // Stop the recording with Ctrl+R
+    if (app.session.recording() && !app.session.autoMode()) return;  // Stop the recording with Ctrl+R
     if (app.audio.player().playing()) {
         stopPlayback(app);
         app.log.info("Playback stopped");
@@ -1941,7 +1946,7 @@ void togglePlay(AppState& app)
 
 void returnToStart(AppState& app)
 {
-    if (app.session.recording()) return;
+    if (app.session.recording() && !app.session.autoMode()) return;
     const bool wasPlaying = app.audio.player().playing();
     stopPlayback(app);
     app.audio.player().locate(0);
@@ -1970,6 +1975,7 @@ void updateTransport(AppState& app)
 
 void toggleRecording(AppState& app)
 {
+    if (app.session.autoMode()) return;  // Auto record is stopped with its own button
     if (app.session.recording()) {
         const minidaw::SessionResult res = app.session.stop();
         app.lastTake = describeResult(res);
@@ -2050,6 +2056,77 @@ void toggleRecording(AppState& app)
     for (auto& m : app.outputMeters) m.clearClip();
 }
 
+// Auto record (P16, SPEC-REC-08): on until switched off; every time someone
+// plays on an armed track, a part is recorded into <takes>/auto/<date time>.
+void toggleAuto(AppState& app)
+{
+    if (app.session.autoMode()) {
+        const int parts = app.session.autoPartsDone() + (app.session.autoInPart() ? 1 : 0);
+        const minidaw::SessionResult res = app.session.stop();
+        app.log.info("Auto record stopped: " + std::to_string(parts) + " part(s)" +
+                     (res.error.empty() ? std::string() : "; " + res.error));
+        if (!res.error.empty()) app.recordError = res.error;
+        app.lastTake = {"Auto record: " + std::to_string(parts) + " part(s) in " + minidaw::pathToUtf8(res.folder) +
+                        " (File > Open take folder)"};
+        return;
+    }
+    if (app.session.recording()) return;
+    if (app.renderTrack != 0) {
+        app.recordError = "A render is running; start auto record when it has finished (or cancel it).";
+        return;
+    }
+    syncMidiPorts(app, true);
+    app.recordError.clear();
+    std::vector<int> instrumentTracks;
+    for (const auto& t : app.tracks) {
+        if (t.armed && t.kind == minidaw::TrackKind::Midi && app.instruments.count(t.number) != 0) {
+            instrumentTracks.push_back(t.number);
+        }
+    }
+    for (const int n : instrumentTracks) ensureLinkedTrack(app, n);
+    if (app.audio.player().playing() && app.playbackForRecording) stopPlayback(app);
+    minidaw::RecordingSettings recSettings = app.config.recording;
+    recSettings.folder = minidaw::pathToUtf8(activeTakesFolder(app));
+    const std::vector<minidaw::Track> toRecord =
+        minidaw::tracksToRecord(app.tracks, [&](int n) { return app.instruments.count(n) != 0; });
+    if (!app.session.startAuto(toRecord, recSettings, app.audio, app.midi, app.recordError)) {
+        app.log.error("Auto record not started: " + app.recordError);
+        return;
+    }
+    app.autoParts.clear();
+    app.lastTake.clear();
+    // A playback that runs keeps going; the armed tracks' takes leave it.
+    if (app.audio.player().playing()) startPlayback(app, false);
+    app.log.info("Auto record on: parts go to " + minidaw::pathToUtf8(app.session.folder()));
+}
+
+// Every frame while auto record is on: parts begin and end.
+void updateAuto(AppState& app)
+{
+    if (!app.session.autoMode()) return;
+    const minidaw::AutoPartEvent ev = app.session.autoUpdate();
+    switch (ev.kind) {
+    case minidaw::AutoPartEvent::Kind::Began:
+        app.log.info("Auto record: part " + minidaw::pathToUtf8(ev.folder.filename()) + " began");
+        break;
+    case minidaw::AutoPartEvent::Kind::Ended: {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%.1f s", ev.seconds);
+        const std::string line = minidaw::pathToUtf8(ev.folder.filename()) + "  (" + buf + ")";
+        app.autoParts.insert(app.autoParts.begin(), line);
+        if (app.autoParts.size() > 5) app.autoParts.pop_back();
+        app.log.info("Auto record: part " + line + " saved in " + minidaw::pathToUtf8(ev.folder));
+        break;
+    }
+    case minidaw::AutoPartEvent::Kind::Failed:
+        app.recordError = ev.error;
+        app.log.error("Auto record: " + ev.error);
+        break;
+    case minidaw::AutoPartEvent::Kind::None:
+        break;
+    }
+}
+
 std::string audioInputLabel(const std::vector<unsigned int>& ch)
 {
     if (ch.size() == 2) return "In " + std::to_string(ch[0] + 1) + "+" + std::to_string(ch[1] + 1) + " (stereo)";
@@ -2126,8 +2203,10 @@ void drawTransport(AppState& app)
     const bool playing = player.playing() && !app.playbackForRecording;
     const unsigned int rate = running ? app.audio.info().sampleRate : app.config.audio.sampleRate;
     const std::uint64_t length = songLength(app);
+    const bool autoOn = app.session.autoMode();  // auto record (P16): playback may run meanwhile
+    const bool recNormal = rec && !autoOn;
 
-    ImGui::BeginDisabled(rec || !running);
+    ImGui::BeginDisabled(recNormal || !running);
     if (ImGui::Button("|< Start (Home)")) returnToStart(app);
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing && length == 0);
@@ -2135,15 +2214,34 @@ void drawTransport(AppState& app)
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!rec && (!running || app.renderTrack != 0));  // not while rendering (R5)
-    if (ImGui::Button(rec ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
+    ImGui::BeginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0)));  // not while rendering (R5)
+    if (ImGui::Button(recNormal ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
     if (!rec && app.renderTrack != 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
+    // Auto record (SPEC-REC-08).
+    const bool anyArmed =
+        std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
+    ImGui::BeginDisabled(recNormal || (!autoOn && (!running || app.renderTrack != 0 || !anyArmed)));
+    if (ImGui::Button(autoOn ? "Stop auto record" : "Auto record")) toggleAuto(app);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(autoOn ? "Stop waiting for parts (a part being recorded is finished and saved)."
+                                 : "Record everything you play on the armed tracks, without pressing Record:\n"
+                                   "a part starts when you play and ends after %d s without playing.\n"
+                                   "Each part is saved in its own folder named after the date and time;\n"
+                                   "the tracks are not changed.%s",
+                          app.config.recording.autoPauseSeconds, anyArmed ? "" : "\nArm a track first.");
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     const double pos = rate ? static_cast<double>(player.position()) / rate : 0.0;
-    ImGui::Text("%s  %s / %s", rec ? "RECORDING" : playing ? "PLAYING" : "STOPPED", clockText(pos).c_str(),
+    const char* state = autoOn ? (app.session.autoInPart() ? "AUTO: RECORDING" : "AUTO: WAITING")
+                        : rec  ? "RECORDING"
+                        : playing ? "PLAYING"
+                                  : "STOPPED";
+    ImGui::Text("%s  %s / %s", state, clockText(pos).c_str(),
                 clockText(rate ? static_cast<double>(length) / rate : 0.0).c_str());
     // Everything below has a fixed height, so the track table never moves
     // when lines come and go while recording or after it (user test 2026-11-06, SPEC-UI-10).
@@ -2151,7 +2249,7 @@ void drawTransport(AppState& app)
         // Position slider: always there, usable while stopped.
         float seconds = static_cast<float>(pos);
         const float rateF = rate > 0 ? static_cast<float>(rate) : 48000.0f;
-        ImGui::BeginDisabled(rec || playing || length == 0 || rate == 0);
+        ImGui::BeginDisabled(recNormal || playing || length == 0 || rate == 0);
         ImGui::SetNextItemWidth(30 * ImGui::GetFontSize());
         if (ImGui::SliderFloat("Position (s)", &seconds, 0.0f, std::max(0.1f, static_cast<float>(length) / rateF),
                                "%.1f s")) {
@@ -2176,7 +2274,34 @@ void drawTransport(AppState& app)
                            static_cast<unsigned long long>(player.underrunFrames()));
     }
     for (const auto& w : app.playWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
-    if (rec) {
+    if (autoOn) {
+        const int pause = app.config.recording.autoPauseSeconds;
+        if (app.session.autoInPart()) {
+            ImGui::Text("AUTO RECORD: recording a part, %s so far (quiet for %.1f s; it ends after %d s)",
+                        clockText(app.session.autoPartSeconds()).c_str(), app.session.autoQuietSeconds(), pause);
+        } else {
+            ImGui::TextWrapped("AUTO RECORD: waiting. Play on an armed track to start a part; it ends after %d s "
+                               "without playing.",
+                               pause);
+        }
+        ImGui::TextWrapped("Parts go to %s", minidaw::pathToUtf8(app.session.folder()).c_str());
+        if (app.session.autoLostFrames() > 0) {
+            ImGui::Text("Lost frames in parts: %llu", static_cast<unsigned long long>(app.session.autoLostFrames()));
+        }
+        const std::string err = app.session.diskError();
+        if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
+        if (err != app.loggedRecordingError) {
+            if (!err.empty()) app.log.error("Auto record: " + err);
+            app.loggedRecordingError = err;
+        }
+        if (!app.autoParts.empty()) {
+            ImGui::Text("Parts saved: %d. Last:", app.session.autoPartsDone());
+            for (const auto& line : app.autoParts) {
+                ImGui::Bullet();
+                ImGui::TextUnformatted(line.c_str());
+            }
+        }
+    } else if (rec) {
         if (app.overdub) ImGui::TextUnformatted("Overdub: the other takes play while the armed tracks record.");
         const double s = app.session.elapsedSeconds();
         const int m = static_cast<int>(s / 60);
@@ -2191,8 +2316,6 @@ void drawTransport(AppState& app)
             app.loggedRecordingError = err;
         }
     } else {
-        const bool anyArmed =
-            std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
         if (const int n = minidaw::overdubTrackCount(app.tracks); anyArmed && n > 0) {
             ImGui::TextWrapped("Overdub: Record also plays the takes of %d track%s that %s not armed, so you can "
                                "record along with them. Disarm a track to hear its take instead of re-recording it.",
@@ -2550,6 +2673,19 @@ void drawRecordingSettingsWindow(AppState& app)
             ImGui::EndCombo();
         }
         ImGui::Checkbox("Force takes to disk every second (survives power loss)", &p.syncToDisk);
+        // Auto record (SPEC-REC-08).
+        ImGui::SetNextItemWidth(8 * em);
+        if (ImGui::InputInt("Auto record: a part ends after this many quiet seconds", &p.autoPauseSeconds, 1, 5)) {
+            p.autoPauseSeconds = std::clamp(p.autoPauseSeconds, 1, 60);
+        }
+        ImGui::SetNextItemWidth(8 * em);
+        if (ImGui::InputInt("Auto record: an audio input counts as playing from (dBFS)", &p.autoThresholdDb, 1, 5)) {
+            p.autoThresholdDb = std::clamp(p.autoThresholdDb, -60, -20);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("-60 (very sensitive) to -20 dBFS. Raise it if noise on the input starts parts;\n"
+                              "MIDI notes always count.");
+        }
         // Overdub calibration (SPEC-PLAY-05, crosscheck #6 M11).
         ImGui::SetNextItemWidth(8 * em);
         if (ImGui::InputInt("Overdub latency correction (ms)", &p.latencyCorrectionMs, 1, 10)) {
@@ -2984,6 +3120,7 @@ int runGui(AppState& app)
         syncMidiPorts(app);
         updateMeters(app);
         updateTransport(app);
+        updateAuto(app);
         updateInstruments(app);
         stepScan(app);
         autosaveProject(app);

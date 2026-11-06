@@ -8,7 +8,14 @@
 // rings, places each message on the audio timeline and rewrites each MIDI
 // file about once a second. stop() ends everything and writes the final
 // files. The audio stream must keep running from start() to stop().
+//
+// startAuto() (auto record, P16, SPEC-REC-08) records the same tracks in
+// parts: autoUpdate(), called by the GUI thread every frame, starts a part
+// when someone plays and ends it after a pause; each part is its own folder
+// "<takes>/auto/<date time>" with the usual file names. Nothing is written
+// between parts.
 
+#include "minidaw/auto_record.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/midi_input.hpp"
 #include "minidaw/session_io.hpp"
@@ -44,6 +51,14 @@ struct SessionResult {
     bool lostData() const;
 };
 
+// A part of an auto recording (P16).
+struct AutoPartEvent {
+    enum class Kind { None, Began, Ended, Failed } kind = Kind::None;
+    std::filesystem::path folder;
+    double seconds = 0.0;   // Ended: its length
+    std::string error;      // Failed: why no folder could be made
+};
+
 class RecordingSession {
 public:
     RecordingSession() = default;
@@ -57,6 +72,20 @@ public:
     bool start(const std::vector<Track>& tracks, const RecordingSettings& settings, SessionAudio& audio,
                SessionMidi& midi, std::string& error);
     SessionResult stop();
+
+    // Auto record: like start(), but in parts (see above). stop() ends a part
+    // that is open.
+    bool startAuto(const std::vector<Track>& tracks, const RecordingSettings& settings, SessionAudio& audio,
+                   SessionMidi& midi, std::string& error);
+    // GUI thread, every frame while auto recording.
+    AutoPartEvent autoUpdate();
+    bool autoMode() const { return active_ && auto_; }
+    bool autoInPart() const { return autoMode() && tracker_.inPart(); }
+    double autoPartSeconds() const;   // length of the open part so far
+    double autoQuietSeconds() const;  // time since the last playing
+    int autoPartsDone() const { return partsDone_; }
+    // Audio lost in parts, and files that failed (from the recorder).
+    std::uint64_t autoLostFrames() const { return partLost_; }
 
     bool recording() const { return active_; }
     const std::filesystem::path& folder() const { return folder_; }
@@ -74,13 +103,34 @@ private:
         std::filesystem::path path;
         std::uint64_t disconnectsAtStart = 0;
     };
+    // Notes down and sustain pedals per channel (auto record: a held note keeps a part open).
+    struct PortEventsHeld {
+        std::vector<std::uint8_t> down = std::vector<std::uint8_t>(16 * 128, 0);
+        bool sustain[16] = {};
+        int count = 0;
+    };
     struct PortEvents {
         std::string port;
         std::vector<TimedMidi> events;   // kept sorted by frame
         std::uint64_t unplaced = 0;      // messages that could not be put on the timeline
+        PortEventsHeld held;
     };
 
+    bool begin(const std::vector<Track>& tracks, const RecordingSettings& settings, SessionAudio& audio,
+               SessionMidi& midi, std::string& error, bool autoMode);
     void midiLoop();
+    // Auto record.
+    struct MidiPart {
+        std::filesystem::path folder;
+        std::uint64_t from = 0;
+        std::uint64_t to = 0;
+    };
+    void noteActivity(PortEventsHeld& held, const TimedMidi& m);
+    void writeMidiPart(const MidiPart& part, bool final);
+    void runMidiPartJobs(bool final);
+    AutoPartEvent endAutoPart(const AutoPartTracker::Action& a);
+    std::uint64_t lastActivity() const;
+    void collectPartResults();
     void collectMidi();                                   // rings -> portEvents_
     std::optional<std::uint64_t> timelineStart() const;
     bool writeMidiFiles(std::uint64_t endFrame, bool final, std::vector<MidiTakeResult>* results);
@@ -105,6 +155,26 @@ private:
     mutable std::mutex errorMutex_;
     std::string error_;               // final errors (kept)
     std::string midiRetryError_;      // a periodic MIDI write failed; cleared when one succeeds (J10)
+
+    // Auto record. GUI thread:
+    bool auto_ = false;
+    AutoPartTracker tracker_;
+    std::filesystem::path autoBase_;
+    std::vector<std::filesystem::path> audioFileNames_;  // per audio take, in start order
+    std::filesystem::path partFolder_;
+    std::uint64_t partFrom_ = 0;
+    int partId_ = 0;
+    int partsDone_ = 0;
+    std::uint64_t partLost_ = 0;
+    // Shared with the MIDI thread:
+    std::mutex partMutex_;
+    bool midiPartOpen_ = false;          // under partMutex_
+    MidiPart midiOpenPart_;              // under partMutex_
+    std::vector<MidiPart> midiJobs_;     // ended parts to write, under partMutex_
+    std::atomic<std::uint64_t> keepFrom_{0};          // MIDI events before this are not needed
+    std::atomic<std::uint64_t> midiLastActivity_{0};  // stream frame of the last channel message
+    std::atomic<int> midiHeld_{0};                    // notes down and sustain pedals
+    std::atomic<std::uint64_t> midiEarliest_{UINT64_MAX};  // earliest channel message since the GUI looked
 };
 
 } // namespace minidaw

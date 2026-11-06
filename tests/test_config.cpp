@@ -336,3 +336,27 @@ TEST_CASE("T-UI-14: window place and size in the config; where it goes at start"
     s.x = 100;
     CHECK_FALSE(restoredWindowRect(s, {}).has_value());
 }
+
+TEST_CASE("T-REC-33: auto record settings in the config", "[config][T-REC-33]")
+{
+    const auto def = parseConfig(defaultConfigText());
+    CHECK(def.warnings.empty());
+    CHECK(def.config.recording.autoPauseSeconds == 5);
+    CHECK(def.config.recording.autoThresholdDb == -40);
+    const auto r = parseConfig("[recording]\nauto_pause_seconds = 12\nauto_threshold_db = -55\n");
+    CHECK(r.warnings.empty());
+    CHECK(r.config.recording.autoPauseSeconds == 12);
+    CHECK(r.config.recording.autoThresholdDb == -55);
+    const auto bad = parseConfig("[recording]\nauto_pause_seconds = 0\nauto_threshold_db = -10\n");
+    CHECK(bad.warnings.size() == 2);
+    CHECK(bad.config.recording.autoPauseSeconds == 5);
+    CHECK(bad.config.recording.autoThresholdDb == -40);
+    TempDir dir;
+    AppConfig cfg;
+    cfg.recording.autoPauseSeconds = 8;
+    cfg.recording.autoThresholdDb = -30;
+    REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
+    const auto back = loadConfigFile(dir.path / "c.ini");
+    CHECK(back.config.recording.autoPauseSeconds == 8);
+    CHECK(back.config.recording.autoThresholdDb == -30);
+}

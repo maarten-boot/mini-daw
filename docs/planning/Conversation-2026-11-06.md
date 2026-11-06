@@ -32,5 +32,16 @@ Continues `Conversation-2026-11-05.md` (Windows test with Arturia instruments, l
 > I was thinking of an 'auto' record mode: when you press auto it simply records all you play and saves the part under a file name with a date-timestamp (automatically ending when playing stops)
 - Asked to confirm the details before planning.
 - Answers: auto record starts at your playing and ends after a pause; records the armed tracks; files only (date-time folders, tracks unchanged). Fix the jumping text now: yes.
-- Done: fixed-height transport area, slider and Recording settings always shown, the table hint always shown (SPEC-UI-10, T-UI-16, checked on Xvfb). Auto record written as SPEC-REC-08 / P16 / T-REC-32, waiting for the user's go.
+- Done: fixed-height transport area, slider and Recording settings always shown, the table hint always shown (SPEC-UI-10, T-UI-16, checked on Xvfb). Auto record written as SPEC-REC-08 / P16 / T-REC-33 (first written as T-REC-32, which was taken: renamed), waiting for the user's go.
 - T-REC-18 failed once during a parallel build: a test weakness (no read when the writer finished first), fixed in the test.
+
+## 6. CI of `d3ffcbf`; P16 auto record
+> pushed it, check the CI run
+- Run 42288600626 green (windows, linux, licence); its Windows download is in `dist/windows`.
+> start P16
+- Recorder parts mode: the disk thread keeps the last 4 s of every take in memory; beginPart() opens the part's files and writes from up to 4 s back, endPart() ends exactly (cutting off what was already written after the end); nothing is written between parts. The audio thread notes when a take was loud.
+- AutoPartTracker (pure, tested): a part starts 1 s before the playing was noticed (the earlier of the last look and the earliest new MIDI message), ends 1 s after the last activity once there has been none for the pause and no note or sustain pedal is held (60 s at most).
+- RecordingSession::startAuto / autoUpdate: a folder `auto/<date time>` per part, the audio parts via the recorder, the MIDI parts written by the MIDI thread (refreshed every second while open); MIDI events no part needs are dropped.
+- GUI: "Auto record" button, AUTO: WAITING / RECORDING, the last parts, settings for the pause and the threshold; Record and arming disabled meanwhile; Play allowed (the armed tracks' takes do not play).
+- Found on the way: T-REC-32 was already taken (MIDI hot-plug): the new tests are T-REC-33. A part could ask to start before auto record was switched on: clamped (GUI test).
+- Linux 149/149, Wine 149/149; GUI checked with the test synth and vkeys.

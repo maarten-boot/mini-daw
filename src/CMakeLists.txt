@@ -20,6 +20,7 @@ add_library(minidaw_core STATIC
     core/src/recorder.cpp
     core/src/midi_input.cpp
     core/src/midi_player.cpp
+    core/src/auto_record.cpp
     core/src/recording_session.cpp
     core/src/smf.cpp
     core/src/track.cpp

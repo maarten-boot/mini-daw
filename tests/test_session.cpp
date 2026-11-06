@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -44,6 +45,7 @@ public:
     }
     RecordingResult stopRecording() override { return rec.stop(); }
     const Recorder& recorder() const override { return rec; }
+    Recorder& recorder() override { return rec; }
     std::optional<std::uint64_t> frameAtTime(std::int64_t ns) const override
     {
         if (!running || ns < 0) return std::nullopt;
@@ -485,3 +487,129 @@ TEST_CASE("T-VST-28: an armed instrument track also records its sound into its l
     CHECK(entries(res.folder) == 3);  // no WAV for the track without an instrument
 }
 
+
+TEST_CASE("T-REC-33: auto record: a part per playing, in its own folder, tracks unchanged", "[session][T-REC-33]")
+{
+    test::TempDir dir;
+    FakeAudio audio;
+    FakeMidi midi;
+    midi.openPort("Keys");
+    const std::vector<Track> tracks = {audioTrack(1, "Gtr", {0}), midiTrack(2, "Keys", "Keys")};
+    RecordingSettings settings = settingsFor(dir);
+    settings.autoPauseSeconds = 1;  // a part ends after 1 s without playing
+    RecordingSession session;
+    std::string err;
+    REQUIRE(session.startAuto(tracks, settings, audio, midi, err));
+    CHECK(session.autoMode());
+    CHECK(session.recording());
+
+    std::vector<std::filesystem::path> began;
+    std::vector<double> ended;
+    // One 480-frame block, the disk catches up, the GUI looks; with `wait`
+    // the MIDI thread gets time to collect.
+    auto step = [&](float level, bool wait) {
+        audio.feed(480, level);
+        audio.rec.drainForTest();
+        if (wait) std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        const AutoPartEvent ev = session.autoUpdate();
+        if (ev.kind == AutoPartEvent::Kind::Began) began.push_back(ev.folder);
+        if (ev.kind == AutoPartEvent::Kind::Ended) ended.push_back(ev.seconds);
+        CHECK(ev.kind != AutoPartEvent::Kind::Failed);
+    };
+
+    for (int i = 0; i < 100; ++i) step(0.0f, false);  // 1 s quiet: nothing
+    CHECK(began.empty());
+    CHECK_FALSE(session.autoInPart());
+
+    // A note at frame 50000 .. 60000 (1 s .. 1.2 s into the stream).
+    const std::uint64_t on = audio.pos.load() + 100;
+    midi.send("Keys", static_cast<std::int64_t>(on), 0x90, 60, 100);
+    midi.send("Keys", static_cast<std::int64_t>(on + 9600), 0x80, 60, 0);
+    for (int i = 0; i < 400 && began.empty(); ++i) step(0.0f, true);
+    REQUIRE(began.size() == 1);
+    CHECK(began[0].parent_path() == dir.path() / "auto");
+    CHECK(session.autoInPart());
+    for (int i = 0; i < 600 && ended.empty(); ++i) step(0.0f, true);
+    REQUIRE(ended.size() == 1);
+    // From about 1 s before the note to 1 s after its end: about 2.2 s.
+    CHECK(ended[0] > 2.1);
+    CHECK(ended[0] < 2.25);
+
+    // A loud audio input starts the second part, without MIDI.
+    for (int i = 0; i < 10; ++i) step(0.0f, false);
+    for (int i = 0; i < 20; ++i) step(0.5f, false);  // 0.2 s loud
+    REQUIRE(began.size() == 2);
+    for (int i = 0; i < 400 && ended.size() < 2; ++i) step(0.0f, false);
+    REQUIRE(ended.size() == 2);
+    CHECK(ended[1] > 2.1);  // 1 s + 0.2 s loud + 1 s
+    CHECK(ended[1] < 2.25);
+    for (int i = 0; i < 50; ++i) step(0.0f, false);
+    CHECK(session.autoPartsDone() == 2);
+
+    const SessionResult res = session.stop();
+    CHECK(res.error.empty());
+    CHECK_FALSE(session.recording());
+    CHECK_FALSE(session.autoMode());
+    // Two part folders, each with the WAV of the audio track and the MIDI file.
+    CHECK(entries(dir.path() / "auto") == 2);
+    WavData w;
+    REQUIRE(readWav(began[0] / "01-Gtr.wav", w, err));
+    CHECK(std::abs(static_cast<double>(w.frames()) / 48000.0 - ended[0]) < 0.001);
+    SmfData d;
+    REQUIRE(readSmf(began[0] / "02-Keys.mid", d, err));
+    const auto n = notes(d);
+    REQUIRE(n.size() == 2);
+    // The note is about 1 s into the part (1920 ticks per second).
+    CHECK(n[0].tick > 1900);
+    CHECK(n[0].tick < 2000);
+    CHECK(n[1].tick - n[0].tick == 384);  // 9600 frames = 0.2 s
+    REQUIRE(readWav(began[1] / "01-Gtr.wav", w, err));
+    // The loud part is in it, 1 s from its start.
+    CHECK(w.samples.at(48000 + 4800) > 0.4f);
+    CHECK(std::abs(w.samples.at(24000)) < 0.001f);
+    SmfData d2;
+    REQUIRE(readSmf(began[1] / "02-Keys.mid", d2, err));
+    CHECK(notes(d2).empty());
+    // The tracks were not changed and no ordinary take folder was made.
+    CHECK(entries(dir.path()) == 1);
+}
+
+TEST_CASE("T-REC-33: auto record: playing right at the start; the part starts there", "[session][T-REC-33]")
+{
+    test::TempDir dir;
+    FakeAudio audio;
+    FakeMidi midi;
+    midi.openPort("Keys");
+    const std::vector<Track> tracks = {audioTrack(1, "Gtr", {0}), midiTrack(2, "Keys", "Keys")};
+    RecordingSettings settings = settingsFor(dir);
+    settings.autoPauseSeconds = 1;
+    RecordingSession session;
+    std::string err;
+    REQUIRE(session.startAuto(tracks, settings, audio, midi, err));
+    midi.send("Keys", 1200, 0x90, 60, 100);  // 200 frames after the first recorded frame (1000)
+    midi.send("Keys", 1300, 0x80, 60, 0);
+    std::filesystem::path folder;
+    double seconds = 0.0;
+    for (int i = 0; i < 600 && seconds == 0.0; ++i) {
+        audio.feed(480, 0.0f);
+        audio.rec.drainForTest();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const AutoPartEvent ev = session.autoUpdate();
+        if (ev.kind == AutoPartEvent::Kind::Began) folder = ev.folder;
+        if (ev.kind == AutoPartEvent::Kind::Ended) seconds = ev.seconds;
+    }
+    REQUIRE_FALSE(folder.empty());
+    REQUIRE(seconds > 0.0);
+    session.stop();
+    // It starts at the first recorded frame, not 1 s before (there was nothing then).
+    WavData w;
+    REQUIRE(readWav(folder / "01-Gtr.wav", w, err));
+    CHECK(std::abs(static_cast<double>(w.frames()) / 48000.0 - seconds) < 0.001);
+    CHECK(seconds > 1.0);   // 300 frames of playing + 1 s
+    CHECK(seconds < 1.05);
+    SmfData d;
+    REQUIRE(readSmf(folder / "02-Keys.mid", d, err));
+    const auto n = notes(d);
+    REQUIRE(n.size() == 2);
+    CHECK(n[0].tick == 8);  // 200 frames = 4.2 ms = 8 ticks
+}

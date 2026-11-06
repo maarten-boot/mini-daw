@@ -12,6 +12,15 @@
 // dropped block is replaced by the same number of frames of silence in the
 // file (the audio thread passes a gap marker to the disk thread), so every
 // take keeps the session timeline even after a loss (SPEC-REC-02, 05b).
+//
+// Parts mode (auto record, P16, SPEC-REC-08): the takes are not written from
+// the start. The disk thread keeps the last few seconds of each take in
+// memory; beginPart() opens a file per take (its path given then) and writes
+// from a frame up to `partBufferSeconds` in the past, so a part can start
+// before the moment it was noticed; endPart() ends it at a frame (cutting off
+// what was already written after it). Parts follow each other; between them
+// nothing is written. The audio thread notes when each take was last louder
+// than `activityLevel`.
 
 #include "minidaw/ring_buffer.hpp"
 #include "minidaw/wav.hpp"
@@ -58,6 +67,19 @@ struct RecorderOptions {
     double headerUpdateSeconds = 1.0;  // how often the WAV header is refreshed
     bool syncToDisk = true;           // force the files to disk at each refresh (SPEC-REC-05a)
     bool startDiskThread = true;      // tests can switch this off to force overflows
+    bool parts = false;               // auto record (P16): files only between beginPart() and endPart()
+    double partBufferSeconds = 4.0;   // parts mode: how far back a part can start
+    float activityLevel = 0.01f;      // parts mode: |sample| from which a take counts as active (-40 dBFS)
+};
+
+// One take of a finished part (parts mode).
+struct PartTakeResult {
+    int part = 0;                     // the id given to beginPart()
+    std::filesystem::path path;
+    std::uint64_t frames = 0;
+    std::uint64_t lostFrames = 0;     // silence put in for audio lost inside the part
+    std::uint64_t clippedSamples = 0;
+    std::string error;                // the file could not be written
 };
 
 struct TakeResult {
@@ -100,6 +122,19 @@ public:
     // allocation, no I/O.
     void process(const float* input, unsigned int frames, unsigned int channels, std::uint64_t blockFrame = 0,
                  const InstrumentSource* instruments = nullptr);
+
+    // Parts mode, GUI thread. `fromFrame` / `atFrame` count from the first
+    // recorded frame (startFrame()); `paths` has one file per take, in the
+    // order given to start(). A part's start is clamped to what is still in
+    // memory. endPart() of a part that has not reached `atFrame` yet ends it
+    // when it does.
+    void beginPart(int id, std::uint64_t fromFrame, const std::vector<std::filesystem::path>& paths);
+    void endPart(std::uint64_t atFrame);
+    // Takes of parts that have ended since the last call.
+    std::vector<PartTakeResult> takeFinishedParts();
+    // Parts mode: the stream frame after the last block in which any take was
+    // louder than activityLevel; 0 if none was.
+    std::uint64_t lastActiveFrame() const;
 
     // Stream frame of the first recorded sample, once the first block arrived.
     std::optional<std::uint64_t> startFrame() const
@@ -150,6 +185,25 @@ private:
         Gap pendingGap;
         bool hasPendingGap = false;
         std::uint64_t silenceWritten = 0;
+        // Parts mode. Audio thread:
+        std::atomic<std::uint64_t> activeUntil{0};  // stream frame after the last loud block
+        // Disk thread:
+        std::uint64_t pos = 0;                      // frames passed (audio and silence)
+        std::vector<float> history;                 // the last frames, circular
+        std::uint64_t historyFrames = 0;            // capacity in frames
+        bool writing = false;
+        int partId = 0;
+        std::uint64_t partStart = 0;
+        std::uint64_t partEnd = UINT64_MAX;         // known once endPart() reached this take
+        std::uint64_t partLost = 0;
+        std::string partError;
+    };
+
+    struct PartCommand {
+        bool begin = false;
+        int id = 0;
+        std::uint64_t frame = 0;
+        std::filesystem::path path;  // begin: this take's file
     };
 
     void diskLoop();
@@ -157,6 +211,11 @@ private:
     std::size_t drainOnce(std::vector<float>& scratch);
     bool writeSilence(Take& t, std::uint64_t frames);
     void setDiskError(const std::string& text);
+    // Parts mode (disk thread, or stop() after it ended).
+    std::size_t drainParts(std::vector<float>& scratch);
+    void passFrames(Take& t, std::size_t index, const float* data, std::uint64_t frames);
+    void startPart(Take& t, const PartCommand& c);
+    void finishPart(Take& t);
 
     std::vector<std::unique_ptr<Take>> takes_;
     unsigned int inputChannels_ = 0;
@@ -175,6 +234,12 @@ private:
     std::thread disk_;
     mutable std::mutex errorMutex_;
     std::string diskError_;
+
+    // Parts mode: commands per take (GUI thread -> disk thread) and results.
+    std::mutex partMutex_;
+    std::vector<std::vector<PartCommand>> incoming_;   // per take, under partMutex_
+    std::vector<std::vector<PartCommand>> queued_;     // per take, disk thread only
+    std::vector<PartTakeResult> finished_;             // under partMutex_
 };
 
 } // namespace minidaw
