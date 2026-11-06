@@ -52,3 +52,5 @@ Continues `Conversation-2026-11-05.md` (Windows test with Arturia instruments, l
 > yes fix S1–S12, S1 first
 - All done (details in `Crosscheck-2026-11-02.md`): S1 MIDI keep point under the lock; S2 minimised + 3.5 s clamp for WAV and MIDI; S3 stream gone; S4 abort; S5 losses; S6 part edges; S7 Spec; S8 channel filter; S9 overdub count; S10 texts + Ctrl+R; S11 tests (T-REC-34); S12 README, CLAUDE.md. Spec v0.33. Linux 159/159, Wine 159/159 ×2; GUI checked.
 - CI of `030535a`: run 42293704257 green; its Windows download in `dist/windows` (before these fixes).
+> pushed it, check the CI run
+- Run 42298415845 (`f0e6cd1`) green; its Windows download is in `dist/windows`, ready for the Windows test of auto record.
