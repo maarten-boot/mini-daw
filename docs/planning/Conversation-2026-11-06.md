@@ -15,3 +15,11 @@ Continues `Conversation-2026-11-05.md` (Windows test with Arturia instruments, l
 ## 3. CI of `4f1a628`
 > pushed it, check the CI run
 - Run 42215581356 green on windows, linux and licence; its Windows download is in `dist/windows`.
+
+## 4. Windows results: mute/solo, quit with the plugin open
+> pushed it, check the CI run
+- Run 42217180759 (`b1aac4b`) green.
+> mute and solo tested and work … reopening and quitting with the plugin open keeps the plugin but i dont expect you want it to appear open after restart? we can press the edit again if needed?
+- Agreed: the editor stays closed after a restart (SPEC-VST-05a unchanged); Edit opens it. Logged in Tests.md. Asked whether the preset was kept.
+> yes the preset was kept
+- T-VST-20 complete apart from resizing the window and another monitor's scaling (not reported); logged.
