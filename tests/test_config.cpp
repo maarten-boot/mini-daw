@@ -268,3 +268,71 @@ TEST_CASE("T-PLAY-10: latency_correction_ms in [recording]", "[config][T-PLAY-10
     REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
     CHECK(loadConfigFile(dir.path / "c.ini").config.recording.latencyCorrectionMs == 25);
 }
+
+TEST_CASE("T-UI-14: window place and size in the config; where it goes at start", "[config][T-UI-14]")
+{
+    // Default: remember on, nothing saved yet.
+    {
+        const auto r = parseConfig(defaultConfigText());
+        CHECK(r.warnings.empty());
+        CHECK(r.config.window.remember);
+        CHECK_FALSE(r.config.window.hasGeometry);
+        CHECK_FALSE(restoredWindowRect(r.config.window, {{0, 0, 1920, 1040}}).has_value());
+    }
+    // Saved and read back, other lines kept.
+    TempDir dir;
+    const fs::path file = dir.path / "config.ini";
+    AppConfig cfg;
+    cfg.fontSize = 20;
+    cfg.window = {true, true, -1500, 40, 1400, 900, true};
+    REQUIRE(saveConfigFile(file, cfg).empty());
+    const auto back = loadConfigFile(file);
+    CHECK(back.warnings.empty());
+    CHECK(back.config.fontSize == 20.0f);
+    const WindowSettings& w = back.config.window;
+    CHECK(w.remember);
+    CHECK(w.hasGeometry);
+    CHECK(w.x == -1500);  // a monitor left of the main one
+    CHECK(w.y == 40);
+    CHECK(w.width == 1400);
+    CHECK(w.height == 900);
+    CHECK(w.maximized);
+    // remember = false: not used at start, and nothing new is needed to read it.
+    {
+        const auto r = parseConfig("[window]\nremember = false\nx = 10\ny = 10\nwidth = 800\nheight = 600\n");
+        CHECK(r.warnings.empty());
+        CHECK_FALSE(r.config.window.remember);
+        CHECK_FALSE(restoredWindowRect(r.config.window, {{0, 0, 1920, 1040}}).has_value());
+    }
+    // Bad or missing values: a warning, default place.
+    {
+        const auto r = parseConfig("[window]\nx = 10\ny = left\nwidth = 800\nheight = 600\nmaximized = maybe\n");
+        CHECK(r.warnings.size() == 2);
+        CHECK_FALSE(r.config.window.hasGeometry);
+        CHECK_FALSE(r.config.window.maximized);
+        CHECK_FALSE(parseConfig("[window]\nx = 10\ny = 10\nwidth = 800\n").config.window.hasGeometry);
+        CHECK(parseConfig("[window]\nwidth = 50\n").warnings.size() == 1);
+    }
+
+    const std::vector<ScreenRect> twoScreens = {{0, 0, 1920, 1040}, {-1600, 0, 1600, 860}};
+    WindowSettings s;
+    s.hasGeometry = true;
+    // On a screen: unchanged.
+    s.x = 100, s.y = 80, s.width = 1600, s.height = 900;
+    CHECK(restoredWindowRect(s, twoScreens) == ScreenRect{100, 80, 1600, 900});
+    // On the left screen, too big for it: smaller and moved inside.
+    s.x = -1500, s.y = 40, s.width = 1700, s.height = 900;
+    CHECK(restoredWindowRect(s, twoScreens) == ScreenRect{-1600, 0, 1600, 860});
+    // Partly off the right edge: moved back.
+    s.x = 1800, s.y = 500, s.width = 800, s.height = 600;
+    CHECK(restoredWindowRect(s, twoScreens) == ScreenRect{1120, 440, 800, 600});
+    // The left screen is gone: default place.
+    s.x = -1500, s.y = 40, s.width = 1400, s.height = 800;
+    CHECK_FALSE(restoredWindowRect(s, {{0, 0, 1920, 1040}}).has_value());
+    // Only a sliver (60 px) on screen: default place.
+    s.x = 1860, s.y = 100;
+    CHECK_FALSE(restoredWindowRect(s, {{0, 0, 1920, 1040}}).has_value());
+    // No screens reported: default place.
+    s.x = 100;
+    CHECK_FALSE(restoredWindowRect(s, {}).has_value());
+}

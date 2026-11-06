@@ -152,6 +152,8 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
     ConfigLoadResult result;
     std::string section;
     int lineNo = 0;
+    int windowSeen = 0;      // bits: x, y, width, height read
+    bool windowBad = false;  // one of them was wrong
     auto warn = [&](const std::string& msg) {
         result.warnings.push_back(std::string(sourceName) + " line " + std::to_string(lineNo) + ": " + msg);
     };
@@ -193,6 +195,32 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.fontSize = static_cast<float>(px);
             } else {
                 warn("font_size '" + value + "' must be a whole number from 12 to 32. Using 16.");
+            }
+        } else if (section == "window" && key == "remember") {
+            if (!parseBool(value, cfg.window.remember)) {
+                cfg.window.remember = true;
+                warn("remember '" + value + "' must be true or false. Using true.");
+            }
+        } else if (section == "window" && key == "maximized") {
+            if (!parseBool(value, cfg.window.maximized)) {
+                cfg.window.maximized = false;
+                warn("maximized '" + value + "' must be true or false. Using false.");
+            }
+        } else if (section == "window" && (key == "x" || key == "y" || key == "width" || key == "height")) {
+            char* end = nullptr;
+            const long v = std::strtol(value.c_str(), &end, 10);
+            const bool size = key == "width" || key == "height";
+            const long lo = size ? 100 : -32000;
+            const long hi = 32000;
+            if (value.empty() || end == value.c_str() || *end != '\0' || v < lo || v > hi) {
+                warn(key + " '" + value + "' must be a whole number from " + std::to_string(lo) + " to " +
+                     std::to_string(hi) + ". The window gets its default place.");
+                windowBad = true;
+            } else {
+                (key == "x" ? cfg.window.x : key == "y" ? cfg.window.y : key == "width" ? cfg.window.width
+                                                                                      : cfg.window.height) =
+                    static_cast<int>(v);
+                windowSeen |= key == "x" ? 1 : key == "y" ? 2 : key == "width" ? 4 : 8;
             }
         } else if (section == "audio" && key == "input_device") {
             cfg.audio.inputDevice = value.empty() ? kDefaultDevice : value;
@@ -244,7 +272,28 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
             warn("unknown setting '" + key + "' in section [" + section + "]");
         }
     }
+    result.config.window.hasGeometry = windowSeen == 15 && !windowBad;
     return result;
+}
+
+std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const std::vector<ScreenRect>& workAreas)
+{
+    if (!saved.remember || !saved.hasGeometry || saved.width <= 0 || saved.height <= 0) return std::nullopt;
+    const ScreenRect* best = nullptr;
+    long long bestArea = 0;
+    for (const ScreenRect& a : workAreas) {
+        const long long w = std::min<long long>(saved.x + saved.width, a.x + a.width) - std::max(saved.x, a.x);
+        const long long h = std::min<long long>(saved.y + saved.height, a.y + a.height) - std::max(saved.y, a.y);
+        if (w >= 100 && h >= 50 && w * h > bestArea) {
+            best = &a;
+            bestArea = w * h;
+        }
+    }
+    if (best == nullptr) return std::nullopt;
+    ScreenRect r{saved.x, saved.y, std::min(saved.width, best->width), std::min(saved.height, best->height)};
+    r.x = std::clamp(r.x, best->x, best->x + best->width - r.width);
+    r.y = std::clamp(r.y, best->y, best->y + best->height - r.height);
+    return r;
 }
 
 std::string setConfigValue(std::string_view text, std::string_view section, std::string_view key,
@@ -313,6 +362,11 @@ std::string defaultConfigText()
            "min_contrast = AA\n"
            "; Text size in pixels, 12 to 32.\n"
            "font_size = 16\n"
+           "\n"
+           "[window]\n"
+           "; Open the window at the size and place it had when mini-daw closed\n"
+           "; (x, y, width, height and maximized are written by mini-daw).\n"
+           "remember = true\n"
            "\n"
            "[audio]\n"
            "; Device names as shown in the program, in quotes,\n"
@@ -425,6 +479,14 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     };
     text = setConfigValue(text, "ui", "min_contrast", config.contrast.toString());
     text = setConfigValue(text, "ui", "font_size", std::to_string(static_cast<int>(config.fontSize)));
+    text = setConfigValue(text, "window", "remember", config.window.remember ? "true" : "false");
+    if (config.window.hasGeometry) {
+        text = setConfigValue(text, "window", "x", std::to_string(config.window.x));
+        text = setConfigValue(text, "window", "y", std::to_string(config.window.y));
+        text = setConfigValue(text, "window", "width", std::to_string(config.window.width));
+        text = setConfigValue(text, "window", "height", std::to_string(config.window.height));
+        text = setConfigValue(text, "window", "maximized", config.window.maximized ? "true" : "false");
+    }
     text = setConfigValue(text, "audio", "input_device", deviceValue(config.audio.inputDevice));
     text = setConfigValue(text, "audio", "output_device", deviceValue(config.audio.outputDevice));
     text = setConfigValue(text, "audio", "sample_rate", std::to_string(config.audio.sampleRate));

@@ -2784,6 +2784,7 @@ int runGui(AppState& app)
         return 1;
     }
     minidaw::app::rendererWindowHints();
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // shown once it has its size and place (SPEC-UI-09)
 
     const std::string title = std::string(minidaw::kProductName) + " " + minidaw::kVersion;
     GLFWwindow* window = glfwCreateWindow(1280, 760, title.c_str(), nullptr, nullptr);
@@ -2822,6 +2823,29 @@ int runGui(AppState& app)
     app.rendererName = minidaw::app::rendererName();
     app.log.info("Graphics: " + app.rendererName);
 
+    // The size and place it had when mini-daw closed (SPEC-UI-09), if that is
+    // still on a screen. Work areas without the window frame: the saved
+    // position is the inside of the window, so its title bar stays on screen.
+    const std::optional<minidaw::ScreenRect> restored = [&]() -> std::optional<minidaw::ScreenRect> {
+        int left = 0, top = 0, right = 0, bottom = 0;
+        glfwGetWindowFrameSize(window, &left, &top, &right, &bottom);
+        std::vector<minidaw::ScreenRect> areas;
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        for (int i = 0; i < count; ++i) {
+            minidaw::ScreenRect a;
+            glfwGetMonitorWorkarea(monitors[i], &a.x, &a.y, &a.width, &a.height);
+            areas.push_back({a.x + left, a.y + top, a.width - left - right, a.height - top - bottom});
+        }
+        return minidaw::restoredWindowRect(app.config.window, areas);
+    }();
+    if (restored) {
+        glfwSetWindowPos(window, restored->x, restored->y);
+        glfwSetWindowSize(window, restored->width, restored->height);
+    } else if (app.config.window.remember && app.config.window.hasGeometry) {
+        app.log.info("The saved window place is not on any screen now: default place used");
+    }
+
     // Display scaling (crosscheck #8, O7). GLFW makes the process DPI aware, so
     // sizes are real pixels: text and spacing follow the window's content scale
     // (font_size stays the size at 100 %), and the window gets the scaled size,
@@ -2839,14 +2863,35 @@ int runGui(AppState& app)
             w = std::min(w, ww * 9 / 10);
             h = std::min(h, wh * 9 / 10);
         }
-        glfwSetWindowSize(window, w, h);
-        char buf[96];
-        std::snprintf(buf, sizeof buf, "Display scale %.0f %%, window %d x %d", scale * 100.0, w, h);
+        if (restored) {
+            w = restored->width;
+            h = restored->height;
+        } else {
+            glfwSetWindowSize(window, w, h);
+        }
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "Display scale %.0f %%, window %d x %d%s", scale * 100.0, w, h,
+                      restored ? " (as last time)" : "");
         app.log.info(buf);
         // Moved to a monitor with other scaling: the text follows.
         glfwSetWindowContentScaleCallback(window, [](GLFWwindow*, float x, float) {
             ImGui::GetStyle().FontScaleDpi = std::clamp(x, 1.0f, 4.0f);
         });
+    }
+
+    glfwShowWindow(window);
+    if (restored && app.config.window.maximized) glfwMaximizeWindow(window);
+    // The normal (not maximised, not minimised) place, kept up to date for saving at the end.
+    minidaw::ScreenRect normalPlace{};
+    const auto noteNormalPlace = [&]() {
+        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) || glfwGetWindowAttrib(window, GLFW_MAXIMIZED)) return;
+        glfwGetWindowPos(window, &normalPlace.x, &normalPlace.y);
+        glfwGetWindowSize(window, &normalPlace.width, &normalPlace.height);
+    };
+    if (restored) {
+        normalPlace = *restored;
+    } else {
+        noteNormalPlace();
     }
 
     setContrast(app, app.config.contrast, false);
@@ -2870,6 +2915,7 @@ int runGui(AppState& app)
     bool quit = false;
     while (!quit && !glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
             glfwWaitEventsTimeout(0.1);  // minimised: don't render
@@ -2942,6 +2988,16 @@ int runGui(AppState& app)
         minidaw::app::rendererRender(window, clear);
     }
 
+    // Remember the window for the next start (SPEC-UI-09).
+    if (app.config.window.remember && normalPlace.width >= 100 && normalPlace.height >= 100) {
+        app.config.window.hasGeometry = true;
+        app.config.window.x = normalPlace.x;
+        app.config.window.y = normalPlace.y;
+        app.config.window.width = normalPlace.width;
+        app.config.window.height = normalPlace.height;
+        app.config.window.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0;
+        saveConfig(app);
+    }
     if (app.session.recording()) app.session.stop();  // finish the files before the stream closes
     stopPlayback(app);
     refreshInstrumentStates(app);

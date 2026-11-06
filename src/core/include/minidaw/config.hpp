@@ -21,6 +21,14 @@
 //   midi_timing = ppq         ; ppq (960 PPQ, 120 BPM) or smpte (1 ms ticks)
 //   latency_correction_ms = 0 ; overdub: shift new audio takes earlier by this much more
 //
+//   [window]
+//   remember = true           ; reopen at the size and place it had when closed
+//   x = 100                   ; written by mini-daw: the normal (not maximised)
+//   y = 80                    ;   position and size in screen pixels
+//   width = 1600
+//   height = 950
+//   maximized = false
+//
 //   [project]
 //   last = "D:\Music\mini-daw\projects\Jam"   ; reopened at start; empty = none
 //   recent1 = "..." ... recent8                 ; File > Recent projects
@@ -35,6 +43,7 @@
 #include "minidaw/theme.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,9 +105,37 @@ struct InstrumentSettings {
     friend bool operator==(const InstrumentSettings&, const InstrumentSettings&) = default;
 };
 
+// Main window place and size (SPEC-UI-09), written when mini-daw closes.
+struct WindowSettings {
+    bool remember = true;
+    bool hasGeometry = false;  // x, y, width and height were all read
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool maximized = false;
+};
+
+// A rectangle in screen pixels (a window, or a monitor's work area).
+struct ScreenRect {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    friend bool operator==(const ScreenRect&, const ScreenRect&) = default;
+};
+
+// Where the main window goes at start (SPEC-UI-09): the saved rectangle, made
+// to fit the work area it overlaps most (smaller if needed, moved inside).
+// Nothing (use the default place) if remembering is off, nothing was saved,
+// or less than 100 x 50 pixels of it would be on any screen (a monitor that
+// is gone).
+std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const std::vector<ScreenRect>& workAreas);
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
+    WindowSettings window;
     AudioSettings audio;
     RecordingSettings recording;
     ProjectSettings project;
