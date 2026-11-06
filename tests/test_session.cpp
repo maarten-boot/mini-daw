@@ -12,10 +12,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -488,7 +490,7 @@ TEST_CASE("T-VST-28: an armed instrument track also records its sound into its l
 }
 
 
-TEST_CASE("T-REC-33: auto record: a part per playing, in its own folder, tracks unchanged", "[session][T-REC-33]")
+TEST_CASE("T-REC-34: auto record: a part per playing, in its own folder, tracks unchanged", "[session][T-REC-34]")
 {
     test::TempDir dir;
     FakeAudio audio;
@@ -570,11 +572,12 @@ TEST_CASE("T-REC-33: auto record: a part per playing, in its own folder, tracks 
     SmfData d2;
     REQUIRE(readSmf(began[1] / "02-Keys.mid", d2, err));
     CHECK(notes(d2).empty());
-    // The tracks were not changed and no ordinary take folder was made.
+    // Only the auto folder: no ordinary take folder was made (the track list
+    // given to the session is not changed by it; the GUI does not use the result).
     CHECK(entries(dir.path()) == 1);
 }
 
-TEST_CASE("T-REC-33: auto record: playing right at the start; the part starts there", "[session][T-REC-33]")
+TEST_CASE("T-REC-34: auto record: playing right at the start; the part starts there", "[session][T-REC-34]")
 {
     test::TempDir dir;
     FakeAudio audio;
@@ -612,4 +615,161 @@ TEST_CASE("T-REC-33: auto record: playing right at the start; the part starts th
     const auto n = notes(d);
     REQUIRE(n.size() == 2);
     CHECK(n[0].tick == 8);  // 200 frames = 4.2 ms = 8 ticks
+}
+
+namespace {
+// Auto record with the stand-ins: one block per step, the disk catches up, the GUI looks.
+struct AutoRig {
+    test::TempDir dir;
+    FakeAudio audio;
+    FakeMidi midi;
+    RecordingSession session;
+    std::vector<AutoPartEvent> events;
+    std::string err;
+
+    bool start(std::vector<Track> tracks, int pause = 1)
+    {
+        midi.openPort("Keys");
+        RecordingSettings s = settingsFor(dir);
+        s.autoPauseSeconds = pause;
+        return session.startAuto(tracks, s, audio, midi, err);
+    }
+    void step(float level = 0.0f, bool look = true, bool wait = true)
+    {
+        audio.feed(480, level);
+        audio.rec.drainForTest();
+        if (wait) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (!look) return;
+        const AutoPartEvent ev = session.autoUpdate();
+        if (ev.kind != AutoPartEvent::Kind::None) events.push_back(ev);
+    }
+    int count(AutoPartEvent::Kind k) const
+    {
+        return static_cast<int>(std::count_if(events.begin(), events.end(),
+                                              [k](const AutoPartEvent& e) { return e.kind == k; }));
+    }
+    // Steps until an event of kind `k` came (at most n steps).
+    bool until(AutoPartEvent::Kind k, int n)
+    {
+        const int before = count(k);
+        for (int i = 0; i < n; ++i) {
+            step();
+            if (count(k) > before) return true;
+        }
+        return false;
+    }
+    void send(std::uint64_t frame, std::uint8_t a, std::uint8_t b, std::uint8_t c)
+    {
+        midi.send("Keys", static_cast<std::int64_t>(frame), a, b, c);
+    }
+};
+} // namespace
+
+TEST_CASE("T-REC-34: MIDI a part still needs is never dropped (S1)", "[session][T-REC-34]")
+{
+    // The GUI already moved on (keep from 50000), but the open part starts at
+    // 20000 and an ended part waiting to be written at 10000.
+    CHECK(midiKeepFrom(50000, std::nullopt, {}) == 50000);
+    CHECK(midiKeepFrom(50000, 20000, {}) == 20000);
+    CHECK(midiKeepFrom(50000, 20000, {10000, 30000}) == 10000);
+    CHECK(midiKeepFrom(5000, 20000, {10000}) == 5000);
+}
+
+TEST_CASE("T-REC-34: playing noticed late: WAV and MIDI start at the same, reported frame (S2)",
+          "[session][T-REC-34]")
+{
+    AutoRig r;
+    REQUIRE(r.start({audioTrack(1, "Gtr", {0}), midiTrack(2, "Keys", "Keys")}));
+    for (int i = 0; i < 300; ++i) r.step(0.0f, true, false);  // 3 s, so the part is not limited by the switch-on
+    // A note, then 6 s in which the GUI does not look (window busy).
+    const std::uint64_t on = r.audio.pos.load() + 100;
+    r.send(on, 0x90, 60, 100);
+    r.send(on + 4800 * 50, 0x80, 60, 0);  // released 5 s later
+    for (int i = 0; i < 600; ++i) r.step(0.0f, false, i % 50 == 0);
+    REQUIRE(r.until(AutoPartEvent::Kind::Began, 10));
+    const AutoPartEvent began = r.events.back();
+    // Wanted: 1 s before the last look before the note (7 s before now); kept: 3.5 s.
+    CHECK(began.cutSeconds > 3.4);
+    CHECK(began.cutSeconds < 3.6);
+    REQUIRE(r.until(AutoPartEvent::Kind::Ended, 400));
+    const double seconds = r.events.back().seconds;
+    r.session.stop();
+    WavData w;
+    REQUIRE(readWav(began.folder / "01-Gtr.wav", w, r.err));
+    CHECK(std::abs(static_cast<double>(w.frames()) / 48000.0 - seconds) < 0.001);
+    SmfData d;
+    REQUIRE(readSmf(began.folder / "02-Keys.mid", d, r.err));
+    // The same length, so both files start at the same frame.
+    CHECK(std::abs(static_cast<double>(endTick(d)) / 1920.0 - seconds) < 0.002);
+    const auto n = notes(d);
+    REQUIRE(n.size() == 1);  // the note-off; the note-on was before the part
+    CHECK(n[0].bytes[0] == 0x80);
+}
+
+TEST_CASE("T-REC-34: the stream stops during a part: the part keeps what was recorded (S3)", "[session][T-REC-34]")
+{
+    AutoRig r;
+    REQUIRE(r.start({audioTrack(1, "Gtr", {0}), midiTrack(2, "Keys", "Keys")}));
+    r.step();
+    r.send(r.audio.pos.load() + 10, 0x90, 60, 100);
+    REQUIRE(r.until(AutoPartEvent::Kind::Began, 200));
+    for (int i = 0; i < 50; ++i) r.step();
+    r.audio.running = false;  // the device is gone
+    const SessionResult res = r.session.stop();
+    CHECK(res.error.find("stream stopped") != std::string::npos);
+    WavData w;
+    REQUIRE(readWav(r.events.back().folder / "01-Gtr.wav", w, r.err));
+    // From the switch-on (the part began at once) to where the audio stopped: 50 blocks and more.
+    CHECK(w.frames() >= 50 * 480);
+}
+
+TEST_CASE("T-REC-34: no part folder can be made: one error per playing, not per frame (S4)", "[session][T-REC-34]")
+{
+    AutoRig r;
+    { std::ofstream(r.dir / "auto") << "a file where the folder should be"; }
+    REQUIRE(r.start({midiTrack(2, "Keys", "Keys")}));
+    r.step();
+    r.send(r.audio.pos.load() + 10, 0x90, 60, 100);
+    r.send(r.audio.pos.load() + 20, 0x80, 60, 0);
+    for (int i = 0; i < 100; ++i) r.step();
+    CHECK(r.count(AutoPartEvent::Kind::Failed) == 1);
+    CHECK(r.count(AutoPartEvent::Kind::Began) == 0);
+    r.send(r.audio.pos.load() + 10, 0x90, 62, 100);
+    r.send(r.audio.pos.load() + 20, 0x80, 62, 0);
+    for (int i = 0; i < 100; ++i) r.step();
+    CHECK(r.count(AutoPartEvent::Kind::Failed) == 2);
+    r.session.stop();
+}
+
+TEST_CASE("T-REC-34: only the track's channel starts a part; held notes, All Notes Off, late note-off, unplug (S6, S8)",
+          "[session][T-REC-34]")
+{
+    AutoRig r;
+    REQUIRE(r.start({midiTrack(2, "Ch 2", "Keys", 2)}));  // records MIDI channel 2 only
+    r.step();
+    r.send(r.audio.pos.load() + 10, 0x90, 60, 100);  // channel 1: not this track's
+    r.send(r.audio.pos.load() + 20, 0x80, 60, 0);
+    for (int i = 0; i < 150; ++i) r.step();
+    CHECK(r.events.empty());
+
+    // Channel 2: a part; the note is held for 2 s with a 1 s pause: the part stays open.
+    r.send(r.audio.pos.load() + 10, 0x91, 60, 100);
+    REQUIRE(r.until(AutoPartEvent::Kind::Began, 200));
+    for (int i = 0; i < 200; ++i) r.step();
+    CHECK(r.session.autoInPart());
+    // All Notes Off releases it: the part ends a pause later.
+    r.send(r.audio.pos.load() + 10, 0xB1, 123, 0);
+    REQUIRE(r.until(AutoPartEvent::Kind::Ended, 300));
+    // The late note-off of that note starts nothing.
+    r.send(r.audio.pos.load() + 10, 0x81, 60, 0);
+    for (int i = 0; i < 150; ++i) r.step();
+    CHECK(r.count(AutoPartEvent::Kind::Began) == 1);
+
+    // A note held when the keyboard is unplugged is not held any more.
+    r.send(r.audio.pos.load() + 10, 0x91, 64, 100);
+    REQUIRE(r.until(AutoPartEvent::Kind::Began, 200));
+    r.midi.unplug("Keys");
+    REQUIRE(r.until(AutoPartEvent::Kind::Ended, 300));
+    CHECK(r.events.back().seconds < 2.5);  // 1 s + about 0.2 s + 1 s, not 60 s
+    r.session.stop();
 }

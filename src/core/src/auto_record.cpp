@@ -24,14 +24,15 @@ void AutoPartTracker::reset(std::uint64_t now, std::uint64_t lastActivity)
 }
 
 AutoPartTracker::Action AutoPartTracker::update(std::uint64_t now, std::uint64_t lastActivity, bool held,
-                                                std::uint64_t earliestNew)
+                                                std::uint64_t earliestNew, std::uint64_t lastStart)
 {
     Action a;
+    const std::uint64_t start = lastStart == kSameAsActivity ? lastActivity : lastStart;
     if (!inPart_) {
-        if (lastActivity > seen_) {
+        if (start > seen_) {
             // It happened after the last look (MIDI can arrive a little late, so
             // from the earlier of the two), minus the preroll.
-            const std::uint64_t noticed = std::min({lastActivity, lastPoll_, earliestNew});
+            const std::uint64_t noticed = std::min({start, lastPoll_, earliestNew});
             start_ = noticed > timing_.preroll ? noticed - timing_.preroll : 0;
             inPart_ = true;
             a = {Kind::Begin, start_};
@@ -46,10 +47,16 @@ AutoPartTracker::Action AutoPartTracker::update(std::uint64_t now, std::uint64_t
         std::uint64_t end = std::min(quietSince + timing_.tail, now);
         end = std::max(end, start_);
         inPart_ = false;
-        seen_ = std::max(seen_, lastActivity);
+        seen_ = std::max(seen_, start);
         a = {Kind::End, end};
     }
     return a;
+}
+
+void AutoPartTracker::abort(std::uint64_t lastStart)
+{
+    inPart_ = false;
+    seen_ = std::max(seen_, lastStart);
 }
 
 AutoPartTracker::Action AutoPartTracker::finish(std::uint64_t now)

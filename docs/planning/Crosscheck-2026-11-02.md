@@ -340,3 +340,50 @@ Scope: Spec v0.28, Plan, Tests, README, THIRD_PARTY.md, code at commit `0d1fbd9`
 | R12 | Tests as listed above; T-VST-29 also: 1500 events in one block (held back, note still sounds and ends), the tail limit. |
 
 Spec v0.29. Linux 137/137, Wine 137/137 (2 runs).
+
+# Crosscheck #11 — 2026-11-06 (after P16 auto record, window place, linked track at instrument choice)
+
+Scope: Spec v0.32, Plan, Tests, README, CLAUDE.md, code at commit `030535a` (changes since `4be4d48`: `3cf8f21`, `4f1a628`, `d3ffcbf`, `030535a`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Every reviewer finding was checked against the code by Claude (S1–S4 confirmed at the lines named; S7 judged a known limit).
+
+| Area | Verdict |
+|------|---------|
+| Audio thread | ✅ `Recorder::process`: only a peak scan and a relaxed atomic store added; no lock, allocation or I/O |
+| REC-08 recorder parts mode | ✅ command order, history ring, cut-off at the end, stop with open/queued parts; ⚠️ loss in the preroll not counted → **S5** |
+| REC-08 session / tracker | ❌ MIDI of an ended part can be pruned before it is written → **S1**; ❌ minimised window: no parts, start clamped silently, WAV and MIDI misaligned → **S2**; ⚠️ stream lost in a part → empty part **S3**; folder error retried every frame **S4**; boundary MIDI **S6**; channel filter **S8** |
+| UI-09 / UI-10 / VST-03a / PLAY-05a | ✅ window place, hidden start, fixed area, linked track; ⚠️ overdub count includes MIDI tracks that play nothing → **S9** |
+| Spec ↔ code ↔ docs | ⚠️ **S10** (texts), **S12** (README, CLAUDE.md) |
+| Spec ↔ tests | ❌ T-REC-33 used twice (the new auto record tests and an existing port test; my first rename from T-REC-32 also collided) → **S11**; ⚠️ several parts-mode paths untested → **S11** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| S1 | high | The MIDI thread loads `keepFrom_` after it took the job list (`runMidiPartJobs`). If the GUI ends a part in between (a once-a-second refresh of the open part can take tens of ms), it sets `keepFrom_` to now − 5 s and the MIDI thread drops the events of the part it has not written yet: the part's `.mid` holds only its last seconds, without a report. | Read `keepFrom_` together with the job list under `partMutex_`, and keep from the earliest of it, the open part's start and every pending job's start. Test: a long part, the GUI ends it while a refresh runs. |
+| S2 | high | While the window is minimised the main loop skips `updateAuto` (and on Windows a window move/resize blocks the loop): playing then starts no part until the window is back; the part then asks to start where the playing began, the recorder can only go 4 s back (silently), and the MIDI part starts at the unclamped frame, so the part's WAV and MIDI have different starts. | Run `updateAuto` also while minimised. The session clamps the part start to what the recorder still has (now − 3.5 s) before starting audio and MIDI parts, so both start at the same frame, and logs that the start was cut. Spec: the 4 s memory. |
+| S3 | medium | If the audio stream is gone when auto record is stopped during a part, the part is ended at its own start: everything recorded in it is cut off without an error. | End it where the audio stopped (the recorder's last frame; for MIDI only the last message + 1 s) and report "the audio stream stopped during auto record". Test. |
+| S4 | medium | When the part folder cannot be made (disk full, read-only), the tracker forgets the part but not the playing, so the next frame tries again: an error and a log line 60 times a second. | `AutoPartTracker::abort(lastActivity)`: the playing is accounted for; the next playing tries again. Test. |
+| S5 | medium | Loss reporting in parts: audio lost in the 1 s before a part (in memory as silence) is not counted; lost frames that were cut off at the end are counted; after stopping, the lost frames and lost MIDI messages are not shown (only `res.error`), and MIDI loss is never shown in auto mode. | Mark lost frames in the memory and count them when a part takes them; count lost frames only up to the part's end; show lost frames and lost MIDI messages while auto record runs and in the summary at stop (and the log). |
+| S6 | low | Part edges: at stop the MIDI part can be written before the last messages are collected; a note-off or pedal-up that comes after a part ended (a note held past the 60 s limit) starts a new part of its own; All Notes Off / All Sound Off (CC 123/120) and a disconnected keyboard leave notes "held" (part kept open up to 60 s). | At stop: collect the last MIDI before writing the part. Only messages that start sound (note-on, controllers except pedal-up, pitch bend, program, pressure) and loud audio start a part; note-offs and pedal-up only keep it going. CC 120/123 and a disconnect release the notes of that channel/port. Tests (session with stand-ins). |
+| S7 | low | Blocks skipped because the input has the wrong channel count (device change while recording) are not on the recorder's timeline, so later part edges shift by them. Already so for normal takes (the block is skipped for all takes, by design). | Known limit, written in the Spec (no code change). |
+| S8 | low | Any channel of an armed track's port starts or holds a part, also channels the track does not record (its MIDI channel filter). | Only the channels the armed tracks record count. Test. |
+| S9 | low | The overdub hint counts MIDI tracks with a take but without an instrument or MIDI output (they play nothing). | Count them only with an instrument or a MIDI output; T-VST-31. |
+| S10 | docs | SPEC-PLAY-05a says the overdub line shows "while stopped" (it shows whenever not recording); SPEC-REC-08 does not mention the 4 s memory, that the transport area scrolls with 5 parts, or Ctrl+R during auto record (does nothing, silently). | Spec texts; Ctrl+R during auto record shows "Auto record is on: stop it first." |
+| S11 | tests | T-REC-33 was used twice (fixed in the working tree: the auto record tests are T-REC-34, not yet committed). Untested: MIDI activity details (velocity 0, sustain, a second note-on), gaps in parts mode, a part file that cannot be opened, stop with a queued begin, parts mode with the real disk thread; S1–S4. The session test's "tracks unchanged" comment says more than it checks. | Commit the rename; tests for the listed paths (S1–S4, S6, S8 with them); fix the comment. |
+| S12 | docs | README does not mention that the window reopens at its last size and place (`[window] remember`); CLAUDE.md does not say that the Xvfb displays are gone after a while (a Wine test run failed on it). | README sentence; CLAUDE.md note "check `pgrep -a Xvfb` and start the display again". |
+
+## Actions taken (user: "yes fix S1–S12, S1 first")
+| # | Done |
+|---|------|
+| S1 | The MIDI thread takes the job list and the keep point together under `partMutex_`, and keeps from the earliest of it, the open part's start and every pending job's start (`midiKeepFrom`, tested). |
+| S2 | Auto record is updated while the window is minimised too. A part never starts further back than 3.5 s (the recorder keeps 4 s): the same start for the WAV and the MIDI files; the cut is logged and shown. Test: playing noticed 7 s late → cut 3.5 s, WAV and MIDI the same length. |
+| S3 | Stopped with the stream gone: the open part ends where the audio stopped (recorder start + frames captured; MIDI only: last message + 1 s), with the error "The audio stream stopped during auto record …". Tested. |
+| S4 | `AutoPartTracker::abort`: a part that could not get a folder is forgotten with the playing that asked for it; the next playing tries again. Tested (tracker and session: one error per playing). |
+| S5 | The recorder marks lost frames in its memory and counts them when a part takes them; loss ranges per part, counted only up to the part's end. The transport shows lost audio frames and MIDI messages while auto record runs; the summary and the log at stop list them (and keyboard disconnects). Recorder test: 100 lost in the remembered part, 0 for a loss cut off at the end. |
+| S6 | Stop: the MIDI thread is stopped and the last messages collected before the open part is ended. Only sound-starting messages (and loud audio) start a part; note-offs and pedal-up keep it going. CC 120/123 release a channel's notes, CC 121 lifts the pedal, a disconnect releases the port's notes. Tested. |
+| S7 | Written in SPEC-REC-08 as a known limit. |
+| S8 | Only the MIDI channels the armed tracks record count (a channel mask per port). Tested. |
+| S9 | `overdubTrackCount`: a MIDI take counts only with an instrument or a MIDI output. T-VST-31. |
+| S10 | SPEC-PLAY-05a "while not recording"; SPEC-REC-08: memory, scrolling, losses, Ctrl+R; Ctrl+R during auto record says "auto record is on. Stop it first" (cleared at stop). |
+| S11 | Auto record tests renamed to T-REC-34 (T-REC-32 and -33 were taken). New tests: S1–S6, S8 as above; recorder: a part file that cannot be made, a part queued just before Stop, the real disk thread (sample-exact). The session test's comment now says what it checks. |
+| S12 | README: the window reopens where it was (`[window] remember`). CLAUDE.md: the Xvfb displays and `/dev/shm` disappear; check before GUI or Wine runs. |
+
+Spec v0.33. Linux 159/159, Wine 159/159 (2 runs), the T-REC-34 cases 3 more times on Linux; GUI on Xvfb with the test synth and vkeys (part saved, Ctrl+R message, summary).

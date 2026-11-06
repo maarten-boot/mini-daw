@@ -318,8 +318,8 @@ TEST_CASE("T-VST-25: instrument takes record the instrument's stereo sound in st
     }
 }
 
-TEST_CASE("T-REC-33: parts mode: a part starts in the past, ends exactly, nothing between parts",
-          "[recorder][T-REC-33]")
+TEST_CASE("T-REC-34: parts mode: a part starts in the past, ends exactly, nothing between parts",
+          "[recorder][T-REC-34]")
 {
     test::TempDir dir;
     constexpr unsigned int rate = 1000;  // 1 frame = 1 ms, easy numbers
@@ -397,7 +397,7 @@ TEST_CASE("T-REC-33: parts mode: a part starts in the past, ends exactly, nothin
     check(dir / "p3.wav", 5000, 2500);
 }
 
-TEST_CASE("T-REC-33: parts mode notes when a take was loud", "[recorder][T-REC-33]")
+TEST_CASE("T-REC-34: parts mode notes when a take was loud", "[recorder][T-REC-34]")
 {
     test::TempDir dir;
     Recorder rec;
@@ -416,4 +416,136 @@ TEST_CASE("T-REC-33: parts mode notes when a take was loud", "[recorder][T-REC-3
     rec.process(quiet.data(), 256, 1, 1512);
     CHECK(rec.lastActiveFrame() == 1512);  // the end of the loud block
     rec.stop();
+}
+
+namespace {
+struct PartsRig {
+    test::TempDir dir;
+    Recorder rec;
+    std::uint64_t fed = 0;
+    std::string err;
+    explicit PartsRig(double ringSeconds = 4.0)
+    {
+        RecorderOptions opt;
+        opt.parts = true;
+        opt.partBufferSeconds = 2.0;
+        opt.ringSeconds = ringSeconds;
+        opt.startDiskThread = false;
+        opt.syncToDisk = false;
+        REQUIRE(rec.start({{dir / "unused.wav", {1}}}, 1000, 2, err, opt));
+    }
+    void feed(unsigned int blocks)
+    {
+        std::vector<float> in(200);
+        for (unsigned int b = 0; b < blocks; ++b) {
+            for (unsigned int f = 0; f < 100; ++f) in[f * 2 + 1] = marker(fed + f, 0);
+            rec.process(in.data(), 100, 2, fed);
+            fed += 100;
+        }
+    }
+};
+} // namespace
+
+TEST_CASE("T-REC-34: parts mode: audio lost before and inside a part is counted, cut-off loss is not (S5)",
+          "[recorder][T-REC-34]")
+{
+    PartsRig r(0.25);  // the ring holds 250 frames: the third block without a drain is lost
+    r.feed(3);         // 0..299: 200..299 lost
+    r.rec.drainForTest();
+    r.feed(1);  // 300..399 (announces the loss)
+    r.rec.drainForTest();
+    r.rec.beginPart(1, 100, {r.dir / "p1.wav"});  // 100..: the loss is in the remembered part
+    r.feed(1);
+    r.rec.endPart(450);
+    r.rec.drainForTest();
+    auto done = r.rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].frames == 350);
+    CHECK(done[0].lostFrames == 100);
+
+    // Part 2 ends at 650; a loss at 700..799 was already in the file: cut off, not counted.
+    r.rec.beginPart(2, 500, {r.dir / "p2.wav"});
+    r.feed(3);  // 500..799: 700..799 lost
+    r.rec.drainForTest();
+    r.feed(1);  // 800..899
+    r.rec.drainForTest();
+    r.rec.endPart(650);
+    r.rec.drainForTest();
+    done = r.rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].frames == 150);
+    CHECK(done[0].lostFrames == 0);
+    r.rec.stop();
+}
+
+TEST_CASE("T-REC-34: parts mode: a part file that cannot be made; stop with a part still queued",
+          "[recorder][T-REC-34]")
+{
+    PartsRig r;
+    r.feed(10);
+    r.rec.drainForTest();
+    r.rec.beginPart(1, 500, {r.dir / "no-such-folder" / "p1.wav"});
+    r.rec.drainForTest();
+    r.feed(2);
+    r.rec.endPart(1100);
+    r.rec.drainForTest();
+    auto done = r.rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK_FALSE(done[0].error.empty());
+    CHECK(done[0].frames == 0);
+    CHECK_FALSE(r.rec.diskError().empty());
+
+    // A part asked for just before Stop is still written, from memory.
+    r.rec.beginPart(2, 1000, {r.dir / "p2.wav"});
+    r.rec.stop();
+    done = r.rec.takeFinishedParts();
+    REQUIRE(done.size() == 1);
+    CHECK(done[0].frames == 200);
+    WavData w;
+    REQUIRE(readWav(r.dir / "p2.wav", w, r.err));
+    CHECK(toStep(w.samples.at(0)) == toStep(marker(1000, 0)));
+}
+
+TEST_CASE("T-REC-34: parts mode with the disk thread running", "[recorder][T-REC-34]")
+{
+    test::TempDir dir;
+    constexpr unsigned int rate = 48000;
+    constexpr unsigned int block = 480;
+    Recorder rec;
+    std::string err;
+    RecorderOptions opt;
+    opt.parts = true;
+    opt.syncToDisk = false;
+    opt.headerUpdateSeconds = 0.05;
+    REQUIRE(rec.start({{dir / "unused.wav", {0}}}, rate, 1, err, opt));
+    std::vector<float> in(block);
+    std::uint64_t fed = 0;
+    auto feed = [&](int blocks) {
+        for (int b = 0; b < blocks; ++b) {
+            for (unsigned int f = 0; f < block; ++f) in[f] = marker(fed + f, 0);
+            rec.process(in.data(), block, 1, fed);
+            fed += block;
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
+    };
+    feed(100);                                  // 0 .. 48000
+    rec.beginPart(1, 30000, {dir / "a.wav"});   // from memory
+    feed(100);                                  // .. 96000
+    rec.endPart(70000);
+    feed(50);
+    rec.beginPart(2, 110000, {dir / "b.wav"});
+    feed(20);
+    rec.stop();  // part 2 open: ends with the last frame (129600)
+    const auto done = rec.takeFinishedParts();
+    REQUIRE(done.size() == 2);
+    WavData a;
+    REQUIRE(readWav(dir / "a.wav", a, err));
+    REQUIRE(a.frames() == 40000);
+    WavData b;
+    REQUIRE(readWav(dir / "b.wav", b, err));
+    REQUIRE(b.frames() == 19600);
+    bool same = true;
+    for (std::uint64_t i = 0; i < 40000; ++i) same = same && toStep(a.samples[i]) == toStep(marker(30000 + i, 0));
+    for (std::uint64_t i = 0; i < 19600; ++i) same = same && toStep(b.samples[i]) == toStep(marker(110000 + i, 0));
+    CHECK(same);
 }

@@ -173,6 +173,8 @@ int overdubTrackCount(const std::vector<Track>& tracks)
 {
     return static_cast<int>(std::count_if(tracks.begin(), tracks.end(), [&](const Track& t) {
         if (t.armed || t.take.empty()) return false;
+        // A MIDI take plays only to an instrument or a MIDI output (S9).
+        if (t.kind == TrackKind::Midi && t.instrumentClass.empty() && t.midiOut.empty()) return false;
         const Track* owner = soundOwner(tracks, t);
         if (t.instrumentOf > 0 && owner != nullptr) return owner->soundFromRecording && !owner->armed;
         return true;

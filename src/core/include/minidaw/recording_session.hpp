@@ -51,11 +51,18 @@ struct SessionResult {
     bool lostData() const;
 };
 
+// Auto record: the earliest MIDI event still needed: the GUI's `keepFrom`,
+// but never after the start of the open part or of a part still to be
+// written (crosscheck #11, S1).
+std::uint64_t midiKeepFrom(std::uint64_t keepFrom, std::optional<std::uint64_t> openFrom,
+                           const std::vector<std::uint64_t>& pendingFroms);
+
 // A part of an auto recording (P16).
 struct AutoPartEvent {
     enum class Kind { None, Began, Ended, Failed } kind = Kind::None;
     std::filesystem::path folder;
     double seconds = 0.0;   // Ended: its length
+    double cutSeconds = 0.0;  // Began: playing before this part's start that could not be kept (S2)
     std::string error;      // Failed: why no folder could be made
 };
 
@@ -108,6 +115,8 @@ private:
         std::vector<std::uint8_t> down = std::vector<std::uint8_t>(16 * 128, 0);
         bool sustain[16] = {};
         int count = 0;
+        std::uint16_t channels = 0;          // bit per MIDI channel an armed track records (S8)
+        std::uint64_t disconnectsSeen = 0;   // a disconnect releases the port's notes (S6)
     };
     struct PortEvents {
         std::string port;
@@ -126,6 +135,8 @@ private:
         std::uint64_t to = 0;
     };
     void noteActivity(PortEventsHeld& held, const TimedMidi& m);
+    void releaseHeld(PortEventsHeld& held, int channel);  // -1: all channels
+    std::uint64_t lastStartActivity() const;
     void writeMidiPart(const MidiPart& part, bool final);
     void runMidiPartJobs(bool final);
     AutoPartEvent endAutoPart(const AutoPartTracker::Action& a);
@@ -174,7 +185,8 @@ private:
     std::atomic<std::uint64_t> keepFrom_{0};          // MIDI events before this are not needed
     std::atomic<std::uint64_t> midiLastActivity_{0};  // stream frame of the last channel message
     std::atomic<int> midiHeld_{0};                    // notes down and sustain pedals
-    std::atomic<std::uint64_t> midiEarliest_{UINT64_MAX};  // earliest channel message since the GUI looked
+    std::atomic<std::uint64_t> midiEarliest_{UINT64_MAX};  // earliest sound-starting message since the GUI looked
+    std::atomic<std::uint64_t> midiLastStart_{0};          // the last sound-starting message
 };
 
 } // namespace minidaw

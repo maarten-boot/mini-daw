@@ -118,6 +118,12 @@ bool RecordingSession::begin(const std::vector<Track>& tracks, const RecordingSe
             const bool known = std::any_of(portEvents_.begin(), portEvents_.end(),
                                            [&](const PortEvents& p) { return p.port == t->midiPort; });
             if (!known) portEvents_.push_back({t->midiPort, {}, 0, {}});
+            // The channels that count as playing on this port (auto record, S8).
+            for (auto& p : portEvents_) {
+                if (p.port != t->midiPort) continue;
+                p.held.channels |= t->midiChannel <= 0 ? 0xFFFF : static_cast<std::uint16_t>(1u << (t->midiChannel - 1));
+                p.held.disconnectsSeen = midi.disconnects(t->midiPort);
+            }
         }
     }
 
@@ -168,6 +174,7 @@ bool RecordingSession::begin(const std::vector<Track>& tracks, const RecordingSe
         }
         keepFrom_.store(0);
         midiEarliest_.store(UINT64_MAX);
+        midiLastStart_.store(0);
         midiLastActivity_.store(0);
         midiHeld_.store(0);
     }
@@ -189,6 +196,13 @@ void RecordingSession::collectMidi()
 {
     RawMidi buf[256];
     for (auto& pe : portEvents_) {
+        if (auto_) {  // the keyboard went away: its notes are not held any more (S6)
+            const std::uint64_t d = midi_->disconnects(pe.port);
+            if (d != pe.held.disconnectsSeen) {
+                pe.held.disconnectsSeen = d;
+                releaseHeld(pe.held, -1);
+            }
+        }
         for (;;) {
             const std::size_t n = midi_->read(pe.port, buf, 256);
             for (std::size_t i = 0; i < n; ++i) {
@@ -318,21 +332,33 @@ SessionResult RecordingSession::stop()
     if (!active_) return result;
     result.folder = folder_;
     if (auto_) {
-        // End a part that is open, now.
-        if (const auto now = audio_->currentFrame()) {
-            const AutoPartTracker::Action a = tracker_.finish(*now);
-            if (a.kind == AutoPartTracker::Kind::End) endAutoPart(a);
-        } else if (tracker_.inPart()) {
-            endAutoPart(tracker_.finish(partFrom_));
-        }
-        if (hasAudio_) result.audio = audio_->stopRecording();
-        collectPartResults();
+        // The MIDI thread stops first and the last messages are collected, so
+        // a part ended now has all of its MIDI (crosscheck #11, S6).
         if (midiThread_.joinable()) {
             midiRun_.store(false);
             midiThread_.join();
         }
+        if (!midiTakes_.empty()) collectMidi();
+        // End a part that is open: now, or where the audio stopped if the
+        // stream is gone (S3: not at its start, which would empty it).
+        if (tracker_.inPart()) {
+            std::uint64_t end = 0;
+            if (const auto now = audio_->currentFrame()) {
+                end = *now;
+            } else {
+                if (hasAudio_) {
+                    const auto s0 = audio_->recorder().startFrame();
+                    end = (s0 ? *s0 : 0) + audio_->recorder().framesCaptured();
+                } else {
+                    end = midiLastActivity_.load() + sampleRate_;
+                }
+                setError("The audio stream stopped during auto record; the last part ends where the audio stopped.");
+            }
+            endAutoPart(tracker_.finish(std::max(end, partFrom_)));
+        }
+        if (hasAudio_) result.audio = audio_->stopRecording();
+        collectPartResults();
         if (!midiTakes_.empty()) {
-            collectMidi();
             midi_->setCapture(false);
             runMidiPartJobs(true);
             for (const auto& mt : midiTakes_) {
@@ -402,31 +428,88 @@ SessionResult RecordingSession::stop()
 
 // --- Auto record (P16, SPEC-REC-08) ---------------------------------------------
 
+std::uint64_t midiKeepFrom(std::uint64_t keepFrom, std::optional<std::uint64_t> openFrom,
+                           const std::vector<std::uint64_t>& pendingFroms)
+{
+    std::uint64_t keep = keepFrom;
+    if (openFrom) keep = std::min(keep, *openFrom);
+    for (const std::uint64_t f : pendingFroms) keep = std::min(keep, f);
+    return keep;
+}
+
+void RecordingSession::releaseHeld(PortEventsHeld& held, int channel)
+{
+    for (int ch = 0; ch < 16; ++ch) {
+        if (channel >= 0 && ch != channel) continue;
+        for (int n = 0; n < 128; ++n) {
+            if (held.down[ch * 128 + n] != 0) {
+                held.down[ch * 128 + n] = 0;
+                --held.count;
+                midiHeld_.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
+        if (channel < 0 && held.sustain[ch]) {  // a disconnect also lifts the pedal
+            held.sustain[ch] = false;
+            --held.count;
+            midiHeld_.fetch_sub(1, std::memory_order_relaxed);
+        }
+    }
+}
+
+// MIDI thread: what a message means for auto record (SPEC-REC-08). Only the
+// channels an armed track records count (S8). Notes and the sustain pedal
+// are held until released; All Notes Off / All Sound Off (CC 123 / 120)
+// release a channel's notes (S6). Note-offs and pedal-up keep a part going
+// but do not start one.
 void RecordingSession::noteActivity(PortEventsHeld& held, const TimedMidi& m)
 {
     const std::uint8_t status = m.data[0];
     if (status < 0x80 || status >= 0xF0) return;  // only channel messages are playing
     const int ch = status & 0x0F;
+    if ((held.channels & (1u << ch)) == 0) return;
     const int type = status & 0xF0;
-    if ((type == 0x90 && m.size >= 3 && m.data[2] > 0) && held.down[ch * 128 + (m.data[1] & 0x7F)] == 0) {
-        held.down[ch * 128 + (m.data[1] & 0x7F)] = 1;
-        ++held.count;
-        midiHeld_.fetch_add(1, std::memory_order_relaxed);
-    } else if ((type == 0x80 || (type == 0x90 && m.size >= 3 && m.data[2] == 0)) && m.size >= 2 &&
-               held.down[ch * 128 + (m.data[1] & 0x7F)] != 0) {
-        held.down[ch * 128 + (m.data[1] & 0x7F)] = 0;
-        --held.count;
-        midiHeld_.fetch_sub(1, std::memory_order_relaxed);
-    } else if (type == 0xB0 && m.size >= 3 && m.data[1] == 64) {  // sustain pedal
-        const bool on = m.data[2] >= 64;
+    const int key = m.size >= 2 ? (m.data[1] & 0x7F) : 0;
+    const int value = m.size >= 3 ? (m.data[2] & 0x7F) : 0;
+    bool starts = true;
+    if (type == 0x90 && m.size >= 3 && value > 0) {
+        if (held.down[ch * 128 + key] == 0) {
+            held.down[ch * 128 + key] = 1;
+            ++held.count;
+            midiHeld_.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (type == 0x80 || type == 0x90) {  // note-off (or note-on with velocity 0)
+        starts = false;
+        if (m.size >= 2 && held.down[ch * 128 + key] != 0) {
+            held.down[ch * 128 + key] = 0;
+            --held.count;
+            midiHeld_.fetch_sub(1, std::memory_order_relaxed);
+        }
+    } else if (type == 0xB0 && m.size >= 3 && key == 64) {  // sustain pedal
+        const bool on = value >= 64;
+        starts = on;
         if (on != held.sustain[ch]) {
             held.sustain[ch] = on;
             held.count += on ? 1 : -1;
             midiHeld_.fetch_add(on ? 1 : -1, std::memory_order_relaxed);
         }
+    } else if (type == 0xB0 && m.size >= 3 && (key == 120 || key == 123)) {  // All Sound / Notes Off
+        starts = false;
+        releaseHeld(held, ch);
+    } else if (type == 0xB0 && m.size >= 3 && key == 121) {  // Reset All Controllers: pedal up
+        starts = false;
+        if (held.sustain[ch]) {
+            held.sustain[ch] = false;
+            --held.count;
+            midiHeld_.fetch_sub(1, std::memory_order_relaxed);
+        }
     }
-    std::uint64_t e = midiEarliest_.load(std::memory_order_relaxed);
-    while (m.frame < e && !midiEarliest_.compare_exchange_weak(e, m.frame, std::memory_order_relaxed)) {
+    if (starts) {
+        std::uint64_t e = midiEarliest_.load(std::memory_order_relaxed);
+        while (m.frame < e && !midiEarliest_.compare_exchange_weak(e, m.frame, std::memory_order_relaxed)) {
+        }
+        if (m.frame > midiLastStart_.load(std::memory_order_relaxed)) {
+            midiLastStart_.store(m.frame, std::memory_order_relaxed);
+        }
     }
     if (m.frame > midiLastActivity_.load(std::memory_order_relaxed)) {
         midiLastActivity_.store(m.frame, std::memory_order_relaxed);
@@ -466,11 +549,19 @@ void RecordingSession::runMidiPartJobs(bool final)
     std::vector<MidiPart> jobs;
     bool open = false;
     MidiPart openPart;
+    std::uint64_t keep = 0;
     {
+        // Taken together, so no part that is still to be written loses its
+        // events (crosscheck #11, S1): the GUI may end a part and move
+        // keepFrom_ on while this thread is busy.
         std::lock_guard<std::mutex> lock(partMutex_);
         jobs.swap(midiJobs_);
         open = midiPartOpen_;
         openPart = midiOpenPart_;
+        std::vector<std::uint64_t> pending;
+        for (const auto& j : jobs) pending.push_back(j.from);
+        keep = midiKeepFrom(keepFrom_.load(std::memory_order_relaxed),
+                            open ? std::optional<std::uint64_t>(openPart.from) : std::nullopt, pending);
     }
     for (const auto& j : jobs) writeMidiPart(j, true);
     const auto now = std::chrono::steady_clock::now();
@@ -481,12 +572,18 @@ void RecordingSession::runMidiPartJobs(bool final)
             writeMidiPart(openPart, false);
         }
     }
-    const std::uint64_t keep = keepFrom_.load(std::memory_order_relaxed);
     for (auto& pe : portEvents_) {
         const auto first = std::lower_bound(pe.events.begin(), pe.events.end(), keep,
                                             [](const TimedMidi& m, std::uint64_t f) { return m.frame < f; });
         if (first != pe.events.begin()) pe.events.erase(pe.events.begin(), first);
     }
+}
+
+std::uint64_t RecordingSession::lastStartActivity() const
+{
+    std::uint64_t f = midiLastStart_.load(std::memory_order_relaxed);
+    if (hasAudio_) f = std::max(f, audio_->recorder().lastActiveFrame());
+    return f;
 }
 
 std::uint64_t RecordingSession::lastActivity() const
@@ -541,7 +638,8 @@ AutoPartEvent RecordingSession::autoUpdate()
         if (!recStart) return {};  // the first block has not arrived yet
     }
     const AutoPartTracker::Action a = tracker_.update(*now, lastActivity(), midiHeld_.load(std::memory_order_relaxed) > 0,
-                                                      midiEarliest_.exchange(UINT64_MAX, std::memory_order_relaxed));
+                                                      midiEarliest_.exchange(UINT64_MAX, std::memory_order_relaxed),
+                                                      lastStartActivity());
     AutoPartEvent ev;
     if (a.kind == AutoPartTracker::Kind::Begin) {
         const std::time_t wall = std::time(nullptr);
@@ -554,7 +652,7 @@ AutoPartEvent RecordingSession::autoUpdate()
         std::string err;
         const std::filesystem::path folder = createTakeFolder(autoBase_, autoPartName(local), err);
         if (folder.empty()) {
-            tracker_.finish(*now);  // try again at the next playing
+            tracker_.abort(lastStartActivity());  // try again at the next playing (S4)
             setError(err);
             ev.kind = AutoPartEvent::Kind::Failed;
             ev.error = err;
@@ -563,6 +661,14 @@ AutoPartEvent RecordingSession::autoUpdate()
         partFolder_ = folder;
         // Not before auto record was switched on: nothing was recorded then.
         partFrom_ = std::max(a.frame, hasAudio_ ? *recStart : midiOnlyStart_);
+        // Not further back than the recorder remembers (4 s; 3.5 s leaves room
+        // for the disk thread), the same for the WAV and the MIDI files. More
+        // only when the GUI did not look for a while (crosscheck #11, S2).
+        const std::uint64_t memory = static_cast<std::uint64_t>(3.5 * sampleRate_);
+        if (*now > memory && partFrom_ < *now - memory) {
+            ev.cutSeconds = static_cast<double>(*now - memory - partFrom_) / sampleRate_;
+            partFrom_ = *now - memory;
+        }
         ++partId_;
         if (hasAudio_) {
             std::vector<std::filesystem::path> paths;
@@ -582,7 +688,7 @@ AutoPartEvent RecordingSession::autoUpdate()
     // MIDI events a part may still need: from the open part's start, or a
     // few seconds back while waiting (the preroll).
     const std::uint64_t back = 5ull * sampleRate_;
-    keepFrom_.store(tracker_.inPart() ? tracker_.partStart() : (*now > back ? *now - back : 0),
+    keepFrom_.store(tracker_.inPart() ? partFrom_ : (*now > back ? *now - back : 0),
                     std::memory_order_relaxed);
     return ev;
 }

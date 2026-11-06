@@ -254,6 +254,12 @@ TEST_CASE("T-VST-31: linked track made with the instrument; overdub count", "[tr
     // Overdub count: tracks 1 (MIDI take), 4 (its sound), 2 (audio), 3 (MIDI, no take).
     tracks[0].take = "01-Keys.mid";
     tracks[2].take = "02-Guitar.wav";
+    CHECK(overdubTrackCount(tracks) == 1);  // a MIDI take with nothing to play it to does not count (S9)
+    tracks[3].take = "03-MIDI.mid";
+    tracks[3].midiOut = "Synth";            // a MIDI take to a MIDI output counts
+    CHECK(overdubTrackCount(tracks) == 2);
+    tracks[3].take.clear();
+    tracks[0].instrumentClass = "0123456789ABCDEF0123456789ABCDEF";
     CHECK(overdubTrackCount(tracks) == 2);  // Keys (instrument plays it) and Guitar; the sound track is silent
     tracks[0].soundFromRecording = true;
     CHECK(overdubTrackCount(tracks) == 3);  // the sound track plays its recording too

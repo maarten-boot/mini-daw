@@ -4,10 +4,12 @@
 //
 // AutoPartTracker is pure logic, driven by the GUI thread with stream frames:
 // "now", the frame of the last activity (a MIDI channel message or a loud
-// audio block on an armed track) and whether notes are still held. A part
-// begins at new activity, `preroll` before it was noticed; it ends `tail`
-// after the last activity once there has been none for `pause` and nothing
-// is held (a held note keeps the part open, up to `maxHeldQuiet`).
+// audio block on an armed track), the last activity that starts sound (not a
+// note-off or pedal-up: those only keep a part going) and whether notes are
+// still held. A part begins at new sound-starting activity, `preroll` before
+// it was noticed; it ends `tail` after the last activity once there has been
+// none for `pause` and nothing is held (a held note keeps the part open, up
+// to `maxHeldQuiet`).
 
 #include <cstdint>
 #include <ctime>
@@ -37,9 +39,16 @@ public:
 
     // Auto record switched on: activity up to `lastActivity` is old.
     void reset(std::uint64_t now, std::uint64_t lastActivity);
-    // `earliestNew`: the earliest activity since the last update, if known
-    // (MIDI can arrive a little late, several messages at once).
-    Action update(std::uint64_t now, std::uint64_t lastActivity, bool held, std::uint64_t earliestNew = UINT64_MAX);
+    static constexpr std::uint64_t kSameAsActivity = UINT64_MAX;
+    // `earliestNew`: the earliest sound-starting activity since the last
+    // update, if known (MIDI can arrive a little late, several messages at
+    // once). `lastStart`: the last sound-starting activity (default: the same
+    // as `lastActivity`).
+    Action update(std::uint64_t now, std::uint64_t lastActivity, bool held, std::uint64_t earliestNew = UINT64_MAX,
+                  std::uint64_t lastStart = kSameAsActivity);
+    // The part could not be started (no folder): forget it, and the playing
+    // that asked for it; the next playing tries again (crosscheck #11, S4).
+    void abort(std::uint64_t lastStart);
     // Auto record switched off: ends a part that is open (at `now`).
     Action finish(std::uint64_t now);
 

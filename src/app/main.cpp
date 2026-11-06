@@ -1975,7 +1975,10 @@ void updateTransport(AppState& app)
 
 void toggleRecording(AppState& app)
 {
-    if (app.session.autoMode()) return;  // Auto record is stopped with its own button
+    if (app.session.autoMode()) {  // Auto record is stopped with its own button (S10)
+        app.recordError = "auto record is on. Stop it first (Stop auto record).";
+        return;
+    }
     if (app.session.recording()) {
         const minidaw::SessionResult res = app.session.stop();
         app.lastTake = describeResult(res);
@@ -2063,11 +2066,25 @@ void toggleAuto(AppState& app)
     if (app.session.autoMode()) {
         const int parts = app.session.autoPartsDone() + (app.session.autoInPart() ? 1 : 0);
         const minidaw::SessionResult res = app.session.stop();
+        // Losses are always reported (SPEC-REC-05; crosscheck #11, S5).
+        std::uint64_t midiLost = 0;
+        std::uint64_t disconnects = 0;
+        for (const auto& m : res.midi) {
+            midiLost += m.lostMessages;
+            disconnects += m.disconnects;
+        }
+        const std::uint64_t lostFrames = app.session.autoLostFrames();
+        std::string losses;
+        if (lostFrames > 0) losses += std::to_string(lostFrames) + " audio frames lost (silence in their place). ";
+        if (midiLost > 0) losses += std::to_string(midiLost) + " MIDI messages lost. ";
+        if (disconnects > 0) losses += "A MIDI keyboard was disconnected " + std::to_string(disconnects) + " time(s). ";
         app.log.info("Auto record stopped: " + std::to_string(parts) + " part(s)" +
                      (res.error.empty() ? std::string() : "; " + res.error));
-        if (!res.error.empty()) app.recordError = res.error;
+        if (!losses.empty()) app.log.warning("Auto record: " + losses);
+        app.recordError = res.error;  // also clears an earlier "stop it first"
         app.lastTake = {"Auto record: " + std::to_string(parts) + " part(s) in " + minidaw::pathToUtf8(res.folder) +
                         " (File > Open take folder)"};
+        if (!losses.empty()) app.lastTake.push_back(losses);
         return;
     }
     if (app.session.recording()) return;
@@ -2108,6 +2125,15 @@ void updateAuto(AppState& app)
     switch (ev.kind) {
     case minidaw::AutoPartEvent::Kind::Began:
         app.log.info("Auto record: part " + minidaw::pathToUtf8(ev.folder.filename()) + " began");
+        if (ev.cutSeconds > 0.0) {
+            char buf[200];
+            std::snprintf(buf, sizeof buf,
+                          "Auto record: the playing was noticed late (the program was busy); the part's first %.1f s "
+                          "could not be kept",
+                          ev.cutSeconds);
+            app.log.warning(buf);
+            app.recordError = buf;
+        }
         break;
     case minidaw::AutoPartEvent::Kind::Ended: {
         char buf[64];
@@ -2285,8 +2311,10 @@ void drawTransport(AppState& app)
                                pause);
         }
         ImGui::TextWrapped("Parts go to %s", minidaw::pathToUtf8(app.session.folder()).c_str());
-        if (app.session.autoLostFrames() > 0) {
-            ImGui::Text("Lost frames in parts: %llu", static_cast<unsigned long long>(app.session.autoLostFrames()));
+        if (app.session.autoLostFrames() > 0 || app.session.midiLost() > 0) {
+            ImGui::Text("Lost in parts: %llu audio frames, %llu MIDI messages",
+                        static_cast<unsigned long long>(app.session.autoLostFrames()),
+                        static_cast<unsigned long long>(app.session.midiLost()));
         }
         const std::string err = app.session.diskError();
         if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
@@ -3095,7 +3123,8 @@ int runGui(AppState& app)
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
-            glfwWaitEventsTimeout(0.1);  // minimised: don't render
+            updateAuto(app);  // auto record goes on while minimised (crosscheck #11, S2)
+            glfwWaitEventsTimeout(0.05);  // minimised: don't render
             continue;
         }
         minidaw::app::rendererNewFrame(window);

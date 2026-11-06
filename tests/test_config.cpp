@@ -337,7 +337,7 @@ TEST_CASE("T-UI-14: window place and size in the config; where it goes at start"
     CHECK_FALSE(restoredWindowRect(s, {}).has_value());
 }
 
-TEST_CASE("T-REC-33: auto record settings in the config", "[config][T-REC-33]")
+TEST_CASE("T-REC-34: auto record settings in the config", "[config][T-REC-34]")
 {
     const auto def = parseConfig(defaultConfigText());
     CHECK(def.warnings.empty());

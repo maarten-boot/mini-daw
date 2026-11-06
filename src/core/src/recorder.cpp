@@ -72,6 +72,7 @@ bool Recorder::start(const std::vector<TakeSpec>& takes, unsigned int sampleRate
         if (options.parts) {  // files are opened per part (beginPart)
             t->historyFrames = static_cast<std::uint64_t>(std::ceil(std::max(options.partBufferSeconds, 0.1) * sampleRate));
             t->history.assign(static_cast<std::size_t>(t->historyFrames) * t->channels, 0.0f);
+            t->historyLost.assign(static_cast<std::size_t>(t->historyFrames), 0);
             made.push_back(std::move(t));
             continue;
         }
@@ -227,6 +228,18 @@ std::size_t Recorder::drainOnce(std::vector<float>& scratch)
 
 // --- Parts mode (P16) ---------------------------------------------------------
 
+namespace {
+// Adds [from, to) to a list of lost ranges, joining it to the last one if they touch.
+void addLost(std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::uint64_t from, std::uint64_t to)
+{
+    if (!ranges.empty() && ranges.back().second == from) {
+        ranges.back().second = to;
+    } else {
+        ranges.emplace_back(from, to);
+    }
+}
+} // namespace
+
 void Recorder::beginPart(int id, std::uint64_t fromFrame, const std::vector<std::filesystem::path>& paths)
 {
     std::lock_guard<std::mutex> lock(partMutex_);
@@ -270,8 +283,10 @@ void Recorder::passFrames(Take& t, std::size_t /*index*/, const float* data, std
     const unsigned int ch = t.channels;
     if (t.historyFrames > 0) {  // remembered for a part that starts a little in the past
         for (std::uint64_t k = 0; k < frames; ++k) {
-            float* dst = &t.history[static_cast<std::size_t>(((t.pos + k) % t.historyFrames) * ch)];
+            const std::uint64_t idx = (t.pos + k) % t.historyFrames;
+            float* dst = &t.history[static_cast<std::size_t>(idx * ch)];
             for (unsigned int c = 0; c < ch; ++c) dst[c] = data ? data[k * ch + c] : 0.0f;
+            t.historyLost[static_cast<std::size_t>(idx)] = data ? 0 : 1;
         }
     }
     if (t.writing && t.writer.isOpen()) {
@@ -285,7 +300,7 @@ void Recorder::passFrames(Take& t, std::size_t /*index*/, const float* data, std
                 std::string ignored;
                 t.writer.close(ignored);
             } else if (data == nullptr) {
-                t.partLost += hi - lo;
+                addLost(t.partLost, lo, hi);
             }
         }
     }
@@ -297,7 +312,7 @@ void Recorder::startPart(Take& t, const PartCommand& c)
     t.writing = true;
     t.partId = c.id;
     t.partEnd = UINT64_MAX;
-    t.partLost = 0;
+    t.partLost.clear();
     t.partError.clear();
     const std::uint64_t oldest = t.pos > t.historyFrames ? t.pos - t.historyFrames : 0;
     t.partStart = std::max(c.frame, oldest);
@@ -307,6 +322,10 @@ void Recorder::startPart(Take& t, const PartCommand& c)
         t.partError = err;
         setDiskError(err);
         return;
+    }
+    // Audio lost in the remembered frames counts for the part (S5).
+    for (std::uint64_t f = t.partStart; f < t.pos; ++f) {
+        if (t.historyLost[static_cast<std::size_t>(f % t.historyFrames)] != 0) addLost(t.partLost, f, f + 1);
     }
     // The frames from the part's start up to now come from memory.
     const unsigned int ch = t.channels;
@@ -331,7 +350,12 @@ void Recorder::finishPart(Take& t)
     PartTakeResult r;
     r.part = t.partId;
     r.path = t.spec.path;
-    r.lostFrames = t.partLost;
+    // Only losses inside the part count, not ones cut off at its end (S5).
+    for (const auto& [from, to] : t.partLost) {
+        const std::uint64_t lo = std::max(from, t.partStart);
+        const std::uint64_t hi = std::min(to, end);
+        if (hi > lo) r.lostFrames += hi - lo;
+    }
     r.error = t.partError;
     if (t.writer.isOpen()) {
         t.writer.keepOnlyFrames(keep);  // what was written after the end is cut off

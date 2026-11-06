@@ -33,6 +33,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace minidaw {
@@ -190,12 +191,13 @@ private:
         // Disk thread:
         std::uint64_t pos = 0;                      // frames passed (audio and silence)
         std::vector<float> history;                 // the last frames, circular
+        std::vector<std::uint8_t> historyLost;      // per remembered frame: silence for lost audio (S5)
         std::uint64_t historyFrames = 0;            // capacity in frames
         bool writing = false;
         int partId = 0;
         std::uint64_t partStart = 0;
         std::uint64_t partEnd = UINT64_MAX;         // known once endPart() reached this take
-        std::uint64_t partLost = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> partLost;  // lost frames in the file: [from, to)
         std::string partError;
     };
 

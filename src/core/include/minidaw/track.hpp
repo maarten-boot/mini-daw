@@ -90,7 +90,8 @@ int addLinkedSoundTrack(std::vector<Track>& tracks, int midiNumber);
 // Returns true if one was removed.
 bool removeUnusedLinkedTrack(std::vector<Track>& tracks, int midiNumber);
 // How many tracks Record would play while the armed tracks record (an
-// overdub, SPEC-PLAY-05a): not armed, with a take. A linked sound track counts
+// overdub, SPEC-PLAY-05a): not armed, with a take (a MIDI take only with an
+// instrument or a MIDI output to play to). A linked sound track counts
 // only when it plays its recording ("Sound from") and its MIDI track is not
 // armed (an armed instrument track plays live).
 int overdubTrackCount(const std::vector<Track>& tracks);

@@ -32,7 +32,7 @@ Continues `Conversation-2026-11-05.md` (Windows test with Arturia instruments, l
 > I was thinking of an 'auto' record mode: when you press auto it simply records all you play and saves the part under a file name with a date-timestamp (automatically ending when playing stops)
 - Asked to confirm the details before planning.
 - Answers: auto record starts at your playing and ends after a pause; records the armed tracks; files only (date-time folders, tracks unchanged). Fix the jumping text now: yes.
-- Done: fixed-height transport area, slider and Recording settings always shown, the table hint always shown (SPEC-UI-10, T-UI-16, checked on Xvfb). Auto record written as SPEC-REC-08 / P16 / T-REC-33 (first written as T-REC-32, which was taken: renamed), waiting for the user's go.
+- Done: fixed-height transport area, slider and Recording settings always shown, the table hint always shown (SPEC-UI-10, T-UI-16, checked on Xvfb). Auto record written as SPEC-REC-08 / P16 / T-REC-34 (first written as T-REC-32, then T-REC-33; both were taken: renamed), waiting for the user's go.
 - T-REC-18 failed once during a parallel build: a test weakness (no read when the writer finished first), fixed in the test.
 
 ## 6. CI of `d3ffcbf`; P16 auto record
@@ -43,5 +43,12 @@ Continues `Conversation-2026-11-05.md` (Windows test with Arturia instruments, l
 - AutoPartTracker (pure, tested): a part starts 1 s before the playing was noticed (the earlier of the last look and the earliest new MIDI message), ends 1 s after the last activity once there has been none for the pause and no note or sustain pedal is held (60 s at most).
 - RecordingSession::startAuto / autoUpdate: a folder `auto/<date time>` per part, the audio parts via the recorder, the MIDI parts written by the MIDI thread (refreshed every second while open); MIDI events no part needs are dropped.
 - GUI: "Auto record" button, AUTO: WAITING / RECORDING, the last parts, settings for the pause and the threshold; Record and arming disabled meanwhile; Play allowed (the armed tracks' takes do not play).
-- Found on the way: T-REC-32 was already taken (MIDI hot-plug): the new tests are T-REC-33. A part could ask to start before auto record was switched on: clamped (GUI test).
+- Found on the way: T-REC-32 was already taken (MIDI hot-plug), and so was T-REC-33 (crosscheck #11): the new tests are T-REC-34. A part could ask to start before auto record was switched on: clamped (GUI test).
 - Linux 149/149, Wine 149/149; GUI checked with the test synth and vkeys.
+
+## 7. Crosscheck #11
+> do the crosscheck #11
+- Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code since `4be4d48` also read by an independent reviewer (subagent), each finding checked against the code. Found: S1 (MIDI of an ended part can be pruned before it is written), S2 (minimised window: no parts, WAV/MIDI start differ), S3–S6, S8, S9 (code), S7 (known limit), S10/S12 (docs), S11 (T-REC-33 used twice — renamed to T-REC-34 — and untested paths). Details in `Crosscheck-2026-11-02.md`. Waiting for the user's choice which to fix.
+> yes fix S1–S12, S1 first
+- All done (details in `Crosscheck-2026-11-02.md`): S1 MIDI keep point under the lock; S2 minimised + 3.5 s clamp for WAV and MIDI; S3 stream gone; S4 abort; S5 losses; S6 part edges; S7 Spec; S8 channel filter; S9 overdub count; S10 texts + Ctrl+R; S11 tests (T-REC-34); S12 README, CLAUDE.md. Spec v0.33. Linux 159/159, Wine 159/159 ×2; GUI checked.
+- CI of `030535a`: run 42293704257 green; its Windows download in `dist/windows` (before these fixes).

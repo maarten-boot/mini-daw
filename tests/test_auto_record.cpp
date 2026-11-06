@@ -1,4 +1,4 @@
-// Auto record (SPEC-REC-08, P16): T-REC-33, the part tracker.
+// Auto record (SPEC-REC-08, P16): T-REC-34, the part tracker.
 
 #include "minidaw/auto_record.hpp"
 
@@ -7,7 +7,7 @@
 using namespace minidaw;
 using Kind = AutoPartTracker::Kind;
 
-TEST_CASE("T-REC-33: auto record timing from the settings", "[auto][T-REC-33]")
+TEST_CASE("T-REC-34: auto record timing from the settings", "[auto][T-REC-34]")
 {
     const AutoRecordTiming t = autoRecordTiming(5, 48000);
     CHECK(t.pause == 240000);
@@ -18,7 +18,7 @@ TEST_CASE("T-REC-33: auto record timing from the settings", "[auto][T-REC-33]")
     CHECK(autoRecordTiming(99, 1000).pause == 60000);  // at most 60 s
 }
 
-TEST_CASE("T-REC-33: parts start at playing and end after a pause", "[auto][T-REC-33]")
+TEST_CASE("T-REC-34: parts start at playing and end after a pause", "[auto][T-REC-34]")
 {
     AutoPartTracker tr(autoRecordTiming(5, 1000));  // pause 5000, tail 1000, preroll 1000 frames
     tr.reset(0, 500);                               // activity before Auto was switched on: old
@@ -54,8 +54,8 @@ TEST_CASE("T-REC-33: parts start at playing and end after a pause", "[auto][T-RE
     CHECK(tr.finish(14000).kind == Kind::None);
 }
 
-TEST_CASE("T-REC-33: a note held for ever ends the part after 60 s; the start is not before 0",
-          "[auto][T-REC-33]")
+TEST_CASE("T-REC-34: a note held for ever ends the part after 60 s; the start is not before 0",
+          "[auto][T-REC-34]")
 {
     AutoPartTracker tr(autoRecordTiming(5, 1000));
     tr.reset(0, 0);
@@ -68,7 +68,7 @@ TEST_CASE("T-REC-33: a note held for ever ends the part after 60 s; the start is
     CHECK(a.frame == 1300);
 }
 
-TEST_CASE("T-REC-33: part folder names", "[auto][T-REC-33]")
+TEST_CASE("T-REC-34: part folder names", "[auto][T-REC-34]")
 {
     std::tm t{};
     t.tm_year = 126;
@@ -80,7 +80,7 @@ TEST_CASE("T-REC-33: part folder names", "[auto][T-REC-33]")
     CHECK(autoPartName(t) == "2026-11-06 21-05-03");
 }
 
-TEST_CASE("T-REC-33: MIDI that arrives late starts the part from its own frame", "[auto][T-REC-33]")
+TEST_CASE("T-REC-34: MIDI that arrives late starts the part from its own frame", "[auto][T-REC-34]")
 {
     AutoPartTracker tr(autoRecordTiming(5, 1000));
     tr.reset(0, 0);
@@ -89,4 +89,32 @@ TEST_CASE("T-REC-33: MIDI that arrives late starts the part from its own frame",
     const auto a = tr.update(5200, 5100, false, 4950);
     CHECK(a.kind == Kind::Begin);
     CHECK(a.frame == 3950);
+}
+
+TEST_CASE("T-REC-34: a part that could not start is forgotten until the next playing (S4)", "[auto][T-REC-34]")
+{
+    AutoPartTracker tr(autoRecordTiming(5, 1000));
+    tr.reset(0, 0);
+    CHECK(tr.update(1000, 1000, false).kind == Kind::Begin);
+    tr.abort(1000);
+    CHECK_FALSE(tr.inPart());
+    CHECK(tr.update(1020, 1000, false).kind == Kind::None);  // not again for the same playing
+    CHECK(tr.update(2000, 2000, false).kind == Kind::Begin);  // the next playing tries again
+}
+
+TEST_CASE("T-REC-34: a note-off alone does not start a part (S6)", "[auto][T-REC-34]")
+{
+    AutoPartTracker tr(autoRecordTiming(5, 1000));
+    tr.reset(0, 0);
+    // Only a note-off (activity, but nothing that starts sound) at 1000.
+    CHECK(tr.update(1010, 1000, false, UINT64_MAX, 0).kind == Kind::None);
+    // A note-on at 2000 starts one; the note-off at 2500 keeps it going.
+    auto a = tr.update(2010, 2000, false, UINT64_MAX, 2000);
+    CHECK(a.kind == Kind::Begin);
+    CHECK(tr.update(7000, 2500, false, UINT64_MAX, 2000).kind == Kind::None);
+    a = tr.update(7500, 2500, false, UINT64_MAX, 2000);
+    CHECK(a.kind == Kind::End);
+    CHECK(a.frame == 3500);
+    // A late note-off at 9000 starts nothing.
+    CHECK(tr.update(9010, 9000, false, UINT64_MAX, 2000).kind == Kind::None);
 }
