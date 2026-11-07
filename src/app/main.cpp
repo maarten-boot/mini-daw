@@ -294,10 +294,15 @@ void stepContrast(AppState& app, int direction)
 }
 
 // Text size (SPEC-UI-08). Applied through ImGui's dynamic font size.
+// During a frame ImGui sets style.FontSizeBase back to the size in use, so a
+// change from a key or the menu only took effect at the next start; ImGui's
+// own style editor sets _NextFrameFontSizeBase for this (applied at the next
+// NewFrame). Before the first frame setting FontSizeBase is enough.
 void setFontSize(AppState& app, float size, bool save)
 {
     app.config.fontSize = std::clamp(size, minidaw::kMinFontSize, minidaw::kMaxFontSize);
     ImGui::GetStyle().FontSizeBase = app.config.fontSize;
+    ImGui::GetStyle()._NextFrameFontSizeBase = app.config.fontSize;
     if (save) saveConfig(app);
 }
 

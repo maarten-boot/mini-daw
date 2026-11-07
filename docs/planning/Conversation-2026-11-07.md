@@ -35,3 +35,8 @@ Continues `Conversation-2026-11-06.md` (window place, auto record P16, crosschec
 - Read "mive the audio sessings" as "move the audio settings". Asked four questions. Answers: move both "Audio stream" and "Devices", keep a status line on the Recording tab; name "Audio setup"; order by dragging and in a Settings dialog; at start the tab used last.
 - Config `[tabs] order / last` (`normalizeTabOrder`), saved when they change. The tab bar uses ImGui's reorderable tabs; the order after a drag is read from ImGui's tab bar (internal API: `GetCurrentTabBar`, `TabBarGetTabName`; ImGui only re-sorts tabs by submission order when a tab is new). Settings → Tabs… (Up / Down, Default order) starts a new tab bar with the new order. Driver messages are now collected every frame whatever tab is shown.
 - Spec v0.36 (SPEC-UI-11 changed, SPEC-UI-12), Plan P18, T-UI-18. Linux 168/168, Wine 167/167; GUI on Xvfb (status line, link, drag, Tabs window, restart).
+
+## 8. Windows results; text size
+> when changing the text size it is not applied directly (was that ok) T-UI-15 now ok; T-UI-16 is now OK; the rest i will test later
+- T-UI-15 (maximised start) and T-UI-16 (no jumping) pass on Windows.
+- The text size was not OK (SPEC-UI-08 says at once): ImGui sets `style.FontSizeBase` back to the size in use during a frame, so a change from Ctrl+= or View → Text size was only saved and applied at the next start. Not caused by the ImGui update (v1.92.9 does the same). Fixed by also setting `_NextFrameFontSizeBase`, as ImGui's own style editor does; checked on Xvfb (16 → 20 px at once). T-UI-12 now says "at once".
