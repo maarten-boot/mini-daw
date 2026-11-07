@@ -8,6 +8,7 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/devices.cpp
+    core/src/folder_browse.cpp
     core/src/instrument.cpp
     core/src/instrument_rack.cpp
     core/src/render.cpp
@@ -40,7 +41,7 @@ endif()
 
 if(MINIDAW_BUILD_APP)
     # The program's code, built once and linked into the programs below.
-    add_library(minidaw_app OBJECT app/main.cpp app/imgui_theme.cpp app/plugin_window.cpp)
+    add_library(minidaw_app OBJECT app/main.cpp app/imgui_theme.cpp app/plugin_window.cpp app/folder_chooser.cpp)
     if(WIN32)
         target_sources(minidaw_app PRIVATE app/renderer_d3d11.cpp)
     else()
@@ -48,7 +49,8 @@ if(MINIDAW_BUILD_APP)
     endif()
     target_link_libraries(minidaw_app PUBLIC minidaw_core minidaw_imgui PRIVATE minidaw_warnings)
     if(WIN32)
-        target_link_libraries(minidaw_app PUBLIC shell32)  # ShellExecuteW: View > Log > Open log folder
+        # shell32: ShellExecuteW (View > Log > Open log folder) and the folder dialog (P19); ole32 / uuid: COM
+        target_link_libraries(minidaw_app PUBLIC shell32 ole32 uuid)
     endif()
 
     if(WIN32)

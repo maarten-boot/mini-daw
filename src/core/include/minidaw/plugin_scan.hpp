@@ -60,6 +60,14 @@ PluginCache loadPluginCache(const std::filesystem::path& file);         // missi
 // Linux: ~/.vst3, /usr/lib/vst3, /usr/local/lib/vst3.
 std::vector<std::filesystem::path> standardVst3Folders();
 
+// Checks a folder before it is added to the instrument folders (P19, SPEC-VST-01a):
+// returns an error (it does not exist, is not a folder, is already listed as an
+// added or standard folder (same folder, also spelled otherwise), or 8 are added
+// already), else empty. `note` says when no `.vst3` module is in it (yet); the
+// folder can still be added. `folder` is the cleaned text (cleanPathText).
+std::string checkInstrumentFolder(const std::filesystem::path& folder, const std::vector<std::string>& added,
+                                  const std::vector<std::filesystem::path>& standard, std::string& note);
+
 // Every module below the folders (a `.vst3` folder is not searched inside), sorted.
 std::vector<std::filesystem::path> findVst3Modules(const std::vector<std::filesystem::path>& folders);
 

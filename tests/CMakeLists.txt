@@ -20,6 +20,7 @@ add_executable(minidaw_tests
     test_player.cpp
     test_project.cpp
     test_plugins.cpp
+    test_folders.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 

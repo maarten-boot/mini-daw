@@ -224,6 +224,30 @@ std::vector<fs::path> standardVst3Folders()
     return out;
 }
 
+std::string checkInstrumentFolder(const fs::path& folder, const std::vector<std::string>& added,
+                                  const std::vector<fs::path>& standard, std::string& note)
+{
+    note.clear();
+    const std::string shown = pathToUtf8(folder);
+    if (folder.empty()) return "Type or browse to a folder first.";
+    std::error_code ec;
+    if (!fs::exists(folder, ec)) return "The folder " + shown + " does not exist.";
+    if (!fs::is_directory(folder, ec)) return shown + " is not a folder.";
+    const auto same = [&](const fs::path& other) {
+        std::error_code e;
+        return fs::equivalent(folder, other, e) && !e;
+    };
+    for (const auto& s : standard) {
+        if (same(s)) return shown + " is a standard folder: it is always searched.";
+    }
+    for (const auto& a : added) {
+        if (same(pathFromUtf8(a))) return shown + " is in the list already.";
+    }
+    if (added.size() >= 8) return "At most 8 folders can be added; remove one first.";
+    if (findVst3Modules({folder}).empty()) note = "No VST3 instrument (.vst3) is in it (yet).";
+    return {};
+}
+
 std::vector<fs::path> findVst3Modules(const std::vector<fs::path>& folders)
 {
     std::vector<fs::path> out;

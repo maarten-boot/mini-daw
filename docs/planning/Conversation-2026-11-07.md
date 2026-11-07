@@ -52,3 +52,13 @@ Continues `Conversation-2026-11-06.md` (window place, auto record P16, crosschec
 - U1: keyboard navigation on in every window; Space and Home are owned by mini-daw each frame so they stay Play / Stop and To start (ImGui's navigation would otherwise press the focused control with Space). New SPEC-UI-13, T-UI-20.
 - U2–U8 as proposed (see Crosscheck #13, actions). The keyboard GUI test of the Tabs dialog found a new bug in the U4 change (one Down press moved a tab two places); fixed by moving after the rows are drawn.
 - Spec v0.37, Plan P18a, T-UI-18 extended, T-UI-19, T-UI-20. Linux 169/169, Wine 168/168; GUI on Xvfb.
+
+## 11. Linux build in dist/; Browse buttons (P19)
+> when you build a test windows exe also build a linux fresh please, the dist/*/files are now of a different timestamp
+- `dist/linux` was from 2026-11-05. Now all of `dist/` is emptied and both CI builds of one run go in (Windows and Linux, run 42411813163); saved as a working rule (memory).
+> when adding a vst folder do i have to type the path or is there a file browser that i can use to find and accept an existing path ?
+- Answer: typed only, and not checked. Proposed Browse… buttons for every folder field and a check when adding.
+> yes do P19 with browse buttons; and probably a way to remove folders as well
+- There was a remove button ("X"), but after the path: for a long path outside the window (likely why it was not seen). Now **Remove** in front of each added folder.
+- Browse… on the five folder fields: Windows uses the system "Select folder" dialog on its own thread (mini-daw keeps running); Linux uses a folder browser drawn in mini-daw. Adding checks the folder (exists, not a file, not standard, not listed, at most 8; remark when no `.vst3`). SPEC-UI-14, SPEC-VST-01b, Spec v0.38, Plan P19, T-UI-21–23, T-VST-32.
+- Under Wine the audio stream did not start, which showed the stopped-stream line (left open in T-UI-18): its Audio setup button was outside the window; now in front of the text. Linux 171/171, Wine 170/170; GUI on Xvfb and Wine.

@@ -13,6 +13,7 @@
 //   mini-daw --contrast-report     print every colour pair and its contrast, then exit
 //   mini-daw --version             print the version, then exit
 
+#include "folder_chooser.hpp"
 #include "icon_data.hpp"
 #include "imgui_theme.hpp"
 #include "plugin_window.hpp"
@@ -21,6 +22,7 @@
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
+#include "minidaw/folder_browse.hpp"
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
 #include "minidaw/log.hpp"
@@ -188,6 +190,8 @@ struct AppState {
     bool scanRetryBad = false;
     bool showInstruments = false;
     std::string instrumentFolderInput;
+    std::string instrumentFolderError;   // Add folder refused (P19)
+    std::string instrumentFolderNote;    // added, with a remark (no .vst3 in it yet)
     std::map<int, std::unique_ptr<minidaw::Vst3Instrument>> instruments;  // by track number
     std::string rackSignature;               // what the rack was configured for
     std::vector<std::pair<std::string, minidaw::SpscRing<minidaw::RawMidi>*>> rackTaps;
@@ -198,6 +202,10 @@ struct AppState {
     // Plugin editor windows (P10d), by track number; closed before their
     // instruments are unloaded.
     minidaw::app::PluginWindows pluginWindows;
+    // Browse... buttons (P19, SPEC-UI-14): one folder chooser; what it fills in.
+    enum class BrowseFor { None, InstrumentFolder, ProjectFolder, RecordingFolder, TakeFolder };
+    minidaw::app::FolderChooser folderChooser;
+    BrowseFor browseFor = BrowseFor::None;
     GLFWwindow* mainWindow = nullptr;
     // Rendering a MIDI take through its instrument (P11c): one at a time.
     minidaw::OfflineRenderer renderer;
@@ -1119,19 +1127,21 @@ void pollAudioMessages(AppState& app)
 void drawAudioStatusLine(AppState& app)
 {
     const auto& info = app.audio.info();
-    const auto goToSetup = [&app](const char* label) {  // one label per place: unique IDs (U3)
-        ImGui::SameLine();
+    // The button goes in front of the text: after a long wrapped text it would be
+    // outside the window (seen under Wine, P19). One label per place: unique IDs (U3).
+    const auto goToSetup = [&app](const char* label) {
         if (ImGui::SmallButton(label)) app.selectTab = "audio";
+        ImGui::SameLine();
     };
     if (!info.running) {
-        ImGui::TextWrapped("Audio stream stopped. %s", app.audioError.c_str());
         goToSetup("Audio setup##stopped");
+        ImGui::TextWrapped("Audio stream stopped. %s", app.audioError.c_str());
         return;
     }
     if (app.streamStalled) {
+        goToSetup("Audio setup##stalled");
         ImGui::TextWrapped("ERROR: the audio stream has stopped (no audio callback for more than 1 second). "
                            "Try Settings > Audio devices > Apply.");
-        goToSetup("Audio setup##stalled");
     }
     ImGui::Text("Audio: %s, %u Hz, %u frames   Dropouts: %llu", info.api.c_str(), info.sampleRate, info.bufferFrames,
                 static_cast<unsigned long long>(app.audio.xruns()));
@@ -1146,8 +1156,8 @@ void drawAudioStatusLine(AppState& app)
         drawMeter(app, out, 10 * ImGui::GetFontSize());
     }
     if (!app.audioWarnings.empty()) {
-        ImGui::Text("%zu note(s) about the audio stream.", app.audioWarnings.size());
         goToSetup("Audio setup##notes");
+        ImGui::Text("%zu note(s) about the audio stream.", app.audioWarnings.size());
     }
 }
 
@@ -1641,6 +1651,39 @@ void updateInstruments(AppState& app)
     }
 }
 
+// A Browse... button after a folder field (P19, SPEC-UI-14): opens the folder
+// chooser in the folder typed (or the nearest one above it), else `fallback`.
+void browseButton(AppState& app, AppState::BrowseFor what, const std::string& typed,
+                  const std::filesystem::path& fallback, const char* title)
+{
+    ImGui::SameLine();
+    ImGui::PushID(static_cast<int>(what));
+    ImGui::BeginDisabled(app.folderChooser.active());
+    if (ImGui::Button("Browse...")) {
+        app.browseFor = what;
+        app.folderChooser.open(app.mainWindow, title, minidaw::browseStart(typed, fallback));
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+}
+
+// Add folder (P19): the folder must exist, be new and not a standard one.
+void addInstrumentFolder(AppState& app)
+{
+    const std::string text = minidaw::cleanPathText(app.instrumentFolderInput);
+    std::string note;
+    const std::string error = minidaw::checkInstrumentFolder(minidaw::pathFromUtf8(text), app.config.instruments.folders,
+                                                             minidaw::standardVst3Folders(), note);
+    app.instrumentFolderError = error;
+    app.instrumentFolderNote.clear();
+    if (!error.empty()) return;
+    app.config.instruments.folders.push_back(text);
+    app.instrumentFolderInput.clear();
+    app.instrumentFolderNote = "Added " + text + (note.empty() ? "." : ". " + note) + " Press Scan to look for instruments.";
+    app.log.info("Instrument folder added: " + text);
+    saveConfig(app);
+}
+
 void drawInstrumentsWindow(AppState& app)
 {
     if (!app.showInstruments) return;
@@ -1649,30 +1692,44 @@ void drawInstrumentsWindow(AppState& app)
     if (ImGui::Begin("Instruments (VST\xc2\xae" "3)###instruments", &app.showInstruments)) {
         ImGui::TextWrapped("VST is a registered trademark of Steinberg Media Technologies GmbH.");  // SPEC-LIC-05
         ImGui::SeparatorText("Folders");
+        ImGui::TextUnformatted("Always searched:");
         for (const auto& f : minidaw::standardVst3Folders()) ImGui::BulletText("%s", minidaw::pathToUtf8(f).c_str());
+        if (!app.config.instruments.folders.empty()) ImGui::TextUnformatted("Added by you:");
         int removeIndex = -1;
         for (std::size_t i = 0; i < app.config.instruments.folders.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
-            ImGui::BulletText("%s", app.config.instruments.folders[i].c_str());
+            // The button first: after a long path it would be outside the window (P19).
+            if (ImGui::SmallButton("Remove")) removeIndex = static_cast<int>(i);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take this folder off the list (nothing is deleted)");
             ImGui::SameLine();
-            if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this folder");
+            ImGui::TextWrapped("%s", app.config.instruments.folders[i].c_str());
             ImGui::PopID();
         }
         if (removeIndex >= 0) {
+            const std::string gone = app.config.instruments.folders[static_cast<std::size_t>(removeIndex)];
             app.config.instruments.folders.erase(app.config.instruments.folders.begin() + removeIndex);
+            app.instrumentFolderError.clear();
+            app.instrumentFolderNote = "Removed " + gone + " from the list. Press Scan to update the instruments.";
+            app.log.info("Instrument folder removed: " + gone);
             saveConfig(app);
         }
+        const bool full = app.config.instruments.folders.size() >= 8;
+        ImGui::BeginDisabled(full);
         ImGui::SetNextItemWidth(36 * em);
-        ImGui::InputText("##folder", &app.instrumentFolderInput);
+        const bool enter = ImGui::InputText("##folder", &app.instrumentFolderInput, ImGuiInputTextFlags_EnterReturnsTrue);
+        const auto standard = minidaw::standardVst3Folders();
+        browseButton(app, AppState::BrowseFor::InstrumentFolder, app.instrumentFolderInput,
+                     standard.empty() ? minidaw::homeFolder() : standard.front(), "Choose a folder with VST3 instruments");
         ImGui::SameLine();
-        ImGui::BeginDisabled(app.instrumentFolderInput.empty() || app.config.instruments.folders.size() >= 8);
-        if (ImGui::Button("Add folder")) {
-            app.config.instruments.folders.push_back(app.instrumentFolderInput);
-            app.instrumentFolderInput.clear();
-            saveConfig(app);
+        ImGui::BeginDisabled(minidaw::cleanPathText(app.instrumentFolderInput).empty());
+        if (ImGui::Button("Add folder") || (enter && !minidaw::cleanPathText(app.instrumentFolderInput).empty())) {
+            addInstrumentFolder(app);
         }
         ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        if (full) ImGui::TextUnformatted("8 folders added (the most): remove one to add another.");
+        if (!app.instrumentFolderError.empty()) ImGui::TextWrapped("Not added: %s", app.instrumentFolderError.c_str());
+        if (!app.instrumentFolderNote.empty()) ImGui::TextWrapped("%s", app.instrumentFolderNote.c_str());
 
         ImGui::SeparatorText("Scan");
         ImGui::BeginDisabled(app.scanning);
@@ -1974,6 +2031,8 @@ void drawProjectDialog(AppState& app)
             ImGui::EndChild();
             ImGui::SetNextItemWidth(36 * em);
             ImGui::InputText("Folder", &app.projectFolderInput);
+            browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
+                         "Choose the folder of a project");
             if (ImGui::Button("Open") && openProject(app, minidaw::pathFromUtf8(app.projectFolderInput))) {
                 app.projectDialog = D::None;
             }
@@ -1982,6 +2041,8 @@ void drawProjectDialog(AppState& app)
             ImGui::InputText("Name", &app.projectNameInput);
             ImGui::SetNextItemWidth(36 * em);
             ImGui::InputText("In folder", &app.projectFolderInput);
+            browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
+                         "Choose the folder to make the project in");
             const std::string name = minidaw::safeFileName(app.projectNameInput);
             const std::filesystem::path target = minidaw::pathFromUtf8(app.projectFolderInput) / minidaw::pathFromUtf8(name);
             if (!app.projectNameInput.empty()) ImGui::TextWrapped("Project folder: %s", minidaw::pathToUtf8(target).c_str());
@@ -3183,6 +3244,8 @@ void drawRecordingSettingsWindow(AppState& app)
         auto& p = app.pendingRecording;
         ImGui::SetNextItemWidth(30 * em);
         ImGui::InputText("Folder", &p.folder);
+        browseButton(app, AppState::BrowseFor::RecordingFolder, p.folder, minidaw::recordingFolder(app.config.recording),
+                     "Choose the folder for recordings");
         ImGui::TextWrapped("Empty = %s", minidaw::pathToUtf8(minidaw::defaultRecordingFolder()).c_str());
         const char* timingText = p.midiTiming == minidaw::MidiTiming::Smpte ? "SMPTE, 1 ms ticks"
                                                                             : "960 PPQ at 120 BPM (default)";
@@ -3404,6 +3467,8 @@ void drawTakeBrowser(AppState& app)
         ImGui::EndChild();
         ImGui::SetNextItemWidth(34 * em);
         ImGui::InputText("Folder", &app.takeFolderInput);
+        browseButton(app, AppState::BrowseFor::TakeFolder, app.takeFolderInput, activeTakesFolder(app),
+                     "Choose a take folder");
         if (ImGui::Button("Open") && !app.takeFolderInput.empty()) {
             openTakeFolder(app, minidaw::pathFromUtf8(app.takeFolderInput));
         }
@@ -3415,6 +3480,28 @@ void drawTakeBrowser(AppState& app)
         if (!app.takeBrowserError.empty()) ImGui::TextWrapped("%s", app.takeBrowserError.c_str());
     }
     ImGui::End();
+}
+
+// The folder chosen with a Browse... button goes into its field (P19); an
+// instrument folder is added at once (with the same checks as Add folder).
+void updateFolderChooser(AppState& app)
+{
+    std::filesystem::path chosen;
+    const bool got = app.folderChooser.update(chosen);
+    if (const std::string note = app.folderChooser.takeNote(); !note.empty()) app.log.warning("Folder dialog: " + note);
+    if (!got) return;
+    const std::string text = minidaw::pathToUtf8(chosen);
+    switch (app.browseFor) {
+    case AppState::BrowseFor::InstrumentFolder:
+        app.instrumentFolderInput = text;
+        addInstrumentFolder(app);
+        break;
+    case AppState::BrowseFor::ProjectFolder: app.projectFolderInput = text; break;
+    case AppState::BrowseFor::RecordingFolder: app.pendingRecording.folder = text; break;
+    case AppState::BrowseFor::TakeFolder: app.takeFolderInput = text; break;
+    case AppState::BrowseFor::None: break;
+    }
+    app.browseFor = AppState::BrowseFor::None;
 }
 
 void drawStatusLine(const AppState& app)
@@ -3740,6 +3827,7 @@ int runGui(AppState& app)
         drawTakeBrowser(app);
         drawProjectDialog(app);
         drawInstrumentsWindow(app);
+        updateFolderChooser(app);
 
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
