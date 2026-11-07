@@ -482,3 +482,50 @@ Scope: Spec v0.36, Plan, Tests, README, Demo-checklist, code at commit `cc9a41d`
 | U8 | `addNote`: a repeated driver message is counted ("… (3 times)"), at most 50 notes, then "More notes: see View > Log."; every message stays in the log. T-UI-19. |
 
 Spec v0.37. Linux 169/169, Wine 168/168 (the daylight-saving case is Linux-only); GUI on Xvfb as above.
+
+# Crosscheck #14 — 2026-11-07 (after P19: Browse… buttons, instrument folders checked)
+
+Scope: Spec v0.38, Plan, Tests, README, Demo-checklist, code at commit `a2e4458` (changes since `1ffbaff`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Claude checked the findings at the lines named; V1 reproduced with a small program (libstdc++ throws "Cannot convert character sequence" for `path("caf\xe9").filename().wstring()`). V2 and V9 are Windows behaviour that cannot be checked here.
+
+| Area | Verdict |
+|------|---------|
+| Audio thread | ✅ nothing new reaches the callback |
+| Dialog thread (Windows) | ✅ data handed over under a mutex, joined before reuse, COM per thread; ⚠️ closing mini-daw while the dialog is open **V2**; input queues **V9** |
+| Folder browser | ❌ a folder name that is not UTF-8 ends mini-daw (Linux) **V1**; ⚠️ **V5**, **V6** |
+| Adding a folder | ⚠️ a whole-disk folder stalls the window **V3**; pasted quotes only cleaned in the instrument field **V8** |
+| Keyboard | ⚠️ Ctrl+R and Space act behind the open browser **V4** |
+| Results | ✅ one chooser at a time; ⚠️ a refused folder not shown if its window closed **V7** |
+| Spec ↔ code ↔ docs | ⚠️ **V11** |
+| Spec ↔ tests | ⚠️ **V10** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| V1 | medium | `listSubfolders` uses `filename().wstring()` (hidden test, sort key); on Linux that throws for a name that is not valid UTF-8 (e.g. Latin-1 `café` from an old disk or archive). Nothing catches it: browsing into such a folder ends mini-daw. | Compare on `u8string()` (no conversion), fold case on ASCII only (Windows: `towlower` on the wide name); catch filesystem errors in the listing and report them. Test with such a name (Linux). |
+| V2 | medium (Windows, unverified) | Closing mini-daw while the Windows folder dialog is open (taskbar Close, sign-out) ends the main loop; the dialog belongs to another thread and is probably not closed with the main window, so `~FolderChooser` waits on it after the window is gone: mini-daw keeps running invisibly until the dialog is closed. | While the dialog is open, a close request is held: the dialog is cancelled first (`IFileDialog::Close`), then mini-daw closes. T-UI-23 step. |
+| V3 | medium-low | Adding a folder searches it fully for `.vst3` on the GUI thread only to give the "no .vst3" remark; Browse to `C:\`, `/` or the home folder stalls the window (meters, auto record part ends) for as long as that takes. A folder above a standard folder (e.g. `/usr/lib`) is accepted and makes every Scan walk it. | Stop at the first `.vst3`, with a limit on depth and time ("not searched fully"); remark when the folder contains a standard folder. |
+| V4 | low | While the folder browser (a modal window) is open, Ctrl+R, Space, Home and Ctrl+L still act on the transport behind it: a recording can start unseen. | No global shortcuts while a modal window is open; Escape closes it. Spec SPEC-UI-13. |
+| V5 | low | Folder names are ImGui labels: a folder named `a##b` shows as `a`; `x###y` takes another ID. | Label with an explicit ID per row (`PushID(i)`, text as data). |
+| V6 | low | A start folder typed with a trailing `/` stays `/a/b/`: the first Up goes to `/a/b` (no visible change); the slash is also stored. | Drop a trailing separator (not on roots) in `browseStart` and when adding. Test. |
+| V7 | low | A Browse result for the instrument folders is refused silently if the Instruments window was closed meanwhile (not possible today: the browser is modal; the Windows dialog owns the main window). | Log refusals too (they are user actions). |
+| V8 | low | Quotes and spaces around a pasted path are removed only in the instrument field; Open project, Recording folder and Open take folder use the text as is (a path pasted with Explorer's "Copy as path" fails). | Clean all folder fields the same way. Spec SPEC-UI-14. |
+| V9 | low (Windows, unverified) | The dialog on its own thread with the main window as owner shares input with the main thread; a long frame (e.g. V3) would make the dialog slow to react. | Covered by V3 (no long work on the GUI thread); watch in T-UI-23. |
+| V10 | tests | Missing: non-ASCII and non-UTF-8 names, a trailing `/`, drive / UNC roots, symlinks, an unreadable folder, a parent / child of a standard folder, case on Windows. The add / refuse logic is in `main.cpp` and not unit-tested. | Add the tests; move "clean, check, add" into core and test it. |
+| V11 | docs | README status still says "steps P2–P18". The Demo-checklist does not say how to add a plugin folder outside the standard ones. | README P2–P19; one Demo-checklist line (Settings → Instruments → Browse…). |
+
+## Actions taken (user: "yes fix V1–V11, V1 first")
+| # | Done |
+|---|------|
+| V1 | `listSubfolders` compares names as bytes (Linux) / UTF-16 (Windows) without conversion, folds A–Z only on Linux, and catches file system errors (reported, not fatal). A folder that may not be read now says so (it looked empty). Tests: non-UTF-8, non-ASCII, CJK names, links, a closed folder. GUI: `caf\xe9` listed and opened. |
+| V2 | A close request while a folder is being chosen is held: the browser is closed, the Windows dialog is sent Close (as its Cancel) and asked again every 0.25 s until it is gone, then mini-daw closes. Wine: closed normally with the dialog open (see Tests: only partly isolated). |
+| V3 | The check stops at the first `.vst3` and looks at no more than 20000 entries ("not searched to the end"); the top of a drive / file system is refused; a folder holding a standard folder gets a remark. Tests. |
+| V4 | No shortcuts while a menu or a modal window (the browser) is open; there Space presses the control in focus and Escape closes the browser. GUI: Ctrl+= ignored in the browser, works after Escape. |
+| V5 | Folder names are drawn as text next to an ID-only selectable. GUI: `a##b`, `x###y` in full. |
+| V6 | A separator at the end is dropped (not on roots) in typed text and in where browsing starts. Tests. |
+| V7 | A refused instrument folder is also logged. |
+| V8 | Every folder field (Open project, New project, Recording folder on Apply, Open take folder) is cleaned like the instrument field. |
+| V9 | Covered by V3 (no long work on the GUI thread). Watch in T-UI-23. |
+| V10 | "Clean, check, add" moved into core (`addInstrumentFolder`, `hasVst3Module`) and tested; tests for V1, V3, V6, links, roots, case (Windows). |
+| V11 | README "P2–P19"; Demo-checklist: Browse… for a plugin folder elsewhere. Spec v0.39 (SPEC-UI-13, SPEC-UI-14, SPEC-VST-01b); Plan P19a and the PX row. |
+
+Spec v0.39. Linux 173/173, Wine 172/172; GUI on Xvfb and Wine as above.

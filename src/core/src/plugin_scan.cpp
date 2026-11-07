@@ -2,6 +2,7 @@
 
 #include "console_capture.hpp"
 #include "no_error_dialogs.hpp"
+#include "minidaw/folder_browse.hpp"
 #include "minidaw/path_util.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -224,8 +225,24 @@ std::vector<fs::path> standardVst3Folders()
     return out;
 }
 
+bool hasVst3Module(const fs::path& folder, std::size_t maxEntries, bool& complete)
+{
+    complete = true;
+    std::error_code ec;
+    fs::recursive_directory_iterator it(folder, fs::directory_options::skip_permission_denied, ec), end;
+    std::size_t seen = 0;
+    for (; !ec && it != end; it.increment(ec)) {
+        if (++seen > maxEntries) {
+            complete = false;
+            return false;
+        }
+        if (it->path().extension() == ".vst3") return true;
+    }
+    return false;
+}
+
 std::string checkInstrumentFolder(const fs::path& folder, const std::vector<std::string>& added,
-                                  const std::vector<fs::path>& standard, std::string& note)
+                                  const std::vector<fs::path>& standard, std::string& note, std::size_t maxEntries)
 {
     note.clear();
     const std::string shown = pathToUtf8(folder);
@@ -233,6 +250,10 @@ std::string checkInstrumentFolder(const fs::path& folder, const std::vector<std:
     std::error_code ec;
     if (!fs::exists(folder, ec)) return "The folder " + shown + " does not exist.";
     if (!fs::is_directory(folder, ec)) return shown + " is not a folder.";
+    const fs::path full = fs::weakly_canonical(fs::absolute(folder, ec), ec);
+    if (!full.empty() && full == full.root_path()) {
+        return shown + " is the top of a drive: a Scan would search all of it. Choose the folder with the plugins.";
+    }
     const auto same = [&](const fs::path& other) {
         std::error_code e;
         return fs::equivalent(folder, other, e) && !e;
@@ -244,8 +265,34 @@ std::string checkInstrumentFolder(const fs::path& folder, const std::vector<std:
         if (same(pathFromUtf8(a))) return shown + " is in the list already.";
     }
     if (added.size() >= 8) return "At most 8 folders can be added; remove one first.";
-    if (findVst3Modules({folder}).empty()) note = "No VST3 instrument (.vst3) is in it (yet).";
+    // Remarks (V3): a standard folder inside it; no module found (searched quickly).
+    for (const auto& s : standard) {
+        std::error_code e;
+        const fs::path sf = fs::weakly_canonical(s, e);
+        if (e || full.empty()) continue;
+        const auto [fe, se] = std::mismatch(full.begin(), full.end(), sf.begin(), sf.end());
+        if (fe == full.end() && se != sf.end()) {
+            note += "It holds the standard folder " + pathToUtf8(s) + ": a Scan searches all of " + shown +
+                    ", which can take long. ";
+            break;
+        }
+    }
+    bool complete = true;
+    if (!hasVst3Module(folder, maxEntries, complete)) {
+        note += complete ? "No VST3 instrument (.vst3) is in it (yet)."
+                         : "It is large: not searched to the end for .vst3 instruments (Scan does).";
+    }
+    while (!note.empty() && note.back() == ' ') note.pop_back();
     return {};
+}
+
+std::string addInstrumentFolder(std::vector<std::string>& added, std::string_view text,
+                                const std::vector<fs::path>& standard, std::string& note)
+{
+    const std::string clean = cleanPathText(text);
+    const std::string error = checkInstrumentFolder(pathFromUtf8(clean), added, standard, note);
+    if (error.empty()) added.push_back(clean);
+    return error;
 }
 
 std::vector<fs::path> findVst3Modules(const std::vector<fs::path>& folders)

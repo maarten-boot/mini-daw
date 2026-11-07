@@ -11,7 +11,8 @@
 namespace minidaw {
 
 // Text typed or pasted as a path: spaces around it and one pair of quotes
-// around it removed (Windows Explorer "Copy as path" adds quotes).
+// around it removed (Windows Explorer "Copy as path" adds quotes), and a
+// separator at the end (not that of a root such as "/" or "C:\\").
 std::string cleanPathText(std::string_view text);
 
 struct FolderListing {

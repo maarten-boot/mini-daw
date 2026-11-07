@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace minidaw {
@@ -60,13 +61,26 @@ PluginCache loadPluginCache(const std::filesystem::path& file);         // missi
 // Linux: ~/.vst3, /usr/lib/vst3, /usr/local/lib/vst3.
 std::vector<std::filesystem::path> standardVst3Folders();
 
-// Checks a folder before it is added to the instrument folders (P19, SPEC-VST-01a):
-// returns an error (it does not exist, is not a folder, is already listed as an
-// added or standard folder (same folder, also spelled otherwise), or 8 are added
-// already), else empty. `note` says when no `.vst3` module is in it (yet); the
-// folder can still be added. `folder` is the cleaned text (cleanPathText).
+// Checks a folder before it is added to the instrument folders (P19, SPEC-VST-01b):
+// returns an error (it does not exist, is not a folder, is the top of a drive
+// or file system, is already listed as an added or standard folder (same
+// folder, also spelled otherwise), or 8 are added already), else empty. `note`
+// gives remarks; the folder can still be added: no `.vst3` module is in it
+// (yet), or it was not searched to the end (more than `maxEntries` entries:
+// the window must not stall, crosscheck #14, V3), or it holds a standard folder
+// (a Scan then searches all of it). `folder` is the cleaned text (cleanPathText).
 std::string checkInstrumentFolder(const std::filesystem::path& folder, const std::vector<std::string>& added,
-                                  const std::vector<std::filesystem::path>& standard, std::string& note);
+                                  const std::vector<std::filesystem::path>& standard, std::string& note,
+                                  std::size_t maxEntries = 20000);
+
+// Cleans `text` (cleanPathText), checks it and adds it to `added` (V10).
+// Returns the error (nothing added) or empty; `note` as above.
+std::string addInstrumentFolder(std::vector<std::string>& added, std::string_view text,
+                                const std::vector<std::filesystem::path>& standard, std::string& note);
+
+// Whether a `.vst3` module is below `folder`, looking at no more than
+// `maxEntries` entries; `complete` is false when it stopped at that limit.
+bool hasVst3Module(const std::filesystem::path& folder, std::size_t maxEntries, bool& complete);
 
 // Every module below the folders (a `.vst3` folder is not searched inside), sorted.
 std::vector<std::filesystem::path> findVst3Modules(const std::vector<std::filesystem::path>& folders);

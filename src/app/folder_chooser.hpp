@@ -26,6 +26,11 @@ public:
     // Starts choosing, beginning in `start`. Ignored while one is open.
     void open(GLFWwindow* owner, const std::string& title, const std::filesystem::path& start);
     bool active() const;
+    // The Windows dialog is still open (its thread runs).
+    bool nativeOpen() const;
+    // Cancels choosing (mini-daw is closing, V2): the browser closes at once; the
+    // Windows dialog is asked to close (as with its Cancel button).
+    void cancel();
 
     // Every frame, outside other windows: draws the ImGui browser when it is
     // used. Returns true once when a folder was chosen (in `chosen`); false

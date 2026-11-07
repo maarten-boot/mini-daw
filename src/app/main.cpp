@@ -1670,14 +1670,16 @@ void browseButton(AppState& app, AppState::BrowseFor what, const std::string& ty
 // Add folder (P19): the folder must exist, be new and not a standard one.
 void addInstrumentFolder(AppState& app)
 {
-    const std::string text = minidaw::cleanPathText(app.instrumentFolderInput);
     std::string note;
-    const std::string error = minidaw::checkInstrumentFolder(minidaw::pathFromUtf8(text), app.config.instruments.folders,
-                                                             minidaw::standardVst3Folders(), note);
+    const std::string error = minidaw::addInstrumentFolder(app.config.instruments.folders, app.instrumentFolderInput,
+                                                           minidaw::standardVst3Folders(), note);
     app.instrumentFolderError = error;
     app.instrumentFolderNote.clear();
-    if (!error.empty()) return;
-    app.config.instruments.folders.push_back(text);
+    if (!error.empty()) {
+        app.log.warning("Instrument folder not added: " + error);  // also seen if its window is closed (V7)
+        return;
+    }
+    const std::string text = app.config.instruments.folders.back();
     app.instrumentFolderInput.clear();
     app.instrumentFolderNote = "Added " + text + (note.empty() ? "." : ". " + note) + " Press Scan to look for instruments.";
     app.log.info("Instrument folder added: " + text);
@@ -2033,7 +2035,8 @@ void drawProjectDialog(AppState& app)
             ImGui::InputText("Folder", &app.projectFolderInput);
             browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
                          "Choose the folder of a project");
-            if (ImGui::Button("Open") && openProject(app, minidaw::pathFromUtf8(app.projectFolderInput))) {
+            if (ImGui::Button("Open") &&
+                openProject(app, minidaw::pathFromUtf8(minidaw::cleanPathText(app.projectFolderInput)))) {
                 app.projectDialog = D::None;
             }
         } else {
@@ -2044,7 +2047,8 @@ void drawProjectDialog(AppState& app)
             browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
                          "Choose the folder to make the project in");
             const std::string name = minidaw::safeFileName(app.projectNameInput);
-            const std::filesystem::path target = minidaw::pathFromUtf8(app.projectFolderInput) / minidaw::pathFromUtf8(name);
+            const std::filesystem::path target =
+                minidaw::pathFromUtf8(minidaw::cleanPathText(app.projectFolderInput)) / minidaw::pathFromUtf8(name);
             if (!app.projectNameInput.empty()) ImGui::TextWrapped("Project folder: %s", minidaw::pathToUtf8(target).c_str());
             if (app.projectDialog == D::SaveAs) {
                 ImGui::TextWrapped("The current tracks are saved there; their takes are copied into the new folder.");
@@ -3283,6 +3287,7 @@ void drawRecordingSettingsWindow(AppState& app)
         }
         ImGui::BeginDisabled(app.session.recording());
         if (ImGui::Button("Apply")) {
+            p.folder = minidaw::cleanPathText(p.folder);  // quotes / spaces around a pasted path (V8)
             app.config.recording = p;
             saveConfig(app);
         }
@@ -3470,7 +3475,7 @@ void drawTakeBrowser(AppState& app)
         browseButton(app, AppState::BrowseFor::TakeFolder, app.takeFolderInput, activeTakesFolder(app),
                      "Choose a take folder");
         if (ImGui::Button("Open") && !app.takeFolderInput.empty()) {
-            openTakeFolder(app, minidaw::pathFromUtf8(app.takeFolderInput));
+            openTakeFolder(app, minidaw::pathFromUtf8(minidaw::cleanPathText(app.takeFolderInput)));
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -3703,7 +3708,24 @@ int runGui(AppState& app)
     showMainWindow(window, startMaximized);
 
     bool quit = false;
-    while (!quit && !glfwWindowShouldClose(window)) {
+    bool quitAfterChooser = false;
+    while (!quit) {
+        // Closing while a folder is being chosen (crosscheck #14, V2): the chooser is
+        // cancelled first (the Windows dialog runs on its own thread and would keep
+        // mini-daw alive without a window), then mini-daw closes.
+        if (glfwWindowShouldClose(window)) {
+            if (!app.folderChooser.active()) break;
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+            quitAfterChooser = true;
+        }
+        if (quitAfterChooser) {
+            if (!app.folderChooser.nativeOpen()) break;
+            static double lastAsk = -1.0;  // asked again now and then: the dialog may not have been up yet
+            if (glfwGetTime() - lastAsk > 0.25) {
+                app.folderChooser.cancel();
+                lastAsk = glfwGetTime();
+            }
+        }
         glfwPollEvents();
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
@@ -3715,22 +3737,28 @@ int runGui(AppState& app)
         minidaw::app::rendererNewFrame(window);
         ImGui::NewFrame();
 
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_UpArrow)) stepContrast(app, +1);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_DownArrow)) stepContrast(app, -1);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal) ||
-            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd))
-            setFontSize(app, app.config.fontSize + 2, true);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) ||
-            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
-            setFontSize(app, app.config.fontSize - 2, true);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) setFontSize(app, minidaw::kDefaultFontSize, true);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) toggleRecording(app);
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_L)) app.showLog = !app.showLog;
-        if (!ImGui::GetIO().WantTextInput) {  // not while typing a name
-            if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) togglePlay(app);
-            if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) returnToStart(app);
+        // No shortcuts while a modal window (the folder browser) or a menu is open: they
+        // would act unseen behind it, e.g. start a recording (crosscheck #14, V4).
+        const bool shortcuts = !app.folderChooser.active() &&
+                               !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (shortcuts) {
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_UpArrow)) stepContrast(app, +1);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_DownArrow)) stepContrast(app, -1);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal) ||
+                ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd))
+                setFontSize(app, app.config.fontSize + 2, true);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) ||
+                ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
+                setFontSize(app, app.config.fontSize - 2, true);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0)) setFontSize(app, minidaw::kDefaultFontSize, true);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) toggleRecording(app);
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_L)) app.showLog = !app.showLog;
+            if (!ImGui::GetIO().WantTextInput) {  // not while typing a name
+                if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) togglePlay(app);
+                if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) returnToStart(app);
+            }
+            claimTransportKeys();  // in a modal window Space presses the control in focus again
         }
-        claimTransportKeys();
         ensureDefaultTracks(app);
         syncMidiPorts(app);
         updateMeters(app);

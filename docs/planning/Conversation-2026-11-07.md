@@ -62,3 +62,13 @@ Continues `Conversation-2026-11-06.md` (window place, auto record P16, crosschec
 - There was a remove button ("X"), but after the path: for a long path outside the window (likely why it was not seen). Now **Remove** in front of each added folder.
 - Browse… on the five folder fields: Windows uses the system "Select folder" dialog on its own thread (mini-daw keeps running); Linux uses a folder browser drawn in mini-daw. Adding checks the folder (exists, not a file, not standard, not listed, at most 8; remark when no `.vst3`). SPEC-UI-14, SPEC-VST-01b, Spec v0.38, Plan P19, T-UI-21–23, T-VST-32.
 - Under Wine the audio stream did not start, which showed the stopped-stream line (left open in T-UI-18): its Audio setup button was outside the window; now in front of the text. Linux 171/171, Wine 170/170; GUI on Xvfb and Wine.
+
+## 12. CI of `a2e4458`, crosscheck #14
+> pushed it, do the crosscheck after P19
+- Run 42419274839 green (Linux 171/171, Windows 172/172); both builds in `dist/`. Logged (`fcb075b`).
+- Crosscheck #14 (Spec v0.38, code at `a2e4458`, independent reviewer): V1 a folder name that is not UTF-8 ends mini-daw on Linux (reproduced); V2 closing mini-daw while the Windows dialog is open may leave it running (Windows, unverified); V3 adding a whole disk stalls the window; V4 shortcuts act behind the browser; V5–V9 small; V10 tests; V11 docs.
+
+## 13. Crosscheck #14 fixes (P19a)
+> yes fix V1–V11, V1 first
+- V1–V11 as proposed (see Crosscheck #14, actions). The new tests found that an unreadable folder looked empty; fixed. Closing with the Windows dialog open checked under Wine only partly (taskkill also closes the dialog); the real case is in T-UI-23.
+- Spec v0.39, Plan P19a. Linux 173/173, Wine 172/172; GUI on Xvfb and Wine.

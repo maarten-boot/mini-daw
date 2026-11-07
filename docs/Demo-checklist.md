@@ -6,7 +6,7 @@ For a short (about 5 minute) demo on Windows 10. Build: the CI download of run 4
 
 - [ ] Install with `mini-daw-0.1.0-setup.exe` (per user, no admin rights). Start it once from the Start menu.
 - [ ] **Settings → Audio devices…**: the output (speakers or headphones) and the input (Line In or the audio interface). Check that the **Output** meter (top line of the Recording tab; also on the Audio setup tab) moves when something plays.
-- [ ] **Settings → Instruments (VST®3)… → Scan**: the Arturia instruments appear in the list. A module that fails or crashes is listed with the reason and skipped from then on.
+- [ ] **Settings → Instruments (VST®3)… → Scan**: the Arturia instruments appear in the list. (Plugins in another folder: **Browse…**, choose that folder, then Scan.) A module that fails or crashes is listed with the reason and skipped from then on.
 - [ ] Plug in the MIDI keyboard. Add a MIDI track and arm it: its "messages / receiving" count moves when you play.
 - [ ] Text size (**Ctrl+=** / **Ctrl+−**) and window size: the whole track table must be visible, including the **Take** column. Maximise the window.
 - [ ] Close other audio programs (DAWs, browsers playing sound). Use **headphones**: they avoid feedback and hide the faint pulsing noise on the input.

@@ -36,6 +36,7 @@ struct FolderChooser::Impl {
     std::thread thread;
     std::mutex mutex;
     std::atomic<bool> nativeDone{false};
+    std::atomic<unsigned long> nativeThreadId{0};  // Windows thread id of the dialog's thread (for cancel)
     bool nativeChosen = false;     // with mutex
     bool nativeFailed = false;     // the dialog could not be made: use the browser
     fs::path nativeResult;         // with mutex
@@ -131,6 +132,32 @@ FolderChooser::~FolderChooser()
 
 bool FolderChooser::active() const { return impl_->mode != Impl::Mode::Idle; }
 
+bool FolderChooser::nativeOpen() const { return impl_->mode == Impl::Mode::Native && !impl_->nativeDone; }
+
+#ifdef _WIN32
+namespace {
+BOOL CALLBACK closeThreadWindow(HWND hwnd, LPARAM)
+{
+    if (IsWindowVisible(hwnd)) PostMessageW(hwnd, WM_CLOSE, 0, 0);  // the dialog: same as Cancel
+    return TRUE;
+}
+} // namespace
+#endif
+
+void FolderChooser::cancel()
+{
+    Impl& d = *impl_;
+    if (d.mode == Impl::Mode::Browser) {
+        d.mode = Impl::Mode::Idle;
+        return;
+    }
+#ifdef _WIN32
+    if (d.mode == Impl::Mode::Native && !d.nativeDone) {
+        if (const unsigned long tid = d.nativeThreadId; tid != 0) EnumThreadWindows(tid, closeThreadWindow, 0);
+    }
+#endif
+}
+
 std::string FolderChooser::takeNote()
 {
     std::string n;
@@ -153,7 +180,9 @@ void FolderChooser::open(GLFWwindow* owner, const std::string& title, const fs::
         d.nativeError.clear();
         d.mode = Impl::Mode::Native;
         HWND hwnd = owner ? glfwGetWin32Window(owner) : nullptr;
+        d.nativeThreadId = 0;
         d.thread = std::thread([&d, hwnd, t = widen(title), start]() {
+            d.nativeThreadId = GetCurrentThreadId();
             bool chosen = false;
             fs::path result;
             std::string error;
@@ -254,10 +283,18 @@ bool FolderChooser::update(fs::path& chosen)
         if (ImGui::BeginChild("folders", ImVec2(0, -footer), ImGuiChildFlags_Borders)) {
             if (!d.listing.error.empty()) ImGui::TextWrapped("%s", d.listing.error.c_str());
             if (d.listing.folders.empty() && d.listing.error.empty()) ImGui::TextUnformatted("(no folders inside)");
+            // A folder name is shown as text, not used as a label: "##" in a name
+            // would hide part of it or clash with another ID (V5).
             fs::path into;
+            int row = 0;
             for (const auto& f : d.listing.folders) {
                 const std::string name = pathToUtf8(f.filename()) + "/";
-                if (ImGui::Selectable(name.c_str())) into = f;
+                ImGui::PushID(row++);
+                const float x = ImGui::GetCursorPosX();
+                if (ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowOverlap)) into = f;
+                ImGui::SameLine(x);
+                ImGui::TextUnformatted(name.c_str());
+                ImGui::PopID();
             }
             if (!into.empty()) d.go(into);
         }
