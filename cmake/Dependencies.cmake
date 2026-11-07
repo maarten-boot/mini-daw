@@ -6,48 +6,45 @@ include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
 
 # ---------------------------------------------------------------------------
-# Declarations (name / tag are parsed by tools/check_licenses.py)
+# Declarations (name / tag are parsed by tools/check_licenses.py).
+# Each is pinned to the full commit hash of its release (a tag can be moved,
+# a hash cannot), with the release as a comment: the version THIRD_PARTY.md
+# must list. No GIT_SHALLOW: a shallow clone needs a branch or tag name.
+# CI keeps the fetched sources in its cache, keyed on this file.
 # ---------------------------------------------------------------------------
 FetchContent_Declare(rtaudio
     GIT_REPOSITORY https://github.com/thestk/rtaudio.git
-    GIT_TAG        6.0.1
-    GIT_SHALLOW    TRUE
+    GIT_TAG        b4f04903312e0e0efffbe77655172e0f060dc085  # 6.0.1
     SOURCE_SUBDIR  _not_a_cmake_project)   # we compile the sources ourselves
 
 FetchContent_Declare(rtmidi
     GIT_REPOSITORY https://github.com/thestk/rtmidi.git
-    GIT_TAG        6.0.0
-    GIT_SHALLOW    TRUE
+    GIT_TAG        7e31b5bfcc9350058fbaf81d62a8eb39dd29c5f7  # 6.1.0
     SOURCE_SUBDIR  _not_a_cmake_project)
 
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.92.9
-    GIT_SHALLOW    TRUE
+    GIT_TAG        c1aaac65e896a45f81f47a4d68f9959e0f86c859  # v1.93.0
     SOURCE_SUBDIR  _not_a_cmake_project)
 
 FetchContent_Declare(glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG        3.4
-    GIT_SHALLOW    TRUE)
+    GIT_TAG        d9d6f0f1f967807ffade6598ea9a631ebaf37a56)  # 3.5.1
 
 FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.12.0
-    GIT_SHALLOW    TRUE)
+    GIT_TAG        55f93686c01528224f448c19128836e7df245f72)  # v3.12.0
 
 # VST3 SDK (P10): only the parts a host needs; vstgui4 and doc are not fetched.
 FetchContent_Declare(vst3sdk
     GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
-    GIT_TAG        v3.8.1_build_84
-    GIT_SHALLOW    TRUE
+    GIT_TAG        3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96  # v3.8.1_build_84
     GIT_SUBMODULES "base;pluginterfaces;public.sdk"
     SOURCE_SUBDIR  _not_a_cmake_project)   # the hosting sources are compiled in src/CMakeLists.txt
 
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG        v3.16.1
-    GIT_SHALLOW    TRUE)
+    GIT_TAG        08092139210881f01a34e60c5f2fd6afa0ea4024)  # v3.16.1
 
 # ---------------------------------------------------------------------------
 # RtAudio — compiled directly, with only the backends we want.

@@ -7,9 +7,9 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 | Name | Version | Licence | Source | Used for |
 |------|---------|---------|--------|----------|
 | rtaudio | 6.0.1 | MIT | https://github.com/thestk/rtaudio | Audio input/output (WASAPI on Windows) |
-| rtmidi | 6.0.0 | MIT | https://github.com/thestk/rtmidi | MIDI input/output |
-| imgui | v1.92.9 | MIT | https://github.com/ocornut/imgui | GUI |
-| glfw | 3.4 | Zlib | https://github.com/glfw/glfw | Window, OpenGL context, input |
+| rtmidi | 6.1.0 | MIT | https://github.com/thestk/rtmidi | MIDI input/output |
+| imgui | v1.93.0 | MIT | https://github.com/ocornut/imgui | GUI |
+| glfw | 3.5.1 | Zlib | https://github.com/glfw/glfw | Window, OpenGL context, input |
 | nlohmann_json | v3.12.0 | MIT | https://github.com/nlohmann/json | Project files (JSON), header-only |
 | vst3sdk | v3.8.1_build_84 | MIT | https://github.com/steinbergmedia/vst3sdk | Hosting VST3 instruments (P10); only `base`, `pluginterfaces`, `public.sdk` |
 | catch2 | v3.16.1 | BSL-1.0 | https://github.com/catchorg/Catch2 | Unit tests (not part of the program) |

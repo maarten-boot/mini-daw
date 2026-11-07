@@ -17,19 +17,30 @@ namespace minidaw {
 struct RecordingInfo {
     std::filesystem::path folder;
     bool autoPart = false;                   // an auto record part (else a Record take)
-    std::int64_t start = 0;                  // local time from the folder name, as seconds (see recordingTime)
+    std::int64_t start = 0;                  // when it started, in real seconds: order and pauses (continuousTime)
+    std::int64_t clock = 0;                  // the local clock time in its name (recordingTime): the labels
     double seconds = 0.0;                    // the longest file in it
     std::vector<std::filesystem::path> files;  // "NN-name.wav" / ".mid", by name
+    std::vector<std::uintmax_t> fileSizes;     // with `files`: a folder read before is reused if unchanged
+    std::vector<std::string> problems;         // files whose length could not be read
 };
 
 // Start time from a folder name: "take-YYYYMMDD-HHMMSS" or (auto part)
-// "YYYY-MM-DD HH-MM-SS", either with an optional "-N" suffix. Seconds of the
-// local time as if it were UTC (only differences and the clock time are used).
+// "YYYY-MM-DD HH-MM-SS", either with an optional "-N" suffix (1-9 digits).
+// Seconds of the local clock time as if it were UTC: for the clock label.
 bool recordingTime(const std::string& folderName, bool autoPart, std::int64_t& seconds);
 
+// A local clock time (as recordingTime gives it) on one continuous scale, so
+// pauses across a daylight-saving change are right (crosscheck #12, T7).
+// Uses the computer's time zone; unchanged if it cannot be converted.
+std::int64_t continuousTime(std::int64_t clockSeconds);
+
 // The recordings in a takes folder (and its "auto" folder), oldest first.
-// Folders whose name has no time are left out.
-std::vector<RecordingInfo> listRecordings(const std::filesystem::path& base);
+// Folders whose name has no time, or that hold no .wav or .mid file, are left
+// out. A folder in `previous` whose files have the same names and sizes is
+// taken from there instead of reading its files again (T4).
+std::vector<RecordingInfo> listRecordings(const std::filesystem::path& base,
+                                          const std::vector<RecordingInfo>& previous = {});
 
 struct TimelineBlock {
     std::size_t index = 0;  // into the recordings given
@@ -50,7 +61,8 @@ struct TimelineLayout {
 // Recordings side by side in time order (they must be sorted by start):
 // `pixelsPerSecond` for the recordings and for gaps up to `maxRealGap`
 // seconds; a longer gap becomes a marker of `gapWidth` pixels labelled with
-// its real length. Blocks are at least `minWidth` wide.
+// its real length. Blocks are at least `minWidth` wide; a block never starts
+// before the end of the one before it in the same row (auto parts / takes).
 TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recordings, double pixelsPerSecond,
                               double maxRealGap, double gapWidth, double minWidth);
 

@@ -30,8 +30,9 @@ def parse_dependencies(cmake_file: Path) -> dict[str, str]:
     text = cmake_file.read_text(encoding="utf-8")
     deps = {}
     for m in re.finditer(r"FetchContent_Declare\(\s*(\w+)(.*?)\)", text, re.S):
-        tag = re.search(r"GIT_TAG\s+(\S+)", m.group(2))
-        deps[m.group(1).lower()] = tag.group(1) if tag else ""
+        # "GIT_TAG <40-hex commit>  # <release>": pinned by hash, the release in the comment.
+        tag = re.search(r"GIT_TAG\s+([0-9a-f]{40})\)?[ \t]*#[ \t]*(\S+)", m.group(2) + text[m.end():m.end() + 80])
+        deps[m.group(1).lower()] = tag.group(2) if tag else ""
     return deps
 
 
@@ -89,6 +90,10 @@ def main() -> int:
             errors.append(f"{name}: missing from THIRD_PARTY.md")
             continue
         version, licence = third[name]
+        if not tag:
+            errors.append(f"{name}: not pinned to a commit hash with its release as a comment "
+                          "(GIT_TAG <40-hex sha>  # <release>)")
+            continue
         if version != tag:
             errors.append(f"{name}: THIRD_PARTY.md says version {version!r}, CMake pins {tag!r}")
         if licence not in ALLOWED_LICENCES:

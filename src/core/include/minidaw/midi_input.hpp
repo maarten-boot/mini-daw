@@ -31,7 +31,10 @@
 #include <string_view>
 #include <vector>
 
+// RtMidi 6.1 declares its classes in rt::midi (and adds `using namespace rt::midi`).
+namespace rt::midi {
 class RtMidiIn;
+}
 
 namespace minidaw {
 
@@ -164,16 +167,16 @@ private:
         bool blocked = false;           // GUI thread only: ambiguous unplug, not reopened (K1)
         // Last, so it is destroyed first: its thread stops before the ring goes.
         // Only the GUI thread touches it.
-        std::unique_ptr<RtMidiIn> in;
+        std::unique_ptr<rt::midi::RtMidiIn> in;
     };
     static void onMessage(double deltaTime, std::vector<unsigned char>* message, void* user);
     Port* find(const std::string& name) const;
     // Opens `port` as available[index]; returns an error text, empty on success.
     std::string connect(Port& port, const std::string& actualName);
     void disconnect(Port& port);
-    RtMidiIn* scanner(std::string& error);
+    rt::midi::RtMidiIn* scanner(std::string& error);
 
-    std::unique_ptr<RtMidiIn> scanner_;  // only lists ports (GUI thread)
+    std::unique_ptr<rt::midi::RtMidiIn> scanner_;  // only lists ports (GUI thread)
     std::map<std::string, std::vector<SpscRing<RawMidi>*>> tapsByPort_;  // GUI thread
     void applyTaps(Port& port);
 

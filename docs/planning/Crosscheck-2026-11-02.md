@@ -387,3 +387,57 @@ Scope: Spec v0.32, Plan, Tests, README, CLAUDE.md, code at commit `030535a` (cha
 | S12 | README: the window reopens where it was (`[window] remember`). CLAUDE.md: the Xvfb displays and `/dev/shm` disappear; check before GUI or Wine runs. |
 
 Spec v0.33. Linux 159/159, Wine 159/159 (2 runs), the T-REC-34 cases 3 more times on Linux; GUI on Xvfb with the test synth and vkeys (part saved, Ctrl+R message, summary).
+
+# Crosscheck #12 — 2026-11-07 (after P17: Recording / Timeline tabs, timeline of recordings)
+
+Scope: Spec v0.34, Plan, Tests, README, code at commit `d94be3d` (changes since `cc835cd`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Every reviewer finding was checked against the code by Claude (T1–T12 confirmed at the lines named; the reviewer's "Load during auto record" is not a defect: `recording()` is true in auto mode, so Load is disabled then).
+
+| Area | Verdict |
+|------|---------|
+| Audio thread | ✅ nothing new reaches the callback; preview gains are set on the GUI thread as before |
+| UI-11 tabs | ✅ nothing stops on a tab switch, the transport is drawn in one tab at a time (no ID clash) |
+| PLAY-07 preview | ❌ Record / Auto record / Return to start during a preview start at the preview's position → **T1**; ⚠️ song position lost **T5**, warnings **T6** |
+| PLAY-07 live block | ❌ a normal Record take is not shown while it is recorded → **T2**; ⚠️ the view cannot be scrolled back during a part **T3** |
+| PLAY-07 list / layout | ⚠️ cost per frame and per rescan **T4**; daylight saving **T7**; name parsing **T8**; "+60 min" **T9**; overlapping blocks **T10**; empty or unreadable folders **T11** |
+| PLAY-07 load | ✅ instruments kept, take start 0, renumbering on a clash, lengths refreshed; ⚠️ allowed during a render **T12** |
+| Spec ↔ code ↔ docs | ⚠️ **T13** |
+| Spec ↔ tests | ⚠️ **T14** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| T1 | medium | `startPlayback` reads the player's position before `stopPlayback()`; during a preview that is the preview's position. Record then starts the song (and `recordStartPosition`, so the new take's place) in the middle; switching Auto record on restarts the song there; Return to start plays the song, not the recording. | During a preview, the song's own position is used (see T5); Return to start restarts the preview. Spec: Record / Auto record stop a preview. |
+| T2 | medium | `recordingsDirty` is set only when a Record take stops, so the take being recorded is not in the list: no growing "REC" block (SPEC-PLAY-07 says there is one) until Refresh or a tab switch. | Set it when a recording starts. T-UI-17 step. |
+| T3 | low | While an auto part is being recorded the view is scrolled to the end every frame: earlier parts cannot be looked at during a long part. | Follow only when the view was at the end (or a new recording appeared). |
+| T4 | low | Every frame: the whole list (with file paths) is copied, laid out (a string per gap) and every block is a button, also off-screen. Every rescan (tab open, each part begin/end while the tab is shown, Refresh) opens every WAV and parses every MIDI file on the GUI thread: after a day of auto parts a visible stall. | Patch only the live block's length; draw only the visible blocks; rescan by folder (keep the lengths of folders already read, re-read only new ones and the live one). |
+| T5 | low | A preview sets the song position to 0 at its start and end: where the user was in the song is lost. | Remember the song position; back to it when the preview stops. |
+| T6 | low | Preview: files skipped by the player (other sample rate, unreadable) are only in `playWarnings`, not in the timeline note nor the log. | Log them and show them in the timeline note. |
+| T7 | low | Folder times are local clock times treated as one continuous scale: across a daylight-saving change gaps are an hour off and, in autumn, order can be wrong. | Convert with `mktime` (`tm_isdst = -1`) for ordering and gaps; keep the clock label from the name. Test with a fixed time zone where possible. |
+| T8 | low | Name parsing: a suffix of 10+ digits overflows `int` (UB); `take-…-` (no digits) is accepted; day 31 is accepted for every month. | Suffix 1–9 digits; day checked against the month. Tests. |
+| T9 | low | `gapLabel`: 3570–3599 s gives "+60 min", 86370–86399 s "+24 h 00 min". | Choose the unit from the rounded value. Tests. |
+| T10 | low | Overlapping or same-second recordings (`-2` folders) in the same row get the same x: one block hides the other and cannot be clicked; after an overlap later blocks can drift. | Per row: never start before the end of the row's last block. Test. |
+| T11 | low | Folders without WAV/MID files are listed as empty minimum-width blocks; a WAV that cannot be read counts 0 s without notice. | Leave out folders without recording files; mark unreadable files in the tooltip. |
+| T12 | low | Load onto the tracks is allowed while a render runs (it can replace the take being rendered). | Disable it during a render, as Record. |
+| T13 | docs | README still says "steps P2–P16". SPEC-PLAY-07 does not say what Record / Auto record / Return to start do during a preview, nor that the song position comes back after it. | README P2–P17; Spec sentences with T1/T5. |
+| T14 | tests | T-UI-17 lacks a Record take shown live and Record during a preview; unit tests lack overlaps, `-N` folders in `listRecordings`, gap-label edges, bad suffixes, unreadable WAV, a number taken by a track of the other kind. | Add them with T1–T12. |
+
+## Actions taken (user: "yes fix T1–T14, T1 first, and pin the dependencies")
+| # | Done |
+|---|------|
+| T1 | `startPlayback` stops a preview before it reads the position, so Record (and its take placement) uses the song's position; switching Auto record on stops a preview without starting the song; Home during a preview plays the recording again from its start. GUI: after a 5 s preview with the song at 0, Record started "from 0.000 s". |
+| T2 | A Record start marks the list for reading again. The scan leaves empty folders out (T11) and a MIDI-only take has no file until it ends, so the folder being recorded (take or auto part) is added to the list while it is recorded. GUI: "16:47 0:03 REC" in the Record takes row. |
+| T3 | The view follows a growing recording only when it was at the end in the frame before. |
+| T4 | No per-frame copy (only the live block's length is updated in place); the layout is cached and laid out again only when the list, the zoom or the text size changes, or a recording grows; only blocks and pause markers in view are drawn; a rescan reuses every folder whose file names and sizes are unchanged (tested). |
+| T5 | A preview remembers the song position and `stopPlayback` goes back to it. GUI: song stopped at 2 s, a preview played to its end, Record then started "from 2.069 s". |
+| T6 | Files the players skip are logged ("Timeline: …") and shown under the timeline. |
+| T7 | `RecordingInfo::start` is real time (`continuousTime`: `mktime` with `tm_isdst = -1`), `clock` keeps the name's clock time for the labels. Test (Linux, CET rules): 01:30 → 03:30 is 3 h in October, 1 h in March. |
+| T8 | Suffix 1–9 digits; the day is checked against the month (leap years). Tests. |
+| T9 | `gapLabel` picks the unit by the rounded value ("+1 h 00 min", "+1 min", "+1 day"). Tests; the existing "+60 min" expectation was this defect and now reads "+1 h 00 min". |
+| T10 | Per row, a block starts at or after the end of the row's block before it; the drawn end of both rows is kept. Test; GUI: the `-2` part is beside the other. |
+| T11 | Folders without .wav/.mid files are left out (not the one being recorded, see T2); a WAV that cannot be read is listed in `problems` and in the tooltip. Tests. |
+| T12 | Load onto the tracks is disabled during a render (and refused in `loadRecording`). |
+| T13 | README "P2–P17"; SPEC-PLAY-07: preview with Record / Auto record / Home, song position kept, the take being recorded, empty folders, daylight saving. |
+| T14 | New test cases: same-second blocks; empty folders, unreadable files, `-N` folders and reading again; daylight saving (Linux); more names and gap labels. T-UI-17 extended (preview + Record, Home, Auto record, scrolling). The reviewer's "number taken by a track of the other kind" was already tested (`03-Odd.mid`). |
+| Pins | `cmake/Dependencies.cmake`: every library pinned to the commit hash of its release with the release as a comment (no `GIT_SHALLOW`: a shallow clone needs a tag name); `tools/check_licenses.py` requires the hash and compares the comment with `THIRD_PARTY.md` (caught a tag-only copy). Updated to the newest releases: RtMidi 6.1.0 (classes now in `rt::midi`: our forward declaration changed), Dear ImGui v1.93.0, GLFW 3.5.1; the others were already the newest. SPEC-CI-04, T-CI-03. GitHub Actions were already pinned and the newest (checkout v7.0.1, cache v6.1.0, upload-artifact v7.0.2). |
+
+Spec v0.35. Linux 167/167, Wine 166/166 (the daylight-saving case is Linux-only); GUI on Xvfb as above.

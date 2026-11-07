@@ -10,6 +10,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - GUI colours: white background, black text, every foreground/background pair ≥ 4.5:1. New UI colours must use a `minidaw::Role` (see `src/core/include/minidaw/theme.hpp`); add new fg/bg combinations to `colorPairs()` so the tests check them.
 - GitHub Actions: pin every action to a full commit SHA with the tag in a comment; use the latest working release; explain any exception in Spec §7. `tools/check_licenses.py` enforces this.
 - Dependencies must have MIT-compatible licences and be listed in `THIRD_PARTY.md` with the same version as `cmake/Dependencies.cmake`. Never add ASIO SDK files to the repository.
+- Dependencies and GitHub Actions are pinned by full commit hash with the release as a comment (`GIT_TAG <sha>  # v1.93.0`, `uses: x@<sha> # v7.0.1`), at the newest release that works (SPEC-CI-01, -04). Get the hash with `git ls-remote <repo> 'refs/tags/<tag>^{}' 'refs/tags/<tag>'` (the `^{}` line is the commit of an annotated tag); write down any exception in the Spec.
 - Audio callback (`AudioStream::audioCallback`, and `Recorder::process` which it calls): no locks, no allocation, no I/O.
 
 ## Layout
