@@ -79,4 +79,11 @@ private:
     std::uint64_t errors_ = 0;
 };
 
+// Notes shown in the GUI (e.g. audio driver messages; crosscheck #13, U8): a note
+// already in the list is counted ("… (3 times)") instead of added again; when the
+// list is full a last line points to the log, where every message is kept.
+inline constexpr std::size_t kMaxNotes = 50;
+inline constexpr std::string_view kMoreNotesInLog = "More notes: see View > Log.";
+void addNote(std::vector<std::string>& notes, const std::string& note, std::size_t maxNotes = kMaxNotes);
+
 } // namespace minidaw

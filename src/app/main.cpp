@@ -163,6 +163,8 @@ struct AppState {
     std::string selectTab;             // shown from the next frame (start, "Audio setup" links, Settings > Tabs)
     int tabBarGeneration = 0;          // +1 when the order is set from outside the tab bar (a new tab bar takes it)
     bool showTabsWindow = false;
+    std::string tabsFocus;      // Tabs window: the tab moved to the top / bottom, its other button gets the focus (U4)
+    bool tabsFocusUp = false;
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
 
@@ -291,6 +293,18 @@ void stepContrast(AppState& app, int direction)
             if (steps[i].minimum() < current - 1e-9) { setContrast(app, steps[i], true); return; }
         }
     }
+}
+
+// Space (Play / Stop) and Home (to the start) are the transport's keys, also
+// with keyboard navigation on (U1): ImGui's navigation uses them only when no one
+// owns them (Space would press the control in focus, Home scroll to the top), so
+// they are owned every frame (taking effect at the next NewFrame). Text fields
+// get typed characters separately, so a space can still be typed in a name.
+void claimTransportKeys()
+{
+    static const ImGuiID owner = ImHashStr("minidaw-transport-keys");
+    ImGui::SetKeyOwner(ImGuiKey_Space, owner);
+    ImGui::SetKeyOwner(ImGuiKey_Home, owner);
 }
 
 // Text size (SPEC-UI-08). Applied through ImGui's dynamic font size.
@@ -731,26 +745,49 @@ void drawTabsWindow(AppState& app)
     if (ImGui::Begin("Tabs", &app.showTabsWindow, ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextWrapped("The order of the tabs, left to right. You can also drag a tab to another place. "
                            "At start the tab used last is shown.");
+        // Rows are keyed by tab, so the keyboard focus moves with the tab that was
+        // moved. When it reaches the top or bottom (that button is then disabled)
+        // the focus goes to its other button (crosscheck #13, U4).
         std::vector<std::string> order = app.config.tabs.order;
         bool changed = false;
+        const bool keyboard = ImGui::GetIO().NavVisible;
+        const std::string focusTab = app.tabsFocus;  // set by a move in the frame before, used once
+        const bool focusUp = app.tabsFocusUp;
+        app.tabsFocus.clear();
+        // The move is made after all rows are drawn: drawn at once, the moved tab's
+        // row would come again in this frame and its button act twice.
+        std::size_t moveFrom = order.size();
+        std::size_t moveTo = order.size();
         for (std::size_t i = 0; i < order.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
+            const std::string id = order[i];
+            ImGui::PushID(id.c_str());
             ImGui::BeginDisabled(i == 0);
+            if (keyboard && focusTab == id && focusUp) ImGui::SetKeyboardFocusHere();
             if (ImGui::Button("Up") && i > 0) {
-                std::swap(order[i], order[i - 1]);
-                changed = true;
+                moveFrom = i;
+                moveTo = i - 1;
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(i + 1 == order.size());
+            if (keyboard && focusTab == id && !focusUp) ImGui::SetKeyboardFocusHere();
             if (ImGui::Button("Down") && i + 1 < order.size()) {
-                std::swap(order[i], order[i + 1]);
-                changed = true;
+                moveFrom = i;
+                moveTo = i + 1;
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::Text("%zu. %s", i + 1, tabTitle(order[i]));
+            ImGui::Text("%zu. %s", i + 1, tabTitle(id));
             ImGui::PopID();
+        }
+        if (moveFrom < order.size()) {
+            const std::string id = order[moveFrom];
+            std::swap(order[moveFrom], order[moveTo]);
+            if (moveTo == 0 || moveTo + 1 == order.size()) {  // its button there is disabled: focus the other one
+                app.tabsFocus = id;
+                app.tabsFocusUp = moveTo != 0;
+            }
+            changed = true;
         }
         if (ImGui::Button("Default order")) {
             order = minidaw::defaultTabOrder();
@@ -1073,8 +1110,8 @@ void drawAudioStatus(AppState& app)
 void pollAudioMessages(AppState& app)
 {
     for (const auto& m : app.audio.takeDriverMessages()) {
-        app.log.warning("Audio driver: " + m);
-        app.audioWarnings.push_back(m);
+        app.log.warning("Audio driver: " + m);  // every one in the log
+        minidaw::addNote(app.audioWarnings, m);  // repeats counted, the list kept short (U8)
     }
 }
 
@@ -1082,18 +1119,19 @@ void pollAudioMessages(AppState& app)
 void drawAudioStatusLine(AppState& app)
 {
     const auto& info = app.audio.info();
-    const auto goToSetup = [&app]() {
+    const auto goToSetup = [&app](const char* label) {  // one label per place: unique IDs (U3)
         ImGui::SameLine();
-        if (ImGui::SmallButton("Audio setup")) app.selectTab = "audio";
+        if (ImGui::SmallButton(label)) app.selectTab = "audio";
     };
     if (!info.running) {
         ImGui::TextWrapped("Audio stream stopped. %s", app.audioError.c_str());
-        goToSetup();
+        goToSetup("Audio setup##stopped");
         return;
     }
     if (app.streamStalled) {
-        ImGui::TextWrapped("ERROR: the audio stream has stopped (no audio callback for more than 1 second).");
-        goToSetup();
+        ImGui::TextWrapped("ERROR: the audio stream has stopped (no audio callback for more than 1 second). "
+                           "Try Settings > Audio devices > Apply.");
+        goToSetup("Audio setup##stalled");
     }
     ImGui::Text("Audio: %s, %u Hz, %u frames   Dropouts: %llu", info.api.c_str(), info.sampleRate, info.bufferFrames,
                 static_cast<unsigned long long>(app.audio.xruns()));
@@ -1109,7 +1147,7 @@ void drawAudioStatusLine(AppState& app)
     }
     if (!app.audioWarnings.empty()) {
         ImGui::Text("%zu note(s) about the audio stream.", app.audioWarnings.size());
-        goToSetup();
+        goToSetup("Audio setup##notes");
     }
 }
 
@@ -3466,6 +3504,10 @@ int runGui(AppState& app)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;  // window layout is not saved
+    // Keyboard use (crosscheck #13, U1): Tab / arrows move between controls, Enter
+    // presses the one in focus, Escape leaves it. Space and Home stay the transport
+    // keys: see claimTransportKeys.
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::GetIO().Fonts->AddFontDefaultVector();  // scalable, so the text size can change
 
     std::string error;
@@ -3601,6 +3643,7 @@ int runGui(AppState& app)
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) togglePlay(app);
             if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) returnToStart(app);
         }
+        claimTransportKeys();
         ensureDefaultTracks(app);
         syncMidiPorts(app);
         updateMeters(app);
@@ -3641,6 +3684,13 @@ int runGui(AppState& app)
                 for (const std::string& id : app.config.tabs.order) {
                     const ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
                     if (!ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags)) continue;
+                    // A tab being selected shows at the next frame; on a new tab bar's first
+                    // frame ImGui shows the first tab meanwhile: not drawn, not saved as the
+                    // last one (crosscheck #13, U2).
+                    if (!requested.empty() && requested != id) {
+                        ImGui::EndTabItem();
+                        continue;
+                    }
                     if (app.config.tabs.last != id) {
                         app.config.tabs.last = id;
                         saveConfig(app);

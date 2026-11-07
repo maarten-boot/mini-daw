@@ -384,6 +384,22 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     CHECK(bad.config.tabs.last == "recording");
     CHECK(normalizeTabOrder({}) == defaultTabOrder());
 
+    // Crosscheck #13, U6: an empty order and one of only unknown names give the
+    // default order (the latter with a warning); case and spaces in `last` and in
+    // the section and key names do not matter.
+    const auto empty = parseConfig("[tabs]\norder =\n");
+    CHECK(empty.warnings.empty());
+    CHECK(empty.config.tabs.order == defaultTabOrder());
+    const auto unknown = parseConfig("[tabs]\norder = mixer, piano roll\n");
+    CHECK(unknown.warnings.size() == 1);
+    CHECK(unknown.config.tabs.order == defaultTabOrder());
+    const auto cased = parseConfig("[Tabs]\nORDER = timeline\nLast =  Timeline  \n");
+    CHECK(cased.warnings.empty());
+    CHECK(cased.config.tabs.order == std::vector<std::string>{"timeline", "recording", "audio"});
+    CHECK(cased.config.tabs.last == "timeline");
+    // Repeats alone give no warning.
+    CHECK(parseConfig("[tabs]\norder = audio, audio\n").warnings.empty());
+
     // Saved and read back; other settings kept.
     TempDir dir;
     AppConfig cfg;
@@ -396,6 +412,21 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     CHECK(back.config.tabs.order == cfg.tabs.order);
     CHECK(back.config.tabs.last == "audio");
     CHECK(back.config.fontSize == 18.0f);
+    // Saved again with another order: the values are replaced, not added (U6).
+    cfg.tabs.order = {"recording", "audio", "timeline"};
+    cfg.tabs.last = "timeline";
+    REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
+    const auto again = loadConfigFile(dir.path / "c.ini");
+    CHECK(again.warnings.empty());
+    CHECK(again.config.tabs.order == cfg.tabs.order);
+    CHECK(again.config.tabs.last == "timeline");
+    {
+        std::ifstream in(dir.path / "c.ini");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::size_t count = 0;
+        for (std::size_t at = text.find("\norder"); at != std::string::npos; at = text.find("\norder", at + 1)) ++count;
+        CHECK(count == 1);
+    }
     // An existing config without [tabs] gets the section when saved.
     {
         std::ofstream(dir.path / "old.ini") << "[ui]\nfont_size = 16\n";

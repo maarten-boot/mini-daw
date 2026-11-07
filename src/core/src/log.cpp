@@ -168,4 +168,31 @@ std::filesystem::path Log::file() const
     return file_;
 }
 
+void addNote(std::vector<std::string>& notes, const std::string& note, std::size_t maxNotes)
+{
+    const std::string prefix = note + " (";
+    const std::string suffix = " times)";
+    for (std::string& n : notes) {
+        if (n == note) {
+            n = note + " (2 times)";
+            return;
+        }
+        if (n.size() > prefix.size() + suffix.size() && n.compare(0, prefix.size(), prefix) == 0 &&
+            n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            const std::string count = n.substr(prefix.size(), n.size() - prefix.size() - suffix.size());
+            if (!count.empty() && count.find_first_not_of("0123456789") == std::string::npos && count.size() < 10) {
+                n = prefix + std::to_string(std::stoul(count) + 1) + suffix;
+                return;
+            }
+        }
+    }
+    if (maxNotes == 0) return;
+    if (!notes.empty() && notes.back() == kMoreNotesInLog) return;  // full: the rest is in the log
+    if (notes.size() + 1 >= maxNotes) {
+        notes.emplace_back(kMoreNotesInLog);
+        return;
+    }
+    notes.push_back(note);
+}
+
 } // namespace minidaw

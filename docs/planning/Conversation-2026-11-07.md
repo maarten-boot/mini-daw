@@ -40,3 +40,15 @@ Continues `Conversation-2026-11-06.md` (window place, auto record P16, crosschec
 > when changing the text size it is not applied directly (was that ok) T-UI-15 now ok; T-UI-16 is now OK; the rest i will test later
 - T-UI-15 (maximised start) and T-UI-16 (no jumping) pass on Windows.
 - The text size was not OK (SPEC-UI-08 says at once): ImGui sets `style.FontSizeBase` back to the size in use during a frame, so a change from Ctrl+= or View → Text size was only saved and applied at the next start. Not caused by the ImGui update (v1.92.9 does the same). Fixed by also setting `_NextFrameFontSizeBase`, as ImGui's own style editor does; checked on Xvfb (16 → 20 px at once). T-UI-12 now says "at once".
+
+## 9. CI of `cc9a41d`, crosscheck #13
+> do the crosscheck after P18; note setting fonts do not react (or did i say that already)
+- Run 42405885386 green (Linux 168/168, Windows 169/169); its Windows build is in `dist/windows`. Logged (`fc3b1b2`).
+- "Setting fonts do not react" read as the text size report of section 8 (the only font setting): fixed in `cc9a41d`, in the new build.
+- Crosscheck #13 (Spec v0.36, code at `cc9a41d`, independent reviewer as in #12): U1 keyboard navigation off (the Tabs dialog promises keyboard use); U2 first frame of a tab bar shows and saves the first tab; U3–U5, U8 small (duplicate button ID, focus after Up, stalled hint, notes list without limit); U6 tests; U7 docs.
+
+## 10. Crosscheck #13 fixes (P18a)
+> yes fix U1–U8, U1 first
+- U1: keyboard navigation on in every window; Space and Home are owned by mini-daw each frame so they stay Play / Stop and To start (ImGui's navigation would otherwise press the focused control with Space). New SPEC-UI-13, T-UI-20.
+- U2–U8 as proposed (see Crosscheck #13, actions). The keyboard GUI test of the Tabs dialog found a new bug in the U4 change (one Down press moved a tab two places); fixed by moving after the rows are drawn.
+- Spec v0.37, Plan P18a, T-UI-18 extended, T-UI-19, T-UI-20. Linux 169/169, Wine 168/168; GUI on Xvfb.

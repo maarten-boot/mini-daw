@@ -221,3 +221,26 @@ TEST_CASE("T-REC-33: identical MIDI devices: an unplug is never missed or guesse
         CHECK(plan.connect[1].second == "X 1");
     }
 }
+
+TEST_CASE("T-UI-19: audio notes: repeats counted, the list kept short", "[log][T-UI-19]")
+{
+    std::vector<std::string> notes;
+    addNote(notes, "Device busy");
+    addNote(notes, "Device busy");
+    addNote(notes, "Other");
+    addNote(notes, "Device busy");
+    CHECK(notes == std::vector<std::string>{"Device busy (3 times)", "Other"});
+    // A note that only starts like another one is its own note.
+    addNote(notes, "Device");
+    CHECK(notes.size() == 3);
+
+    // Full: one line points to the log; later new notes are not added, repeats still counted.
+    std::vector<std::string> full;
+    for (int i = 0; i < 60; ++i) addNote(full, "note " + std::to_string(i), 5);
+    REQUIRE(full.size() == 5);
+    CHECK(full[3] == "note 3");
+    CHECK(full[4] == kMoreNotesInLog);
+    addNote(full, "note 0", 5);
+    CHECK(full[0] == "note 0 (2 times)");
+    CHECK(full.size() == 5);
+}

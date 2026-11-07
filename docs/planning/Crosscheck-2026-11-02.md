@@ -441,3 +441,44 @@ Scope: Spec v0.34, Plan, Tests, README, code at commit `d94be3d` (changes since 
 | Pins | `cmake/Dependencies.cmake`: every library pinned to the commit hash of its release with the release as a comment (no `GIT_SHALLOW`: a shallow clone needs a tag name); `tools/check_licenses.py` requires the hash and compares the comment with `THIRD_PARTY.md` (caught a tag-only copy). Updated to the newest releases: RtMidi 6.1.0 (classes now in `rt::midi`: our forward declaration changed), Dear ImGui v1.93.0, GLFW 3.5.1; the others were already the newest. SPEC-CI-04, T-CI-03. GitHub Actions were already pinned and the newest (checkout v7.0.1, cache v6.1.0, upload-artifact v7.0.2). |
 
 Spec v0.35. Linux 167/167, Wine 166/166 (the daylight-saving case is Linux-only); GUI on Xvfb as above.
+
+# Crosscheck #13 — 2026-11-07 (after P18: Audio setup tab, tab order; text size at once)
+
+Scope: Spec v0.36, Plan, Tests, README, Demo-checklist, code at commit `cc9a41d` (changes since `572d2b5`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions; it read the ImGui v1.93.0 sources for the internal API used). Every reviewer finding was checked against the code by Claude (U1–U8 confirmed at the lines named).
+
+| Area | Verdict |
+|------|---------|
+| Audio thread | ✅ nothing in the diff reaches the callback; driver messages are taken on the GUI thread only |
+| UI-12 tab order | ✅ drag and Settings → Tabs… can neither lose nor repeat a tab; saved only when changed; no feedback loop with ImGui's own order |
+| UI-12 last tab | ⚠️ the first frame of a new tab bar shows the first tab and saves it as `last` → **U2** |
+| UI-12 keyboard | ❌ the Spec says the Tabs dialog is usable with the keyboard; keyboard navigation is not on in ImGui → **U1**, **U4** |
+| UI-12 status line | ✅ stopped / stalled / notes with the button, dropouts always shown; ⚠️ **U3**, **U5**, **U8** |
+| UI-08 text size | ✅ `_NextFrameFontSizeBase` is applied at the next `NewFrame` (imgui.cpp `UpdateFontsNewFrame`), also with display scaling |
+| Config `[tabs]` | ✅ case, spaces, repeats, unknown names, unknown `last`, round trip; ⚠️ tests **U6** |
+| Spec ↔ code ↔ docs | ⚠️ **U7** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| U1 | medium | `ImGuiConfigFlags_NavEnableKeyboard` is never set, so Tab / arrows / Enter / Space do nothing in any window; SPEC-UI-12 promises a Tabs dialog usable with the keyboard (and the global rules ask for accessible GUIs). | Turn keyboard navigation on (after `CreateContext`); check that Space / Enter shortcuts of the transport do not clash with activating a focused button. GUI test. |
+| U2 | low | On the first frame of a tab bar (at start, and after Settings → Tabs… makes a new one) ImGui shows the first tab's content before `SetSelected` takes effect: one frame of the wrong tab (with a timeline rescan if Timeline is first) and `last` saved twice (wrong for a moment on disk). | Do not change `last` while a tab is being selected (`requested` not empty and not this tab); skip the content of that frame. |
+| U3 | low | Stalled stream and notes at the same time: two "Audio setup" buttons with the same ID (ImGui's duplicate-ID warning). | Different IDs (`##stalled`, `##notes`). |
+| U4 | low | Tabs dialog: rows keyed by index, so after Up the keyboard focus stays on the row, not on the tab that moved; only matters with U1. | Key the rows by tab id. |
+| U5 | low | The Recording tab's stalled line leaves out "Try Settings > Audio devices > Apply." that the Audio setup tab has. | Add it. |
+| U6 | tests | T-UI-18 unit tests lack: empty `order`, only unknown names, case / spaces in `last`, `[Tabs]` / `ORDER` key case, re-saving a changed order over an existing one. | Add them. |
+| U7 | docs | SPEC-UI-12: an unknown `last` is not "left out" but replaced by `recording` (with a warning). SPEC-REC-01a: "Input levels" does not say it is now on the Audio setup tab. T-UI-18 expected "2 warnings" is right but does not say repeats give none. | Spec / Tests sentences. |
+| U8 | low | `audioWarnings` grows without limit (cleared only on Apply); a driver that keeps sending messages grows the list, the Recording line's "N note(s)" and the Audio setup tab. Existed before P18; now polled on every tab. | Fold repeats ("… (×12)") and keep at most e.g. 50, with a "more in the log" line; the log keeps every message (losses reported). |
+
+## Actions taken (user: "yes fix U1–U8, U1 first")
+| # | Done |
+|---|------|
+| U1 | Keyboard navigation on (`ImGuiConfigFlags_NavEnableKeyboard`). ImGui's navigation uses Space (press the control in focus) and Home (scroll to the top) only when no one owns those keys, so mini-daw owns them every frame (`claimTransportKeys`): Space stays Play / Stop, Home to the start; text fields still get a typed space and Home. SPEC-UI-13, T-UI-20. GUI: focus frame with Tab; Space did not press the focused button, Enter did; a space and Home in a track name. |
+| U2 | While a tab is being selected (at start, after the Tabs dialog, the Audio setup button) the tab ImGui shows meanwhile is not drawn and not saved as the last one. GUI: start with `last = audio`, `config.ini` not written. |
+| U3 | The status line's buttons have their own IDs (`##stopped`, `##stalled`, `##notes`). |
+| U4 | Tabs dialog rows keyed by tab; at the top or bottom the focus goes to the moved tab's other button. The GUI test found that a Down press then acted twice (the moved row came again in the same frame): the move is now made after all rows are drawn. GUI: four Enter presses, one place each. |
+| U5 | The Recording tab's stalled line says "Try Settings > Audio devices > Apply." |
+| U6 | Tests: empty order, only unknown names, case and spaces in section, key and `last`, repeats without a warning, saving again over an existing order (one `order` line). |
+| U7 | SPEC-UI-12: unknown `last`, repeats, focus in the dialog, notes; SPEC-REC-01a: Input levels on the Audio setup tab; T-UI-18 expectations. Plan PX row brought up to date (#11–#13). |
+| U8 | `addNote`: a repeated driver message is counted ("… (3 times)"), at most 50 notes, then "More notes: see View > Log."; every message stays in the log. T-UI-19. |
+
+Spec v0.37. Linux 169/169, Wine 168/168 (the daylight-saving case is Linux-only); GUI on Xvfb as above.
