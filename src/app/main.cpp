@@ -38,6 +38,7 @@
 #include "minidaw/version.hpp"
 
 #include <imgui.h>
+#include <imgui_internal.h>  // the tab bar's order after a drag (P18): GetCurrentTabBar, TabBarGetTabName
 #include <imgui_stdlib.h>
 
 #define GLFW_INCLUDE_NONE
@@ -157,6 +158,11 @@ struct AppState {
     std::uint64_t songPosition = 0;                   // where the song was when a preview started (T5)
     std::string timelineNote;
     bool timelineShown = false;
+    // Tabs (P18, SPEC-UI-12): order and last tab in config.tabs.
+    bool tabsStarted = false;
+    std::string selectTab;             // shown from the next frame (start, "Audio setup" links, Settings > Tabs)
+    int tabBarGeneration = 0;          // +1 when the order is set from outside the tab bar (a new tab bar takes it)
+    bool showTabsWindow = false;
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
 
@@ -657,6 +663,7 @@ void drawMenuBar(AppState& app, bool& quit)
             app.showRecordingSettings = true;
         }
         if (ImGui::MenuItem("Instruments (VST\xc2\xae" "3)...")) app.showInstruments = true;
+        if (ImGui::MenuItem("Tabs...")) app.showTabsWindow = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -691,6 +698,68 @@ void drawMenuBar(AppState& app, bool& quit)
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
+}
+
+// --- Tabs (P18, SPEC-UI-12) ------------------------------------------------
+const char* tabTitle(const std::string& id)
+{
+    if (id == "timeline") return "Timeline";
+    if (id == "audio") return "Audio setup";
+    return "Recording";
+}
+
+// The label ImGui gets: the title, and the id after "###" (the tab's identity).
+std::string tabLabel(const std::string& id) { return std::string(tabTitle(id)) + "###tab-" + id; }
+
+void setTabOrder(AppState& app, std::vector<std::string> order)
+{
+    order = minidaw::normalizeTabOrder(order);
+    if (order == app.config.tabs.order) return;
+    app.config.tabs.order = std::move(order);
+    saveConfig(app);
+}
+
+void drawTabsWindow(AppState& app)
+{
+    if (!app.showTabsWindow) return;
+    ImGui::SetNextWindowSize(ImVec2(28 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
+    if (ImGui::Begin("Tabs", &app.showTabsWindow, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextWrapped("The order of the tabs, left to right. You can also drag a tab to another place. "
+                           "At start the tab used last is shown.");
+        std::vector<std::string> order = app.config.tabs.order;
+        bool changed = false;
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::BeginDisabled(i == 0);
+            if (ImGui::Button("Up") && i > 0) {
+                std::swap(order[i], order[i - 1]);
+                changed = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(i + 1 == order.size());
+            if (ImGui::Button("Down") && i + 1 < order.size()) {
+                std::swap(order[i], order[i + 1]);
+                changed = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::Text("%zu. %s", i + 1, tabTitle(order[i]));
+            ImGui::PopID();
+        }
+        if (ImGui::Button("Default order")) {
+            order = minidaw::defaultTabOrder();
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showTabsWindow = false;
+        if (changed && order != app.config.tabs.order) {
+            setTabOrder(app, order);
+            ++app.tabBarGeneration;  // a new tab bar shows the tabs in this order
+            app.selectTab = app.config.tabs.last;
+        }
+    }
+    ImGui::End();
 }
 
 void drawCustomContrastWindow(AppState& app)
@@ -993,9 +1062,49 @@ void drawAudioStatus(AppState& app)
         }
     }
     for (const auto& w : app.audioWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
+}
+
+// Every frame, whatever tab is shown: the driver's messages to the log and the notes.
+void pollAudioMessages(AppState& app)
+{
     for (const auto& m : app.audio.takeDriverMessages()) {
         app.log.warning("Audio driver: " + m);
         app.audioWarnings.push_back(m);
+    }
+}
+
+// The Recording tab's short audio line (P18): the full "Audio stream" is on the Audio setup tab.
+void drawAudioStatusLine(AppState& app)
+{
+    const auto& info = app.audio.info();
+    const auto goToSetup = [&app]() {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Audio setup")) app.selectTab = "audio";
+    };
+    if (!info.running) {
+        ImGui::TextWrapped("Audio stream stopped. %s", app.audioError.c_str());
+        goToSetup();
+        return;
+    }
+    if (app.streamStalled) {
+        ImGui::TextWrapped("ERROR: the audio stream has stopped (no audio callback for more than 1 second).");
+        goToSetup();
+    }
+    ImGui::Text("Audio: %s, %u Hz, %u frames   Dropouts: %llu", info.api.c_str(), info.sampleRate, info.bufferFrames,
+                static_cast<unsigned long long>(app.audio.xruns()));
+    if (info.outputChannels > 0) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted("  Output:");
+        ImGui::SameLine();
+        std::vector<minidaw::LevelMeter*> out;
+        for (unsigned int ch = 0; ch < info.outputChannels && ch < minidaw::kMaxOutputChannels; ++ch) {
+            out.push_back(&app.outputMeters[ch]);
+        }
+        drawMeter(app, out, 10 * ImGui::GetFontSize());
+    }
+    if (!app.audioWarnings.empty()) {
+        ImGui::Text("%zu note(s) about the audio stream.", app.audioWarnings.size());
+        goToSetup();
     }
 }
 
@@ -3513,26 +3622,55 @@ int runGui(AppState& app)
         drawMenuBar(app, quit);
         const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 5.5f;
         if (ImGui::BeginChild("content", ImVec2(0, -statusHeight))) {
-            // Tabs (SPEC-UI-11): the recording setup, and the timeline of the recordings.
-            if (ImGui::BeginTabBar("main-tabs")) {
-                if (ImGui::BeginTabItem("Recording")) {
-                    drawAudioStatus(app);
-                    drawTransport(app);
-                    drawTracksPanel(app);
-                    if (ImGui::CollapsingHeader("Devices")) drawDevicesPanel(app);
+            // Tabs (SPEC-UI-11, SPEC-UI-12): in the user's order, draggable; the last one used comes back.
+            pollAudioMessages(app);
+            if (!app.tabsStarted) {
+                app.selectTab = app.config.tabs.last;
+                app.tabsStarted = true;
+            }
+            const std::string barId = "main-tabs-" + std::to_string(app.tabBarGeneration);
+            const std::string requested = app.selectTab;
+            app.selectTab.clear();
+            bool timelineOpen = false;
+            if (ImGui::BeginTabBar(barId.c_str(), ImGuiTabBarFlags_Reorderable)) {
+                for (const std::string& id : app.config.tabs.order) {
+                    const ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
+                    if (!ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags)) continue;
+                    if (app.config.tabs.last != id) {
+                        app.config.tabs.last = id;
+                        saveConfig(app);
+                    }
+                    if (id == "recording") {
+                        drawAudioStatusLine(app);
+                        drawTransport(app);
+                        drawTracksPanel(app);
+                    } else if (id == "timeline") {
+                        if (!app.timelineShown) app.recordingsDirty = true;  // read them again when the tab opens
+                        timelineOpen = true;
+                        drawTransport(app);
+                        drawTimeline(app);
+                    } else if (id == "audio") {
+                        drawAudioStatus(app);
+                        ImGui::SeparatorText("Devices");
+                        drawDevicesPanel(app);
+                    }
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Timeline")) {
-                    if (!app.timelineShown) app.recordingsDirty = true;  // read them again when the tab opens
-                    app.timelineShown = true;
-                    drawTransport(app);
-                    drawTimeline(app);
-                    ImGui::EndTabItem();
-                } else {
-                    app.timelineShown = false;
+                // A tab dragged to another place: keep that order (ImGui keeps it in its tab bar).
+                if (ImGuiTabBar* bar = ImGui::GetCurrentTabBar()) {
+                    std::vector<std::string> shown;
+                    for (ImGuiTabItem& tab : bar->Tabs) {
+                        const std::string label = ImGui::TabBarGetTabName(bar, &tab);
+                        const std::size_t at = label.find("###tab-");
+                        if (at != std::string::npos) shown.push_back(label.substr(at + 7));
+                    }
+                    if (shown.size() == app.config.tabs.order.size() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        setTabOrder(app, shown);
+                    }
                 }
                 ImGui::EndTabBar();
             }
+            app.timelineShown = timelineOpen;
         }
         ImGui::EndChild();
         drawStatusLine(app);
@@ -3541,6 +3679,7 @@ int runGui(AppState& app)
         drawAudioSettingsWindow(app);
         drawRecordingSettingsWindow(app);
         drawCustomContrastWindow(app);
+        drawTabsWindow(app);
         drawContrastReportWindow(app);
         drawLogWindow(app);
         drawTakeBrowser(app);

@@ -26,3 +26,12 @@ Continues `Conversation-2026-11-06.md` (window place, auto record P16, crosschec
 - All fixed (see Crosscheck #12, actions). The GUI check found that the new empty-folder rule hid the MIDI take being recorded (no file until it ends): the folder being recorded is now added to the list.
 - Libraries pinned by commit hash; updated to RtMidi 6.1.0 (classes moved into `rt::midi`, one forward declaration changed), Dear ImGui v1.93.0, GLFW 3.5.1. The licence check requires the hash.
 - Spec v0.35 (SPEC-PLAY-07 texts, SPEC-CI-04), Plan P17a, T-UI-17 extended, T-PLAY-18 extended, T-CI-03. Linux 167/167, Wine 166/166, GUI on Xvfb.
+
+## 6. CI of `572d2b5`
+- Run 42388802838 green (Linux 167/167, Windows 168/168 with the new libraries); its Windows build is in `dist/windows`. Logged (`169e75f`).
+
+## 7. Audio setup tab and tab order (P18)
+> commit the CI log lines; looks good so far; now that we have tabs would it make sense to move the audio settings and devices to a tab, they are not often used and are mainly for infrequent reconfigurations i would guess. Possibly add a functionality in the settings to customize the sequence of the tabs so the user can customize
+- Read "mive the audio sessings" as "move the audio settings". Asked four questions. Answers: move both "Audio stream" and "Devices", keep a status line on the Recording tab; name "Audio setup"; order by dragging and in a Settings dialog; at start the tab used last.
+- Config `[tabs] order / last` (`normalizeTabOrder`), saved when they change. The tab bar uses ImGui's reorderable tabs; the order after a drag is read from ImGui's tab bar (internal API: `GetCurrentTabBar`, `TabBarGetTabName`; ImGui only re-sorts tabs by submission order when a tab is new). Settings → Tabs… (Up / Down, Default order) starts a new tab bar with the new order. Driver messages are now collected every frame whatever tab is shown.
+- Spec v0.36 (SPEC-UI-11 changed, SPEC-UI-12), Plan P18, T-UI-18. Linux 168/168, Wine 167/167; GUI on Xvfb (status line, link, drag, Tabs window, restart).

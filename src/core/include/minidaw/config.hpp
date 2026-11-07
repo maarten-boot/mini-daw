@@ -138,10 +138,24 @@ struct ScreenRect {
 // is gone).
 std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const std::vector<ScreenRect>& workAreas);
 
+// Main window tabs (SPEC-UI-12): their order and the one shown at start.
+// Ids: "recording", "timeline", "audio" (Audio setup).
+std::vector<std::string> defaultTabOrder();
+// Every known id once, in the order given; unknown ids and repeats left out,
+// missing ones added at the end in the default order.
+std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order);
+bool isTabId(std::string_view id);
+
+struct TabSettings {
+    std::vector<std::string> order = defaultTabOrder();
+    std::string last = "recording";  // shown at start: the tab used last
+};
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
     WindowSettings window;
+    TabSettings tabs;
     AudioSettings audio;
     RecordingSettings recording;
     ProjectSettings project;

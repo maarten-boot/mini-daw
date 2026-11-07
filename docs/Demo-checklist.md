@@ -5,7 +5,7 @@ For a short (about 5 minute) demo on Windows 10. Build: the CI download of run 4
 ## 1. The day before: prepare the machine
 
 - [ ] Install with `mini-daw-0.1.0-setup.exe` (per user, no admin rights). Start it once from the Start menu.
-- [ ] **Settings → Audio devices…**: the output (speakers or headphones) and the input (Line In or the audio interface). Check that **Output level** moves when something plays.
+- [ ] **Settings → Audio devices…**: the output (speakers or headphones) and the input (Line In or the audio interface). Check that the **Output** meter (top line of the Recording tab; also on the Audio setup tab) moves when something plays.
 - [ ] **Settings → Instruments (VST®3)… → Scan**: the Arturia instruments appear in the list. A module that fails or crashes is listed with the reason and skipped from then on.
 - [ ] Plug in the MIDI keyboard. Add a MIDI track and arm it: its "messages / receiving" count moves when you play.
 - [ ] Text size (**Ctrl+=** / **Ctrl+−**) and window size: the whole track table must be visible, including the **Take** column. Maximise the window.
@@ -41,7 +41,7 @@ Note anything that goes wrong. **View → Log (Ctrl+L)** shows what mini-daw did
 
 | Problem | What to do |
 |---------|------------|
-| No sound | Look at **Output level**: if it moves, check the speakers or headphones; if not, check **Settings → Audio devices…** and the track's **M** / volume |
+| No sound | Look at the **Output** meter: if it moves, check the speakers or headphones; if not, check **Settings → Audio devices…** and the track's **M** / volume |
 | The keyboard does nothing | Is the track armed? If the Level column says "DISCONNECTED" or "CLOSED", plug the keyboard in again, or arm off and on |
 | The plugin crashes mini-daw | Start it again: takes already on disk are safe, and the scan marks the plugin so it is skipped. Continue with another instrument |
 | The instrument window does not appear | Click **Edit** again (the button reads **Close** while it is open); otherwise continue without it |

@@ -147,6 +147,21 @@ std::string getEnv(const char* name)
 
 } // namespace
 
+std::vector<std::string> defaultTabOrder() { return {"recording", "timeline", "audio"}; }
+
+bool isTabId(std::string_view id) { return id == "recording" || id == "timeline" || id == "audio"; }
+
+std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order)
+{
+    std::vector<std::string> out;
+    const auto add = [&](const std::string& id) {
+        if (isTabId(id) && std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+    };
+    for (const auto& id : order) add(id);
+    for (const auto& id : defaultTabOrder()) add(id);
+    return out;
+}
+
 ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
 {
     ConfigLoadResult result;
@@ -195,6 +210,32 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.fontSize = static_cast<float>(px);
             } else {
                 warn("font_size '" + value + "' must be a whole number from 12 to 32. Using 16.");
+            }
+        } else if (section == "tabs" && key == "order") {
+            // "recording, timeline, audio"
+            std::vector<std::string> ids;
+            std::string bad;
+            std::size_t at = 0;
+            while (at <= value.size()) {
+                const std::size_t comma = std::min(value.find(',', at), value.size());
+                const std::string id = lower(trim(std::string_view(value).substr(at, comma - at)));
+                if (!id.empty()) {
+                    if (isTabId(id)) {
+                        ids.push_back(id);
+                    } else {
+                        bad += (bad.empty() ? "" : ", ") + id;
+                    }
+                }
+                at = comma + 1;
+            }
+            if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: recording, timeline, audio); left out.");
+            cfg.tabs.order = normalizeTabOrder(ids);
+        } else if (section == "tabs" && key == "last") {
+            const std::string id = lower(trim(value));
+            if (isTabId(id)) {
+                cfg.tabs.last = id;
+            } else {
+                warn("unknown tab '" + value + "' for last (known: recording, timeline, audio). Using recording.");
             }
         } else if (section == "window" && key == "remember") {
             if (!parseBool(value, cfg.window.remember)) {
@@ -380,6 +421,13 @@ std::string defaultConfigText()
            "; (x, y, width, height and maximized are written by mini-daw).\n"
            "remember = true\n"
            "\n"
+           "[tabs]\n"
+           "; The order of the main window's tabs (also set by dragging a tab, or in\n"
+           "; Settings > Tabs...): recording, timeline, audio (Audio setup).\n"
+           "order = recording, timeline, audio\n"
+           "; The tab shown at start: the one used last (written by mini-daw).\n"
+           "last = recording\n"
+           "\n"
            "[audio]\n"
            "; Device names as shown in the program, in quotes,\n"
            "; or (default) for the system default, or (none).\n"
@@ -496,6 +544,12 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "ui", "min_contrast", config.contrast.toString());
     text = setConfigValue(text, "ui", "font_size", std::to_string(static_cast<int>(config.fontSize)));
     text = setConfigValue(text, "window", "remember", config.window.remember ? "true" : "false");
+    {
+        std::string order;
+        for (const auto& id : normalizeTabOrder(config.tabs.order)) order += (order.empty() ? "" : ", ") + id;
+        text = setConfigValue(text, "tabs", "order", order);
+        text = setConfigValue(text, "tabs", "last", isTabId(config.tabs.last) ? config.tabs.last : "recording");
+    }
     if (config.window.hasGeometry) {
         text = setConfigValue(text, "window", "x", std::to_string(config.window.x));
         text = setConfigValue(text, "window", "y", std::to_string(config.window.y));

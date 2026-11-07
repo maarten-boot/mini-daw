@@ -360,3 +360,46 @@ TEST_CASE("T-REC-34: auto record settings in the config", "[config][T-REC-34]")
     CHECK(back.config.recording.autoPauseSeconds == 8);
     CHECK(back.config.recording.autoThresholdDb == -30);
 }
+
+TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18]")
+{
+    // Default: Recording, Timeline, Audio setup; Recording at start.
+    const auto def = parseConfig(defaultConfigText());
+    CHECK(def.warnings.empty());
+    CHECK(def.config.tabs.order == std::vector<std::string>{"recording", "timeline", "audio"});
+    CHECK(def.config.tabs.last == "recording");
+    // A config from before P18 (no [tabs]): the defaults.
+    CHECK(parseConfig("[ui]\nfont_size = 16\n").config.tabs.order == defaultTabOrder());
+
+    // The user's order; case and spaces do not matter; a missing tab is added at the end.
+    const auto r = parseConfig("[tabs]\norder = Audio,  timeline\nlast = timeline\n");
+    CHECK(r.warnings.empty());
+    CHECK(r.config.tabs.order == std::vector<std::string>{"audio", "timeline", "recording"});
+    CHECK(r.config.tabs.last == "timeline");
+
+    // Unknown and repeated names: left out, with a warning for the unknown ones.
+    const auto bad = parseConfig("[tabs]\norder = timeline, mixer, timeline, recording\nlast = mixer\n");
+    CHECK(bad.warnings.size() == 2);
+    CHECK(bad.config.tabs.order == std::vector<std::string>{"timeline", "recording", "audio"});
+    CHECK(bad.config.tabs.last == "recording");
+    CHECK(normalizeTabOrder({}) == defaultTabOrder());
+
+    // Saved and read back; other settings kept.
+    TempDir dir;
+    AppConfig cfg;
+    cfg.fontSize = 18;
+    cfg.tabs.order = {"timeline", "audio", "recording"};
+    cfg.tabs.last = "audio";
+    REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
+    const auto back = loadConfigFile(dir.path / "c.ini");
+    CHECK(back.warnings.empty());
+    CHECK(back.config.tabs.order == cfg.tabs.order);
+    CHECK(back.config.tabs.last == "audio");
+    CHECK(back.config.fontSize == 18.0f);
+    // An existing config without [tabs] gets the section when saved.
+    {
+        std::ofstream(dir.path / "old.ini") << "[ui]\nfont_size = 16\n";
+    }
+    REQUIRE(saveConfigFile(dir.path / "old.ini", cfg).empty());
+    CHECK(loadConfigFile(dir.path / "old.ini").config.tabs.order == cfg.tabs.order);
+}
