@@ -25,6 +25,7 @@ add_library(minidaw_core STATIC
     core/src/smf.cpp
     core/src/track.cpp
     core/src/theme.cpp
+    core/src/timeline.cpp
     core/src/wav.cpp
     core/src/wav_reader.cpp)
 target_include_directories(minidaw_core PUBLIC

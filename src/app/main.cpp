@@ -32,6 +32,7 @@
 #include "minidaw/project.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/render.hpp"
+#include "minidaw/timeline.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
 #include "minidaw/version.hpp"
@@ -140,6 +141,17 @@ struct AppState {
     std::string loggedRecordingError;      // the disk error already written to the log
     std::vector<std::string> lastTake;     // summary of the last recording
     std::vector<std::string> autoParts;    // auto record (P16): the last parts, newest first
+    // Timeline tab (P17, SPEC-PLAY-07).
+    std::vector<minidaw::RecordingInfo> recordings;  // in the takes folder, oldest first
+    bool recordingsDirty = true;                      // read them again before drawing
+    std::filesystem::path selectedRecording;
+    std::filesystem::path livePart;                   // the auto record part being recorded
+    std::size_t recordingsSeen = 0;                   // to follow new ones (scroll to the end)
+    float timelineZoom = 4.0f;                        // pixels per second, at 16 px text
+    std::filesystem::path previewFolder;              // a recording played on its own (not the tracks)
+    std::uint64_t previewLength = 0;
+    std::string timelineNote;
+    bool timelineShown = false;
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
 
@@ -298,6 +310,10 @@ void stopPlayback(AppState& app)
     app.midiPlayer.stop();      // first: its thread reads the player's run
     app.audio.player().stop();  // keeps the position where it stopped
     app.playbackForRecording = false;
+    if (!app.previewFolder.empty()) {  // a recording played from the timeline: back to the song's start
+        app.previewFolder.clear();
+        app.audio.player().locate(0);
+    }
 }
 
 void reloadInstruments(AppState& app);  // P10, further down
@@ -1961,7 +1977,8 @@ void updateTransport(AppState& app)
     // The end of all takes, MIDI included (the player only knows the audio clips).
     // MIDI is sent `midiDelay` later than the audio position: let its tail out (M3).
     const std::uint64_t rate = app.audio.info().sampleRate;
-    const std::uint64_t end = songLength(app) + static_cast<std::uint64_t>(std::max<std::int64_t>(app.midiDelayFrames, 0)) +
+    const std::uint64_t length = app.previewFolder.empty() ? songLength(app) : app.previewLength;
+    const std::uint64_t end = length + static_cast<std::uint64_t>(std::max<std::int64_t>(app.midiDelayFrames, 0)) +
                               rate / 10;
     if (player.playing() && !app.playbackForRecording && player.position() >= end) {
         stopPlayback(app);
@@ -1981,6 +1998,7 @@ void toggleRecording(AppState& app)
     }
     if (app.session.recording()) {
         const minidaw::SessionResult res = app.session.stop();
+        app.recordingsDirty = true;
         app.lastTake = describeResult(res);
         app.log.info("Recording stopped");
         for (const auto& line : app.lastTake) {
@@ -2066,6 +2084,8 @@ void toggleAuto(AppState& app)
     if (app.session.autoMode()) {
         const int parts = app.session.autoPartsDone() + (app.session.autoInPart() ? 1 : 0);
         const minidaw::SessionResult res = app.session.stop();
+        app.livePart.clear();
+        app.recordingsDirty = true;
         // Losses are always reported (SPEC-REC-05; crosscheck #11, S5).
         std::uint64_t midiLost = 0;
         std::uint64_t disconnects = 0;
@@ -2124,6 +2144,8 @@ void updateAuto(AppState& app)
     const minidaw::AutoPartEvent ev = app.session.autoUpdate();
     switch (ev.kind) {
     case minidaw::AutoPartEvent::Kind::Began:
+        app.livePart = ev.folder;
+        app.recordingsDirty = true;
         app.log.info("Auto record: part " + minidaw::pathToUtf8(ev.folder.filename()) + " began");
         if (ev.cutSeconds > 0.0) {
             char buf[200];
@@ -2136,6 +2158,8 @@ void updateAuto(AppState& app)
         }
         break;
     case minidaw::AutoPartEvent::Kind::Ended: {
+        app.livePart.clear();
+        app.recordingsDirty = true;
         char buf[64];
         std::snprintf(buf, sizeof buf, "%.1f s", ev.seconds);
         const std::string line = minidaw::pathToUtf8(ev.folder.filename()) + "  (" + buf + ")";
@@ -2228,7 +2252,8 @@ void drawTransport(AppState& app)
     auto& player = app.audio.player();
     const bool playing = player.playing() && !app.playbackForRecording;
     const unsigned int rate = running ? app.audio.info().sampleRate : app.config.audio.sampleRate;
-    const std::uint64_t length = songLength(app);
+    // While a recording plays on its own from the timeline (P17): its length.
+    const std::uint64_t length = app.previewFolder.empty() ? songLength(app) : app.previewLength;
     const bool autoOn = app.session.autoMode();  // auto record (P16): playback may run meanwhile
     const bool recNormal = rec && !autoOn;
 
@@ -2360,6 +2385,232 @@ void drawTransport(AppState& app)
         }
     }
     ImGui::EndChild();
+}
+
+// --- Timeline tab (P17, SPEC-PLAY-07) ----------------------------------------------
+
+// Plays one recording on its own from its start (not the tracks): its WAV
+// files (audio inputs and instruments' sound) and, for MIDI files of a track
+// that plays to a MIDI output, that output.
+void previewRecording(AppState& app, const minidaw::RecordingInfo& rec)
+{
+    if (app.session.recording() && !app.session.autoMode()) return;
+    stopPlayback(app);
+    const auto& info = app.audio.info();
+    app.playWarnings.clear();
+    app.timelineNote.clear();
+    if (!info.running) {
+        app.timelineNote = "The audio stream is not running.";
+        return;
+    }
+    constexpr int kPreviewTrack = 100000;  // gains of their own, apart from the tracks
+    std::vector<minidaw::PlaybackClip> clips;
+    std::vector<minidaw::MidiPlaybackTrack> midiTracks;
+    std::uint64_t length = 0;
+    int id = kPreviewTrack;
+    int midiWithoutSound = 0;
+    for (const auto& f : rec.files) {
+        const std::string ext = minidaw::pathToUtf8(f.extension());
+        if (ext == ".wav" || ext == ".WAV") {
+            clips.push_back({id, f, 0});
+            app.audio.player().setGain(id, 1.0f, 1.0f);
+            ++id;
+            continue;
+        }
+        // "NN-name.mid": to the MIDI output of track NN, if it plays to one.
+        const std::string name = minidaw::pathToUtf8(f.filename());
+        const int number = std::atoi(name.c_str());
+        const minidaw::Track* t = findTrack(app, number);
+        if (t == nullptr || t->kind != minidaw::TrackKind::Midi || t->midiOut.empty() || app.instruments.count(number)) {
+            ++midiWithoutSound;
+            continue;
+        }
+        minidaw::SmfData d;
+        std::string err;
+        if (!minidaw::readSmf(f, d, err)) continue;
+        std::uint64_t end = 0;
+        auto events = minidaw::smfToFrames(d, info.sampleRate, &end);
+        length = std::max(length, end);
+        midiTracks.push_back({id, t->midiOut, std::move(events), 0});
+        app.midiPlayer.setGain(id, 1.0f);
+        ++id;
+    }
+    app.audio.player().locate(0);
+    app.audio.player().start(clips, 0, info.sampleRate, app.playWarnings);
+    const std::int64_t midiDelay = latencyNow(app).midiFrames;
+    app.midiDelayFrames = midiDelay;
+    app.midiPlayer.start(midiTracks, 0,
+                         [&app, midiDelay]() -> std::optional<std::int64_t> {
+                             const auto frame = app.audio.currentFrame();
+                             if (!frame) return std::nullopt;
+                             const auto t = app.audio.player().timelineAt(*frame);
+                             if (!t) return std::nullopt;
+                             return *t - midiDelay;
+                         },
+                         app.playWarnings);
+    app.previewFolder = rec.folder;
+    app.previewLength = std::max(length, static_cast<std::uint64_t>(rec.seconds * info.sampleRate));
+    if (clips.empty() && midiTracks.empty()) {
+        app.timelineNote = "Nothing to hear: it holds only MIDI for an instrument or no output. Load it onto the "
+                           "tracks to play it through them.";
+    } else if (midiWithoutSound > 0 && clips.empty()) {
+        app.timelineNote = "Its MIDI has no output to play to; load it onto the tracks to hear it.";
+    }
+    app.log.info("Playing the recording " + minidaw::pathToUtf8(rec.folder));
+}
+
+// Puts a recording's files on the tracks as their takes (P17): the tracks
+// keep their instruments; files without a track get new ones.
+void loadRecording(AppState& app, const std::filesystem::path& folder)
+{
+    if (app.session.recording()) {
+        app.timelineNote = "Stop the recording first.";
+        return;
+    }
+    stopPlayback(app);
+    std::string err;
+    const int placed = minidaw::assignTakeFolder(app.tracks, folder, err);
+    if (placed == 0) {
+        app.timelineNote = err;
+        app.log.warning("Load recording: " + err);
+        return;
+    }
+    app.tracksCreated = true;
+    app.midiPortsDirty = true;
+    importIntoProject(app);  // a project keeps its own copy of the takes
+    for (auto& t : app.tracks) refreshTakeLength(app, t);
+    app.audio.player().locate(0);
+    app.timelineNote = std::to_string(placed) + " file(s) of " + minidaw::pathToUtf8(folder.filename()) +
+                       " are now the tracks' takes (Recording tab).";
+    app.log.info("Loaded the recording " + minidaw::pathToUtf8(folder) + " onto the tracks: " + std::to_string(placed) +
+                 " file(s)");
+}
+
+void drawTimeline(AppState& app)
+{
+    ImGui::SeparatorText("Timeline of recordings");
+    const float em = ImGui::GetFontSize();
+    if (app.recordingsDirty) {
+        app.recordings = minidaw::listRecordings(activeTakesFolder(app));
+        app.recordingsDirty = false;
+    }
+    // The part or take being recorded grows while it is recorded.
+    const bool recNormal = app.session.recording() && !app.session.autoMode();
+    std::vector<minidaw::RecordingInfo> recs = app.recordings;
+    for (auto& r : recs) {
+        if (!app.livePart.empty() && r.folder == app.livePart) r.seconds = app.session.autoPartSeconds();
+        if (recNormal && r.folder == app.session.folder()) r.seconds = app.session.elapsedSeconds();
+    }
+    if (ImGui::SmallButton("Refresh")) app.recordingsDirty = true;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(14 * em);
+    ImGui::SliderFloat("Zoom (pixels per second)", &app.timelineZoom, 0.5f, 100.0f, "%.1f",
+                       ImGuiSliderFlags_Logarithmic);
+    ImGui::SameLine();
+    ImGui::TextWrapped("From %s. Pauses longer than 10 s are drawn short, with their real length.",
+                       minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
+    if (recs.empty()) {
+        ImGui::TextWrapped("No recordings yet. Record (Ctrl+R) or switch on Auto record and play: they appear here.");
+        return;
+    }
+    const float scale = em / 16.0f;
+    const minidaw::TimelineLayout layout =
+        minidaw::layoutTimeline(recs, app.timelineZoom * scale, 10.0, 6.0 * em,
+                                ImGui::CalcTextSize("> 00:00 00:00 REC").x + 2 * ImGui::GetStyle().FramePadding.x);
+    const float rowH = ImGui::GetFrameHeight() * 1.6f;
+    const float labelH = ImGui::GetTextLineHeightWithSpacing();
+    const float pad = em;
+    const float height = 2 * (labelH + rowH) + labelH + ImGui::GetStyle().ScrollbarSize + 2 * ImGui::GetStyle().WindowPadding.y;
+    int doubleClicked = -1;
+    if (ImGui::BeginChild("timeline", ImVec2(0, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
+        const float scrollX = ImGui::GetScrollX();
+        const float yAuto = labelH;
+        const float yTakes = 2 * labelH + rowH;
+        ImGui::SetCursorPos(ImVec2(scrollX + pad, 0));
+        ImGui::TextUnformatted("Auto record parts");
+        ImGui::SetCursorPos(ImVec2(scrollX + pad, labelH + rowH));
+        ImGui::TextUnformatted("Record takes");
+        for (const auto& g : layout.gaps) {
+            ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(g.x) + em * 0.3f, labelH + rowH * 0.5f));
+            ImGui::TextUnformatted(g.label.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A pause of %s, drawn short", g.label.c_str() + 1);
+        }
+        for (const auto& b : layout.blocks) {
+            const minidaw::RecordingInfo& r = recs[b.index];
+            const bool selected = r.folder == app.selectedRecording;
+            const bool live = (!app.livePart.empty() && r.folder == app.livePart) ||
+                              (recNormal && r.folder == app.session.folder());
+            const bool playing = !app.previewFolder.empty() && r.folder == app.previewFolder;
+            // "21:50 0:07": start and length (minutes:seconds).
+            const auto len = static_cast<int>(r.seconds + 0.5);
+            char label[96];
+            std::snprintf(label, sizeof label, "%s%s %d:%02d%s##%s", selected ? "> " : "",
+                          minidaw::clockLabel(r.start, false).c_str(), len / 60, len % 60,
+                          live ? " REC" : playing ? " PLAY" : "", minidaw::pathToUtf8(r.folder).c_str());
+            ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(b.x), r.autoPart ? yAuto : yTakes));
+            if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
+            if (ImGui::Button(label, ImVec2(static_cast<float>(b.width) - 2, rowH))) {
+                app.selectedRecording = r.folder;
+            }
+            if (selected) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                doubleClicked = static_cast<int>(b.index);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s\n%s, %.1f s, %zu file(s)%s\nClick: select. Double-click: play it.",
+                                  minidaw::pathToUtf8(r.folder.filename()).c_str(),
+                                  minidaw::clockLabel(r.start, true).c_str(), r.seconds, r.files.size(),
+                                  live ? " (being recorded)" : "");
+            }
+        }
+        ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(layout.width) + pad, yTakes + rowH));
+        ImGui::Dummy(ImVec2(1, 1));
+        // Follow new recordings: show the end when one is added or one is being recorded.
+        if (recs.size() != app.recordingsSeen || !app.livePart.empty()) {
+            ImGui::SetScrollX(ImGui::GetScrollMaxX());
+            app.recordingsSeen = recs.size();
+        }
+    }
+    ImGui::EndChild();
+    if (doubleClicked >= 0) {
+        app.selectedRecording = recs[static_cast<std::size_t>(doubleClicked)].folder;
+        previewRecording(app, recs[static_cast<std::size_t>(doubleClicked)]);
+    }
+
+    // The selected recording.
+    const auto sel = std::find_if(recs.begin(), recs.end(),
+                                  [&](const minidaw::RecordingInfo& r) { return r.folder == app.selectedRecording; });
+    if (sel == recs.end()) {
+        ImGui::TextUnformatted("Click a recording to select it; double-click to play it.");
+    } else {
+        ImGui::Text("%s: %s, %s long", sel->autoPart ? "Auto record part" : "Record take",
+                    minidaw::clockLabel(sel->start, true).c_str(), clockText(sel->seconds).c_str());
+        const bool playingThis = !app.previewFolder.empty() && app.previewFolder == sel->folder &&
+                                 app.audio.player().playing();
+        ImGui::BeginDisabled(recNormal);
+        if (ImGui::Button(playingThis ? "Stop" : "Play it")) {
+            if (playingThis) {
+                stopPlayback(app);
+            } else {
+                previewRecording(app, *sel);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(app.session.recording());
+        if (ImGui::Button("Load onto the tracks")) loadRecording(app, sel->folder);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Its files become the takes of the tracks with the same numbers (the tracks keep their\n"
+                              "instruments); files without such a track get new tracks.%s",
+                              app.session.recording() ? "\nNot while recording." : "");
+        }
+        ImGui::EndDisabled();
+        ImGui::TextWrapped("Folder: %s", minidaw::pathToUtf8(sel->folder).c_str());
+        std::string files;
+        for (const auto& f : sel->files) files += (files.empty() ? "" : ", ") + minidaw::pathToUtf8(f.filename());
+        ImGui::TextWrapped("Files: %s", files.empty() ? "(none yet)" : files.c_str());
+    }
+    if (!app.timelineNote.empty()) ImGui::TextWrapped("%s", app.timelineNote.c_str());
 }
 
 void drawTracksPanel(AppState& app)
@@ -3171,10 +3422,26 @@ int runGui(AppState& app)
         drawMenuBar(app, quit);
         const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 5.5f;
         if (ImGui::BeginChild("content", ImVec2(0, -statusHeight))) {
-            drawAudioStatus(app);
-            drawTransport(app);
-            drawTracksPanel(app);
-            if (ImGui::CollapsingHeader("Devices")) drawDevicesPanel(app);
+            // Tabs (SPEC-UI-11): the recording setup, and the timeline of the recordings.
+            if (ImGui::BeginTabBar("main-tabs")) {
+                if (ImGui::BeginTabItem("Recording")) {
+                    drawAudioStatus(app);
+                    drawTransport(app);
+                    drawTracksPanel(app);
+                    if (ImGui::CollapsingHeader("Devices")) drawDevicesPanel(app);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Timeline")) {
+                    if (!app.timelineShown) app.recordingsDirty = true;  // read them again when the tab opens
+                    app.timelineShown = true;
+                    drawTransport(app);
+                    drawTimeline(app);
+                    ImGui::EndTabItem();
+                } else {
+                    app.timelineShown = false;
+                }
+                ImGui::EndTabBar();
+            }
         }
         ImGui::EndChild();
         drawStatusLine(app);
