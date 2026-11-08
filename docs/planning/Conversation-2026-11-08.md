@@ -46,3 +46,7 @@
 - W1–W11 as proposed (see `Crosscheck-2026-11-08.md`, actions). W6 turned out not to be a defect (monospaced font). The AA fade of disabled controls is now 95 % (the Selection pairs added in W2 need it).
 - New headless ImGui test of the cues (`tests/test_state_cues.cpp`; the test program now links Dear ImGui when the GUI is built).
 - Spec v0.42, Plan PL1a, T-UI-24 / T-UI-25 extended. Linux 182/182, Wine 181/181; GUI on Xvfb at Max.
+
+## 7. CI of `8008ffc`
+> pushed it, check the CI run / commit the CI log lines
+- Run 42529973283 green (Linux 182/182, Windows 183/183, the headless ImGui tests also with MSVC); both builds in `dist/`, `dist/TESTS.txt` updated (T-UI-25: File menu while recording, no frame on title bars / scrollbars).
