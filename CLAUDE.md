@@ -19,7 +19,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
 - `tools/midi_test/` — make a test MIDI file and check the timing of a recorded MIDI take (T-REC-01/04).
-- `dist/` — not committed; test builds for the user to try. **Only the current build lives there:** empty `dist/` before putting a new build in (user's rule, 2026-11-02), so there is one place to look; say which commit/step it is. The local Linux build needs glibc 2.43; the CI download (built on Ubuntu 24.04, glibc 2.39) runs on more systems.
+- `dist/` — not committed; test builds for the user to try. **Only the current build lives there:** empty `dist/` before putting a new build in (user's rule, 2026-11-02), so there is one place to look; say which commit/step it is. Put the Windows and Linux builds of the same CI run there together, and a `dist/TESTS.txt` with what to test in this cycle (user's rules, 2026-11-07/08). The local Linux build needs glibc 2.43; the CI download (built on Ubuntu 24.04, glibc 2.39) runs on more systems.
 
 ## Build and test
 Linux (keep build folders out of the repository, e.g. in the session scratchpad):
