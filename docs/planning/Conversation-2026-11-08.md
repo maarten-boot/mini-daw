@@ -23,3 +23,7 @@
 - `dist/`: Windows + Linux builds of run 42421955192 with `dist/TESTS.txt`.
 - Waiting for the user (Windows): T-UI-23, T-UI-22, T-UI-20, T-UI-18 (new), T-UI-17 / T-PLAY-18, T-REC-34, T-VST-30, plugin editors / scaling / text size with ImGui 1.93 and GLFW 3.5.1; older: T-PLAY-12 (overdub loopback), T-NF-02, T-DEV-07.
 - Next steps (not started): results of those tests; later PL1 (hover / selected look), PL2 (preset menu), P12 (full Linux / macOS), P14 (ASIO), P13 (editing).
+
+## 3. CI of `31658df`
+> pushed it, check the CI run
+- Run 42518027178 green (windows, linux, licence). Docs only: `dist/` keeps the build of run 42421955192. The handover above still holds.
