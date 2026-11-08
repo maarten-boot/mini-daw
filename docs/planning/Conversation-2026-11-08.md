@@ -35,3 +35,8 @@
 - Core: `minimumOpacity`, `disabledPairs`, `disabledOpacity` (AA 89 %, AAA and above 100 %), Accent pairs on every control / list background, pressed #A6A6A6, hovered #CCCCCC, Accent #00336F. `--contrast-report` lists the disabled pairs as drawn.
 - GUI (`src/app/state_cues`): ImGui's item hooks (`IMGUI_ENABLE_TEST_ENGINE`, hooks only) find the hovered / pressed / disabled controls; an Accent frame is drawn round the hovered one; disabled ones are flat with a dashed frame (flat alone is invisible at Max); `choice()` gives the current list entry "> " and a bar; the selected tab gets a thick line (`DrawSelectedOverline`). Track table: Output column, fixed widths, scrollbar, first four columns frozen. `startBusy()` for instrument, Apply, open / new / save-as project.
 - Spec v0.41 (SPEC-UI-02a, -10, -15, -16, PLAY-03a, §8 Max), Plan PL1 done, T-UI-24..27, README, Demo-checklist, CLAUDE.md. Linux 177/177, Wine 176/176; GUI on Xvfb and Wine.
+
+## 5. CI of `7188ddd`, crosscheck #15
+> pushed it, check the CI run and do the crosscheck
+- Run 42527512800 green (Linux 177/177, Windows 178/178); both builds in `dist/` with a new `dist/TESTS.txt` (T-UI-25..27 new, the earlier open tests).
+- Crosscheck #15 (`Crosscheck-2026-11-08.md`; Spec v0.41, code at `7188ddd`, independent reviewer as in #12–#14): no high finding. W1 ImGui's own disabled menu items have no cue (at Max they look enabled); W2 pairs drawn but not checked (checked disabled checkbox, disabled selected entry, frames on title bar / scrollbar); W3–W8 small (one-frame lag, dropped busy request, busy text wrap, choice alignment, dash cost / stray endDisabled, table height); W9 tests; W10–W11 docs.
