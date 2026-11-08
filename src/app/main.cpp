@@ -98,6 +98,7 @@ struct AppState {
         std::function<void()> work;
     };
     std::optional<BusyJob> busy;
+    float trackTableExtra = 0.0f;  // track table height the hand count missed (crosscheck #15, W8)
 
     std::filesystem::path configPath;
     minidaw::AppConfig config;
@@ -373,7 +374,11 @@ void reloadInstruments(AppState& app);  // P10, further down
 // the window stops drawing, and the log says how long it took. One at a time.
 void startBusy(AppState& app, std::string message, std::function<void()> work)
 {
-    if (app.busy) return;
+    if (app.busy) {
+        // The click is not lost without a sign (crosscheck #15, W4).
+        app.log.warning("Not started while \"" + app.busy->message + "\" is still to do: " + message);
+        return;
+    }
     app.busy = AppState::BusyJob{std::move(message), std::move(work)};
 }
 
@@ -398,14 +403,17 @@ void drawBusy(const AppState& app)
     const std::string text = app.busy->message + " ...";
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float pad = ImGui::GetFontSize();
-    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    // Wrapped to the window, so a long project path stays inside it (W5).
+    const float wrap = std::max(10.0f * pad, vp->WorkSize.x - 4.0f * pad);
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
     const ImVec2 c(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f);
     const ImVec2 a(c.x - size.x * 0.5f - pad, c.y - size.y * 0.5f - pad);
     const ImVec2 b(c.x + size.x * 0.5f + pad, c.y + size.y * 0.5f + pad);
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_WindowBg));
     dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_CheckMark), 0.0f, 0, minidaw::app::cueThickness());  // Accent
-    dl->AddText(ImVec2(a.x + pad, a.y + pad), ImGui::GetColorU32(ImGuiCol_Text), text.c_str());
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + pad, a.y + pad), ImGui::GetColorU32(ImGuiCol_Text),
+                text.c_str(), nullptr, wrap);
 }
 
 void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
@@ -3056,8 +3064,11 @@ void drawTracksPanel(AppState& app)
     bool monitoring = false;
     const ImGuiStyle& style = ImGui::GetStyle();
     const float rowH = ImGui::GetFrameHeight() + 2.0f * style.CellPadding.y;
+    // With ScrollX the table has a fixed height: counted here (every cell is at most one
+    // frame high), plus what the last frame measured beyond that if a cell is taller (W8).
     const float tableH = ImGui::GetTextLineHeight() + 2.0f * style.CellPadding.y +
-                         rowH * static_cast<float>(app.tracks.size()) + style.ScrollbarSize + 4.0f;
+                         rowH * static_cast<float>(app.tracks.size()) + style.ScrollbarSize + 4.0f + app.trackTableExtra;
+    const ImGuiID tableId = ImGui::GetID("tracks");
     if (!app.tracks.empty() && ImGui::BeginTable("tracks", 10, flags, ImVec2(0.0f, tableH))) {
         ImGui::TableSetupScrollFreeze(4, 0);  // #, Arm, Monitor and Name stay when scrolled sideways
         // Fixed widths, so the columns do not jump when the state text changes.
@@ -3278,6 +3289,12 @@ void drawTracksPanel(AppState& app)
                             startBusy(app, "Loading instrument " + c.name, [&app, number, cls] {
                                 minidaw::Track* track = findTrack(app, number);
                                 if (track == nullptr) return;
+                                // As the list it was chosen in: not while recording or rendering this track (W4).
+                                if (app.session.recording() || app.renderTrack == number) {
+                                    app.log.warning("Instrument not changed: track " + std::to_string(number) +
+                                                    " is recording or rendering");
+                                    return;
+                                }
                                 chooseInstrument(app, *track, cls);
                                 // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
                                 if (app.instruments.count(number) != 0) ensureLinkedTrack(app, number);
@@ -3311,6 +3328,20 @@ void drawTracksPanel(AppState& app)
             ImGui::PopID();
         }
         ImGui::EndTable();
+        // The rows' real bottom: if it is below the counted height, grow next frame (logged once).
+        if (const ImGuiTable* table = ImGui::TableFindByID(tableId)) {
+            const float need = table->RowPosY2 - table->OuterRect.Min.y + style.ScrollbarSize + 4.0f;
+            const float counted = tableH - app.trackTableExtra;
+            const float extra = std::max(0.0f, need - counted);  // also shrinks again (smaller text)
+            if (extra > 0.5f && app.trackTableExtra <= 0.5f) {
+                static bool logged = false;
+                if (!logged) {
+                    app.log.info("Track table: a row is taller than counted; the table grows to fit");
+                    logged = true;
+                }
+            }
+            app.trackTableExtra = extra > 0.5f ? extra : 0.0f;
+        }
     }
     if (monitoring) {
         const auto& info = app.audio.info();

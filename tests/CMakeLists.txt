@@ -23,6 +23,12 @@ add_executable(minidaw_tests
     test_folders.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
+# The GUI's state cues (PL1, crosscheck #15 W9): a headless Dear ImGui context, no window.
+if(TARGET minidaw_imgui)
+    target_sources(minidaw_tests PRIVATE test_state_cues.cpp ${PROJECT_SOURCE_DIR}/src/app/state_cues.cpp)
+    target_include_directories(minidaw_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+    target_link_libraries(minidaw_tests PRIVATE minidaw_imgui)
+endif()
 
 # The test synth (P10c): a VST3 instrument built from the SDK's plugin-side
 # sources, as a bundle with the standard layout, for the hosting tests.

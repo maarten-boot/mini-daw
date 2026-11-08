@@ -29,3 +29,20 @@ Scope: Spec v0.41, Plan, Tests, README, Demo-checklist, CLAUDE.md, code at commi
 | W9 | tests | T-UI-24 checks "no fade" only for Max, not for AAA (Spec: AAA and above none); nothing tests `state_cues` (hook cues, disabled balance, `choice` IDs). | AAA check; a headless ImGui test (context without a renderer, one frame): cues for hovered / disabled items, no cue for title bar / scrollbar, balance after nested blocks, `choice` ID stable. |
 | W10 | docs | SPEC-UI-15: "a disabled checkbox: a dashed box" and "every control … disabled" do not hold yet (W1, W2); the one-frame lag and the title-bar / scrollbar frames are not mentioned. | Spec after the fixes. |
 | W11 | docs | CLAUDE.md layout lists only `main.cpp`, `imgui_theme.cpp` and the renderers under `src/app/` (also missing `folder_chooser`, `plugin_window`, now `state_cues`). | Complete the list. |
+
+## Actions taken (user: "yes fix W1–W11, W1 first")
+| # | Done |
+|---|------|
+| W1 | Every disabled item gets the dashed frame, also the ones ImGui disables itself (menu items, Recent projects); the "box only" shrink only for checkboxes inside `beginDisabled` (ImGui reports every menu item as checkable). GUI at Max: File menu while recording shows dashed rows. Test (headless). |
+| W2 | `CheckboxSelectedBg` flattened too; pairs added: TextDisabled and Border on Selection (normal), Text / TextDisabled / Border on Selection (disabled); AA fade now 95 % (was 89 %). No frame on title bars (`MoveId`) and scrollbars. Tests. |
+| W3 | Every enabled item with an ID is recorded; hovered / pressed decided in `drawStateCues` from the frame's final `HoveredId` / `ActiveId`: no delay, no lingering. Test (frame appears and goes in the same frame). |
+| W4 | A second busy request is logged as a warning; the instrument job does nothing (logged) while recording or while that track renders. |
+| W5 | The busy text wraps at the window width. |
+| W6 | Not a defect: the font is monospaced, "> " and two spaces are equally wide (the PL1 screenshot shows the entries aligned); comment added. |
+| W7 | Dashes 4 px (was 3; about a quarter fewer lines); a stray `endDisabled` is ignored and counted at run time (not only `IM_ASSERT`). Test. |
+| W8 | After the table its real row bottom is measured; if it is below the counted height the table grows next frame by the difference (and shrinks again), logged once. |
+| W9 | T-UI-24 checks "no fade" from AAA up; new `tests/test_state_cues.cpp`: a headless ImGui context (no window, no renderer) runs the hooks: hover / pressed, disabled (button, ticked checkbox, ImGui's menu item), no frame on title bar / scrollbar, stack balance and stray end, `choice` ID. |
+| W10 | SPEC-UI-02a (95 %), SPEC-UI-10 (table height), SPEC-UI-15 (no delay, title bar / scrollbar, ImGui's disabled items, ticked checkbox, Selection pairs), SPEC-UI-16 (one at a time logged, instrument guard); T-UI-24 / T-UI-25 texts. |
+| W11 | CLAUDE.md layout: `state_cues`, `folder_chooser`, `plugin_window`, the headless test. |
+
+Spec v0.42, Plan PL1a. Linux 182/182, Wine 181/181 Catch2 cases (3008 assertions); GUI on Xvfb (Max).

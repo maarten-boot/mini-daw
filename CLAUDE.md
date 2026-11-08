@@ -16,7 +16,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 
 ## Layout
 - `src/core/` — library without GUI: colours/contrast (`color`, `theme`), config file (`config`), device scan (`devices`), audio stream (`audio_stream`), recording engine (`ring_buffer.hpp`, `wav`, `recorder`), MIDI (`smf`, `midi_input`, `frame_clock.hpp`), tracks and recording sessions (`track`, `recording_session`).
-- `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS).
+- `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `state_cues.cpp` (hover / pressed / disabled / selected cues through ImGui's item hooks, PL1), `folder_chooser.cpp` (Browse…, P19), `plugin_window.cpp` (plugin editor windows, P10d), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS). `tests/test_state_cues.cpp` runs the cues in a headless ImGui context.
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
 - `tools/midi_test/` — make a test MIDI file and check the timing of a recorded MIDI take (T-REC-01/04).

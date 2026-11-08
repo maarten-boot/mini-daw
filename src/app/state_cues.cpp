@@ -16,13 +16,22 @@ struct Cue {
     ImGuiID id = 0;
     ImRect rect;
     ImRect clip;
-    bool disabled = false;   // disabled inside beginDisabled(): dashed frame
+    bool disabled = false;   // disabled (by beginDisabled or by ImGui itself): dashed frame
+    bool flatBlock = false;  // inside a beginDisabled(true) block
     bool checkable = false;  // a checkbox: the dashed frame goes round its box only
 };
 
-std::vector<Cue> g_cues;
+std::vector<Cue> g_cues;            // every item with an ID this frame (crosscheck #15, W3)
+std::vector<DrawnCue> g_drawn;      // what drawStateCues drew (for the tests)
 std::vector<bool> g_disabledStack;  // what each beginDisabled() pushed
 int g_flatDepth = 0;                // open beginDisabled(true) blocks
+int g_strayEnds = 0;                // endDisabled() without a beginDisabled() (W7)
+
+// The colours a disabled control loses (flat: no fill of its own).
+constexpr ImGuiCol kFlatColors[] = {ImGuiCol_Button,         ImGuiCol_ButtonHovered,   ImGuiCol_ButtonActive,
+                                    ImGuiCol_FrameBg,        ImGuiCol_FrameBgHovered,  ImGuiCol_FrameBgActive,
+                                    ImGuiCol_CheckboxSelectedBg};
+constexpr int kFlatColorCount = static_cast<int>(sizeof kFlatColors / sizeof kFlatColors[0]);
 
 ImU32 toU32(const Rgb& c)
 {
@@ -75,22 +84,34 @@ void drawStateCues(const Palette& palette)
     const float th = cueThickness();
     const ImU32 accent = toU32(palette[Role::Accent]);
     const ImU32 border = toU32(palette[Role::Border]);
+    g_drawn.clear();
     for (const Cue& c : g_cues) {
         if (c.window == nullptr || !c.window->WasActive) continue;
+        // Hovered / pressed decided now, from the frame's final state (no lag, W3).
+        const bool hot = !c.disabled && c.id != 0 && (c.id == g.ActiveId || c.id == g.HoveredId);
+        if (!c.disabled && !hot) continue;
         ImDrawList* dl = c.window->DrawList;
         dl->PushClipRect(c.clip.Min, c.clip.Max, false);
+        ImRect r = c.rect;
         if (c.disabled) {
-            ImRect r = c.rect;
-            if (c.checkable) r.Max.x = r.Min.x + r.GetHeight();  // the box, not its label
-            dashedRect(dl, r, border, std::max(2.0f, th * 1.5f));
-        } else if (c.id == g.ActiveId || c.id == g.HoveredId || c.id == g.HoveredIdPreviousFrame) {
+            // A checkbox: its box, not its label. Only for ours: ImGui reports every
+            // menu item as checkable too (W1).
+            if (c.checkable && c.flatBlock) r.Max.x = r.Min.x + r.GetHeight();
+            dashedRect(dl, r, border, std::max(4.0f, th * 2.0f));
+            g_drawn.push_back({DrawnCue::Kind::Disabled, r.Min, r.Max});
+        } else {
             // Inside the control, so a frame in a narrow table cell is not cut off.
-            ImRect r = c.rect;
             r.Expand(-th * 0.5f);
             dl->AddRect(r.Min, r.Max, accent, 0.0f, 0, th);
+            g_drawn.push_back({c.id == g.ActiveId ? DrawnCue::Kind::Pressed : DrawnCue::Kind::Hovered, r.Min, r.Max});
         }
         dl->PopClipRect();
     }
+}
+
+const std::vector<DrawnCue>& lastDrawnCues()
+{
+    return g_drawn;
 }
 
 void beginDisabled(bool disabled)
@@ -99,31 +120,39 @@ void beginDisabled(bool disabled)
     g_disabledStack.push_back(disabled);
     if (!disabled) return;
     ++g_flatDepth;
-    // Flat: no fill of its own, and no solid frame (the dashed one is drawn instead).
+    // Flat: no fill of its own (also a ticked checkbox, W2), and no solid frame
+    // (the dashed one is drawn instead).
     const ImVec4 none(0, 0, 0, 0);
-    for (ImGuiCol col : {ImGuiCol_Button, ImGuiCol_ButtonHovered, ImGuiCol_ButtonActive, ImGuiCol_FrameBg,
-                         ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive}) {
-        ImGui::PushStyleColor(col, none);
-    }
+    for (ImGuiCol col : kFlatColors) ImGui::PushStyleColor(col, none);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 }
 
 void endDisabled()
 {
-    IM_ASSERT(!g_disabledStack.empty());
+    // A stray call is ignored (and counted), never undefined behaviour (W7).
+    if (g_disabledStack.empty()) {
+        ++g_strayEnds;
+        return;
+    }
     const bool disabled = g_disabledStack.back();
     g_disabledStack.pop_back();
     if (disabled) {
         ImGui::PopStyleVar();
-        ImGui::PopStyleColor(6);
+        ImGui::PopStyleColor(kFlatColorCount);
         --g_flatDepth;
     }
     ImGui::EndDisabled();
 }
 
+int strayEndDisabledCount()
+{
+    return g_strayEnds;
+}
+
 bool choice(const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size)
 {
-    // "###" keeps the ID the same with or without the mark.
+    // "###" keeps the ID the same with or without the mark. The font is monospaced,
+    // so "> " and two spaces are equally wide: entries do not move (W6).
     const std::string text = std::string(selected ? "> " : "  ") + label + "###choice-" + label;
     const bool pressed = ImGui::Selectable(text.c_str(), selected, flags, size);
     if (selected) {
@@ -138,7 +167,8 @@ bool choice(const char* label, bool selected, ImGuiSelectableFlags flags, const 
 } // namespace minidaw::app
 
 // --- Dear ImGui item hooks (IMGUI_ENABLE_TEST_ENGINE) ------------------------
-// Called for every item with an ID. Only the ones that need a cue are kept.
+// Called for every item with an ID; whether it is hovered is decided at the end
+// of the frame (drawStateCues).
 
 void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb, const ImGuiLastItemData* data)
 {
@@ -147,10 +177,11 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb
     ImGuiContext& g = *ctx;
     ImGuiWindow* window = g.CurrentWindow;
     if (window == nullptr || id == window->ID) return;
-    const bool disabled = (data->ItemFlags & ImGuiItemFlags_Disabled) != 0;
-    const bool flat = disabled && minidaw::app::g_flatDepth > 0;
-    const bool hot = !disabled && (id == g.ActiveId || id == g.HoveredId || id == g.HoveredIdPreviousFrame);
-    if (!flat && !hot) return;
+    // Title bars and scrollbars are not controls a click acts on (W2).
+    if (id == window->MoveId || id == ImGui::GetWindowScrollbarID(window, ImGuiAxis_X) ||
+        id == ImGui::GetWindowScrollbarID(window, ImGuiAxis_Y)) {
+        return;
+    }
     // NavRect is the control itself (a slider's frame without its label); for most
     // items it is the same as Rect.
     const ImRect& rect = data->NavRect.GetWidth() > 0.0f ? data->NavRect : data->Rect;
@@ -160,7 +191,8 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb
     cue.id = id;
     cue.rect = rect;
     cue.clip = window->ClipRect;
-    cue.disabled = flat;
+    cue.disabled = (data->ItemFlags & ImGuiItemFlags_Disabled) != 0;  // also ImGui's own (W1)
+    cue.flatBlock = cue.disabled && minidaw::app::g_flatDepth > 0;
     minidaw::app::g_cues.push_back(cue);
 }
 

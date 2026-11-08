@@ -8,6 +8,8 @@
 //   also has the darker ControlActive fill).
 // - Disabled: flat (no fill), a dashed frame instead of the solid one, and
 //   faded only as far as the contrast minimum allows (Theme: disabledOpacity).
+//   Also items ImGui disables itself (menu items with enabled = false).
+// - Title bars and scrollbars get no frame.
 // - Selected list item: "> " in front of it and an Accent bar on its left.
 //
 // The hovered / pressed / disabled controls are found through Dear ImGui's item
@@ -17,6 +19,8 @@
 #include "minidaw/theme.hpp"
 
 #include <imgui.h>
+
+#include <vector>
 
 namespace minidaw::app {
 
@@ -37,5 +41,16 @@ bool choice(const char* label, bool selected, ImGuiSelectableFlags flags = 0, co
 
 // Thickness of the frames and bars, in pixels, for the current text size.
 float cueThickness();
+
+// What drawStateCues drew in the last frame (for the tests).
+struct DrawnCue {
+    enum class Kind { Hovered, Pressed, Disabled } kind;
+    ImVec2 min;
+    ImVec2 max;
+};
+const std::vector<DrawnCue>& lastDrawnCues();
+
+// endDisabled() calls without a beginDisabled() (ignored; should stay 0).
+int strayEndDisabledCount();
 
 } // namespace minidaw::app

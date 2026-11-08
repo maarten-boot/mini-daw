@@ -40,3 +40,9 @@
 > pushed it, check the CI run and do the crosscheck
 - Run 42527512800 green (Linux 177/177, Windows 178/178); both builds in `dist/` with a new `dist/TESTS.txt` (T-UI-25..27 new, the earlier open tests).
 - Crosscheck #15 (`Crosscheck-2026-11-08.md`; Spec v0.41, code at `7188ddd`, independent reviewer as in #12–#14): no high finding. W1 ImGui's own disabled menu items have no cue (at Max they look enabled); W2 pairs drawn but not checked (checked disabled checkbox, disabled selected entry, frames on title bar / scrollbar); W3–W8 small (one-frame lag, dropped busy request, busy text wrap, choice alignment, dash cost / stray endDisabled, table height); W9 tests; W10–W11 docs.
+
+## 6. Crosscheck #15 fixes (PL1a)
+> yes fix W1–W11, W1 first
+- W1–W11 as proposed (see `Crosscheck-2026-11-08.md`, actions). W6 turned out not to be a defect (monospaced font). The AA fade of disabled controls is now 95 % (the Selection pairs added in W2 need it).
+- New headless ImGui test of the cues (`tests/test_state_cues.cpp`; the test program now links Dear ImGui when the GUI is built).
+- Spec v0.42, Plan PL1a, T-UI-24 / T-UI-25 extended. Linux 182/182, Wine 181/181; GUI on Xvfb at Max.

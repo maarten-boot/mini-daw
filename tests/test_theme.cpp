@@ -130,7 +130,7 @@ TEST_CASE("T-UI-24: disabled controls are faded only as far as the minimum allow
              << contrastRatio(faded, bg) << ":1");
         CHECK(meetsContrast(contrastRatio(faded, bg), minimum));
     }
-    if (minimum == 21.0) CHECK(opacity == 1.0);  // Max: not faded at all
+    if (minimum >= 7.0) CHECK(opacity == 1.0);   // AAA and above: not faded at all (Spec SPEC-UI-02a)
     if (minimum == 4.5) CHECK(opacity < 1.0);    // AA: still visibly faded
 }
 

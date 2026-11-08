@@ -39,6 +39,10 @@ constexpr ColorPair kPairs[] = {
     {Role::Accent, Role::SelectionActive},
     {Role::Accent, Role::TableHeader},
     {Role::Accent, Role::TableRowAlt},
+    // A list entry that is selected but disabled ("Sound from: this recording"
+    // without a take) shows these on Selection (crosscheck #15, W2).
+    {Role::TextDisabled, Role::Selection},
+    {Role::Border, Role::Selection},
     {Role::ScrollbarThumb, Role::ScrollbarTrack},
 };
 
@@ -52,6 +56,8 @@ constexpr ColorPair kDisabledPairs[] = {
     {Role::Border, Role::Background},        {Role::Border, Role::TableRowAlt},
     {Role::Accent, Role::Background},
     {Role::Accent, Role::TableRowAlt},       {Role::Accent, Role::Control},
+    {Role::Text, Role::Selection},           {Role::TextDisabled, Role::Selection},
+    {Role::Border, Role::Selection},
 };
 
 std::string lower(std::string_view s)
