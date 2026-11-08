@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
 #include <set>
 
 using namespace minidaw;
@@ -111,5 +112,51 @@ TEST_CASE("T-UI-05: contrast setting parsing", "[theme][T-UI-05][T-UI-06]")
         for (const char* s : {"AA", "AAA", "Max", "12.5"}) {
             CHECK(parseContrastSetting(s).setting->toString() == s);
         }
+    }
+}
+
+TEST_CASE("T-UI-24: disabled controls are faded only as far as the minimum allows", "[theme][T-UI-24]")
+{
+    const double minimum = GENERATE(4.5, 7.0, 10.0, 15.0, 21.0);
+    INFO("minimum " << minimum);
+    const auto result = enforceMinimumContrast(defaultPalette(), minimum);
+    const double opacity = result.disabledOpacity;
+    CHECK(opacity >= kMinDisabledOpacity);
+    CHECK(opacity <= 1.0);
+    for (const auto& pair : disabledPairs()) {
+        const Rgb& bg = result.palette[pair.background];
+        const Rgb faded = mix(bg, result.palette[pair.foreground], opacity);
+        INFO(roleName(pair.foreground) << " (disabled) on " << roleName(pair.background) << ": "
+             << contrastRatio(faded, bg) << ":1");
+        CHECK(meetsContrast(contrastRatio(faded, bg), minimum));
+    }
+    if (minimum == 21.0) CHECK(opacity == 1.0);  // Max: not faded at all
+    if (minimum == 4.5) CHECK(opacity < 1.0);    // AA: still visibly faded
+}
+
+TEST_CASE("T-UI-25: the hover frame and selection bar (Accent) reach AA on every background", "[theme][T-UI-25]")
+{
+    const Palette p = defaultPalette();
+    for (Role bg : {Role::Background, Role::Control, Role::ControlHovered, Role::ControlActive, Role::Selection,
+                    Role::SelectionHovered, Role::SelectionActive, Role::TableHeader, Role::TableRowAlt}) {
+        const bool listed = std::any_of(colorPairs().begin(), colorPairs().end(), [&](const ColorPair& c) {
+            return c.foreground == Role::Accent && c.background == bg;
+        });
+        INFO(roleName(bg));
+        CHECK(listed);
+        CHECK(meetsContrast(contrastRatio(p[Role::Accent], p[bg]), kMinContrastAA));
+    }
+    // Pressed is clearly darker than normal, hovered in between (PL1).
+    CHECK(contrastRatio(p[Role::Control], p[Role::ControlActive]) >= 1.9);
+    CHECK(contrastRatio(p[Role::Control], p[Role::ControlHovered]) >= 1.25);
+}
+
+TEST_CASE("Every disabled pair is also a normal pair", "[theme][T-UI-24]")
+{
+    for (const auto& d : disabledPairs()) {
+        INFO(roleName(d.foreground) << " on " << roleName(d.background));
+        CHECK(std::any_of(colorPairs().begin(), colorPairs().end(), [&](const ColorPair& c) {
+            return c.foreground == d.foreground && c.background == d.background;
+        }));
     }
 }

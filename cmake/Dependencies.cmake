@@ -170,6 +170,9 @@ if(MINIDAW_BUILD_APP)
     target_include_directories(minidaw_imgui SYSTEM PUBLIC
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imgui_SOURCE_DIR}/misc/cpp)
     target_link_libraries(minidaw_imgui PUBLIC glfw)
+    # Item hooks only (no test engine is linked): the hover / pressed / disabled
+    # cues of PL1 find the controls through them (src/app/state_cues.cpp).
+    target_compile_definitions(minidaw_imgui PUBLIC IMGUI_ENABLE_TEST_ENGINE)
     if(WIN32)
         target_sources(minidaw_imgui PRIVATE ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
         if(MINGW)

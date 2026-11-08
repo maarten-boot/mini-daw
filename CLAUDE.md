@@ -11,6 +11,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - Dependencies must have MIT-compatible licences and be listed in `THIRD_PARTY.md` with the same version as `cmake/Dependencies.cmake`. Never add ASIO SDK files to the repository.
 - Dependencies and GitHub Actions are pinned by full commit hash with the release as a comment (`GIT_TAG <sha>  # v1.93.0`, `uses: x@<sha> # v7.0.1`), at the newest release that works (SPEC-CI-01, -04); write down any exception, with the reason, in Spec §7. Get the hash with `git ls-remote <repo> 'refs/tags/<tag>^{}' 'refs/tags/<tag>'` (the `^{}` line is the commit of an annotated tag). `tools/check_licenses.py` enforces this.
 - The planning documents are committed on `main` (user's decision 2026-11-08: no separate docs branch for this project).
+- GUI states (PL1, SPEC-UI-15): use `minidaw::app::beginDisabled` / `endDisabled` (not ImGui's) and `minidaw::app::choice()` for list entries that have a selected state (`src/app/state_cues.hpp`); slow work started by a click goes through `startBusy()` (SPEC-UI-16).
 - Audio callback (`AudioStream::audioCallback`, and `Recorder::process` which it calls): no locks, no allocation, no I/O.
 
 ## Layout

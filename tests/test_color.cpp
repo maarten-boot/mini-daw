@@ -75,3 +75,16 @@ TEST_CASE("adjustToContrast reports failure when nothing can reach the minimum",
     auto adj = adjustToContrast(hex("#808080"), hex("#777777"), 21.0);
     CHECK_FALSE(adj.ok);
 }
+
+TEST_CASE("T-UI-24: smallest opacity that still reaches a minimum", "[color][T-UI-24]")
+{
+    // Black faded over white reaches 4.5:1 at about #767676, i.e. 54 % opacity.
+    const double a = minimumOpacity(kBlack, kWhite, 4.5);
+    CHECK(a > 0.5);
+    CHECK(a < 0.56);
+    CHECK(meetsContrast(contrastRatio(mix(kWhite, kBlack, a), kWhite), 4.5));
+    CHECK_FALSE(meetsContrast(contrastRatio(mix(kWhite, kBlack, a - 0.01), kWhite), 4.5));
+    // 21:1 needs the full colour; a pair that cannot reach the minimum gives 1.
+    CHECK(minimumOpacity(kBlack, kWhite, 21.0) == 1.0);
+    CHECK(minimumOpacity(parseHex("#777777").value(), kWhite, 7.0) == 1.0);
+}

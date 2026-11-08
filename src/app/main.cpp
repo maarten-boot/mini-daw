@@ -18,6 +18,7 @@
 #include "imgui_theme.hpp"
 #include "plugin_window.hpp"
 #include "renderer.hpp"
+#include "state_cues.hpp"
 
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
@@ -74,7 +75,9 @@ extern char** environ;
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -88,6 +91,14 @@ using minidaw::ContrastSetting;
 // Application state
 // ---------------------------------------------------------------------------
 struct AppState {
+    // Slow work started by a click (PL1, SPEC-UI-16): its message is drawn first, the
+    // work runs at the start of the next frame (the window cannot draw meanwhile).
+    struct BusyJob {
+        std::string message;
+        std::function<void()> work;
+    };
+    std::optional<BusyJob> busy;
+
     std::filesystem::path configPath;
     minidaw::AppConfig config;
     std::vector<std::string> configWarnings;
@@ -107,6 +118,7 @@ struct AppState {
 
     minidaw::Palette palette;                    // after enforcement
     std::vector<minidaw::ColorPair> unresolved;  // should stay empty
+    double disabledOpacity = 1.0;                // how far disabled controls fade (PL1)
 
     bool showCustomContrast = false;
     bool showContrastReport = false;
@@ -283,7 +295,8 @@ void setContrast(AppState& app, const ContrastSetting& setting, bool save)
     auto result = buildPalette(setting);
     app.palette = result.palette;
     app.unresolved = result.unresolved;
-    minidaw::app::applyPalette(app.palette);
+    app.disabledOpacity = result.disabledOpacity;
+    minidaw::app::applyPalette(app.palette, app.disabledOpacity);
     if (save) saveConfig(app);
 }
 
@@ -356,6 +369,45 @@ void stopPlayback(AppState& app)
 
 void reloadInstruments(AppState& app);  // P10, further down
 
+// Slow work on the GUI thread (PL1, SPEC-UI-16): "<message> ..." is on screen before
+// the window stops drawing, and the log says how long it took. One at a time.
+void startBusy(AppState& app, std::string message, std::function<void()> work)
+{
+    if (app.busy) return;
+    app.busy = AppState::BusyJob{std::move(message), std::move(work)};
+}
+
+// At the start of a frame: the message was drawn in the frame before, so do the work.
+void runBusy(AppState& app)
+{
+    if (!app.busy) return;
+    AppState::BusyJob job = std::move(*app.busy);
+    app.busy.reset();
+    const auto start = std::chrono::steady_clock::now();
+    job.work();
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    char buf[64];
+    std::snprintf(buf, sizeof buf, ": done in %.2f s", seconds);
+    app.log.info(job.message + buf);
+}
+
+// The message, on top of everything (a new ImGui window is hidden in its first frame).
+void drawBusy(const AppState& app)
+{
+    if (!app.busy) return;
+    const std::string text = app.busy->message + " ...";
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float pad = ImGui::GetFontSize();
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 c(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f);
+    const ImVec2 a(c.x - size.x * 0.5f - pad, c.y - size.y * 0.5f - pad);
+    const ImVec2 b(c.x + size.x * 0.5f + pad, c.y + size.y * 0.5f + pad);
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_WindowBg));
+    dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_CheckMark), 0.0f, 0, minidaw::app::cueThickness());  // Accent
+    dl->AddText(ImVec2(a.x + pad, a.y + pad), ImGui::GetColorU32(ImGuiCol_Text), text.c_str());
+}
+
 void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
 {
     if (app.session.recording()) {
@@ -403,20 +455,48 @@ void printDevices(const minidaw::DeviceScan& scan)
     for (const auto& w : scan.warnings) std::printf("warning: %s\n", w.c_str());
 }
 
-int printContrastReport(const AppState& app)
+// One line of the contrast report: every colour pair, then the disabled ones as
+// drawn (faded to disabledOpacity, SPEC-UI-02a).
+struct ContrastRow {
+    std::string foreground;
+    std::string background;
+    minidaw::Rgb fg;
+    minidaw::Rgb bg;
+    double ratio = 0.0;
+};
+
+std::vector<ContrastRow> contrastRows(const AppState& app)
 {
-    std::printf("Contrast setting: %s\n", describeContrast(app.config.contrast).c_str());
-    std::printf("%-22s %-22s %-8s %-8s %8s  %s\n", "Foreground", "Background", "FG", "BG", "Ratio", "Result");
+    std::vector<ContrastRow> rows;
     for (const auto& pair : minidaw::colorPairs()) {
         const auto& fg = app.palette[pair.foreground];
         const auto& bg = app.palette[pair.background];
-        const double r = minidaw::contrastRatio(fg, bg);
-        std::printf("%-22s %-22s %-8s %-8s %7.2f:1  %s\n", std::string(minidaw::roleName(pair.foreground)).c_str(),
-                    std::string(minidaw::roleName(pair.background)).c_str(), minidaw::toHex(fg).c_str(),
-                    minidaw::toHex(bg).c_str(), r,
-                    minidaw::meetsContrast(r, app.config.contrast.minimum()) ? "pass" : "FAIL");
+        rows.push_back({std::string(minidaw::roleName(pair.foreground)), std::string(minidaw::roleName(pair.background)),
+                        fg, bg, minidaw::contrastRatio(fg, bg)});
     }
-    return app.unresolved.empty() ? 0 : 1;
+    char suffix[48];
+    std::snprintf(suffix, sizeof suffix, ", faded to %.0f %%", app.disabledOpacity * 100.0);
+    for (const auto& pair : minidaw::disabledPairs()) {
+        const auto& bg = app.palette[pair.background];
+        const auto fg = minidaw::mix(bg, app.palette[pair.foreground], app.disabledOpacity);
+        rows.push_back({std::string(minidaw::roleName(pair.foreground)) + suffix,
+                        std::string(minidaw::roleName(pair.background)), fg, bg, minidaw::contrastRatio(fg, bg)});
+    }
+    return rows;
+}
+
+int printContrastReport(const AppState& app)
+{
+    std::printf("Contrast setting: %s\n", describeContrast(app.config.contrast).c_str());
+    std::printf("%-32s %-22s %-8s %-8s %8s  %s\n", "Foreground", "Background", "FG", "BG", "Ratio", "Result");
+    bool allPass = true;
+    for (const ContrastRow& row : contrastRows(app)) {
+        const bool pass = minidaw::meetsContrast(row.ratio, app.config.contrast.minimum());
+        allPass = allPass && pass;
+        std::printf("%-32s %-22s %-8s %-8s %7.2f:1  %s\n", row.foreground.c_str(), row.background.c_str(),
+                    minidaw::toHex(row.fg).c_str(), minidaw::toHex(row.bg).c_str(), row.ratio, pass ? "pass" : "FAIL");
+    }
+    return app.unresolved.empty() && allPass ? 0 : 1;
 }
 
 // --audio-test: open the configured devices, run, report (T-DEV-02 without a GUI).
@@ -665,7 +745,10 @@ void drawMenuBar(AppState& app, bool& quit)
             for (const auto& r : recent) {
                 const bool there = minidaw::isProjectFolder(minidaw::pathFromUtf8(r));
                 const std::string label = there ? r : r + "  (not found)";  // N5
-                if (ImGui::MenuItem(label.c_str(), nullptr, false, there)) openProject(app, minidaw::pathFromUtf8(r));
+                if (ImGui::MenuItem(label.c_str(), nullptr, false, there)) {
+                    const std::filesystem::path folder = minidaw::pathFromUtf8(r);
+                    startBusy(app, "Opening project " + r, [&app, folder] { openProject(app, folder); });
+                }
             }
             ImGui::EndMenu();
         }
@@ -769,21 +852,21 @@ void drawTabsWindow(AppState& app)
         for (std::size_t i = 0; i < order.size(); ++i) {
             const std::string id = order[i];
             ImGui::PushID(id.c_str());
-            ImGui::BeginDisabled(i == 0);
+            minidaw::app::beginDisabled(i == 0);
             if (keyboard && focusTab == id && focusUp) ImGui::SetKeyboardFocusHere();
             if (ImGui::Button("Up") && i > 0) {
                 moveFrom = i;
                 moveTo = i - 1;
             }
-            ImGui::EndDisabled();
+            minidaw::app::endDisabled();
             ImGui::SameLine();
-            ImGui::BeginDisabled(i + 1 == order.size());
+            minidaw::app::beginDisabled(i + 1 == order.size());
             if (keyboard && focusTab == id && !focusUp) ImGui::SetKeyboardFocusHere();
             if (ImGui::Button("Down") && i + 1 < order.size()) {
                 moveFrom = i;
                 moveTo = i + 1;
             }
-            ImGui::EndDisabled();
+            minidaw::app::endDisabled();
             ImGui::SameLine();
             ImGui::Text("%zu. %s", i + 1, tabTitle(id));
             ImGui::PopID();
@@ -857,18 +940,15 @@ void drawContrastReportWindow(AppState& app)
             ImGui::TableSetupColumn("Ratio");
             ImGui::TableSetupColumn("Result");
             ImGui::TableHeadersRow();
-            for (const auto& pair : minidaw::colorPairs()) {
-                const auto& fg = app.palette[pair.foreground];
-                const auto& bg = app.palette[pair.background];
-                const double r = minidaw::contrastRatio(fg, bg);
+            for (const ContrastRow& row : contrastRows(app)) {
                 ImGui::TableNextRow();
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(std::string(minidaw::roleName(pair.foreground)).c_str());
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(std::string(minidaw::roleName(pair.background)).c_str());
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(minidaw::toHex(fg).c_str());
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(minidaw::toHex(bg).c_str());
-                ImGui::TableNextColumn(); ImGui::Text("%.2f:1", r);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(row.foreground.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(row.background.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(minidaw::toHex(row.fg).c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(minidaw::toHex(row.bg).c_str());
+                ImGui::TableNextColumn(); ImGui::Text("%.2f:1", row.ratio);
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(minidaw::meetsContrast(r, app.config.contrast.minimum()) ? "pass" : "FAIL");
+                ImGui::TextUnformatted(minidaw::meetsContrast(row.ratio, app.config.contrast.minimum()) ? "pass" : "FAIL");
             }
             ImGui::EndTable();
         }
@@ -888,14 +968,14 @@ void deviceCombo(const char* label, std::string& value, const minidaw::DeviceSca
         if (!present) preview += "  (not found)";
     }
     if (ImGui::BeginCombo(label, preview.c_str())) {
-        if (ImGui::Selectable(minidaw::kDefaultDevice, value == minidaw::kDefaultDevice)) value = minidaw::kDefaultDevice;
-        if (ImGui::Selectable(minidaw::kNoDevice, value == minidaw::kNoDevice)) value = minidaw::kNoDevice;
+        if (minidaw::app::choice(minidaw::kDefaultDevice, value == minidaw::kDefaultDevice)) value = minidaw::kDefaultDevice;
+        if (minidaw::app::choice(minidaw::kNoDevice, value == minidaw::kNoDevice)) value = minidaw::kNoDevice;
         for (const auto& d : scan.audioDevices) {
             const unsigned int ch = input ? d.inputChannels : d.outputChannels;
             if (ch == 0) continue;
             ImGui::PushID(static_cast<int>(d.id));
             const std::string text = d.name + "  (" + std::to_string(ch) + " ch)";
-            if (ImGui::Selectable(text.c_str(), value == d.name)) value = d.name;
+            if (minidaw::app::choice(text.c_str(), value == d.name)) value = d.name;
             ImGui::PopID();
         }
         ImGui::EndCombo();
@@ -909,7 +989,7 @@ void numberCombo(const char* label, unsigned int& value, const unsigned int (&ch
     if (ImGui::BeginCombo(label, current.c_str())) {
         for (unsigned int c : choices) {
             const std::string text = std::to_string(c) + " " + unit;
-            if (ImGui::Selectable(text.c_str(), value == c)) value = c;
+            if (minidaw::app::choice(text.c_str(), value == c)) value = c;
         }
         ImGui::EndCombo();
     }
@@ -933,7 +1013,9 @@ void drawAudioSettingsWindow(AppState& app)
         if (app.pendingAudio.sampleRate > 0) {
             ImGui::Text("One buffer = %.1f ms", 1000.0 * app.pendingAudio.bufferFrames / app.pendingAudio.sampleRate);
         }
-        if (ImGui::Button("Apply")) applyAudioSettings(app, app.pendingAudio, true);
+        if (ImGui::Button("Apply")) {
+            startBusy(app, "Opening the audio devices", [&app] { applyAudioSettings(app, app.pendingAudio, true); });
+        }
         ImGui::SameLine();
         if (ImGui::Button("Rescan devices")) {
             app.scan = minidaw::scanDevices();
@@ -1658,12 +1740,12 @@ void browseButton(AppState& app, AppState::BrowseFor what, const std::string& ty
 {
     ImGui::SameLine();
     ImGui::PushID(static_cast<int>(what));
-    ImGui::BeginDisabled(app.folderChooser.active());
+    minidaw::app::beginDisabled(app.folderChooser.active());
     if (ImGui::Button("Browse...")) {
         app.browseFor = what;
         app.folderChooser.open(app.mainWindow, title, minidaw::browseStart(typed, fallback));
     }
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
     ImGui::PopID();
 }
 
@@ -1716,29 +1798,29 @@ void drawInstrumentsWindow(AppState& app)
             saveConfig(app);
         }
         const bool full = app.config.instruments.folders.size() >= 8;
-        ImGui::BeginDisabled(full);
+        minidaw::app::beginDisabled(full);
         ImGui::SetNextItemWidth(36 * em);
         const bool enter = ImGui::InputText("##folder", &app.instrumentFolderInput, ImGuiInputTextFlags_EnterReturnsTrue);
         const auto standard = minidaw::standardVst3Folders();
         browseButton(app, AppState::BrowseFor::InstrumentFolder, app.instrumentFolderInput,
                      standard.empty() ? minidaw::homeFolder() : standard.front(), "Choose a folder with VST3 instruments");
         ImGui::SameLine();
-        ImGui::BeginDisabled(minidaw::cleanPathText(app.instrumentFolderInput).empty());
+        minidaw::app::beginDisabled(minidaw::cleanPathText(app.instrumentFolderInput).empty());
         if (ImGui::Button("Add folder") || (enter && !minidaw::cleanPathText(app.instrumentFolderInput).empty())) {
             addInstrumentFolder(app);
         }
-        ImGui::EndDisabled();
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
+        minidaw::app::endDisabled();
         if (full) ImGui::TextUnformatted("8 folders added (the most): remove one to add another.");
         if (!app.instrumentFolderError.empty()) ImGui::TextWrapped("Not added: %s", app.instrumentFolderError.c_str());
         if (!app.instrumentFolderNote.empty()) ImGui::TextWrapped("%s", app.instrumentFolderNote.c_str());
 
         ImGui::SeparatorText("Scan");
-        ImGui::BeginDisabled(app.scanning);
+        minidaw::app::beginDisabled(app.scanning);
         if (ImGui::Button("Scan")) startScan(app);
         ImGui::SameLine();
         ImGui::Checkbox("Also try modules that failed or crashed before", &app.scanRetryBad);
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         if (app.scanning) {
             ImGui::TextWrapped("Scanning %zu of %zu: %s", app.scanner.done() + 1, app.scanner.total(),
                                app.scanner.current().c_str());
@@ -2017,7 +2099,7 @@ void drawProjectDialog(AppState& app)
     ImGui::SetNextWindowSizeConstraints(ImVec2(46 * em, 0), ImVec2(46 * em, FLT_MAX));
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         if (app.session.recording()) ImGui::TextUnformatted("Recording: stop it first.");
-        ImGui::BeginDisabled(app.session.recording());
+        minidaw::app::beginDisabled(app.session.recording());
         if (app.projectDialog == D::Open) {
             ImGui::TextWrapped("Projects in %s (click one), or type the folder of a project:",
                                minidaw::pathToUtf8(projectsBase(app)).c_str());
@@ -2035,9 +2117,11 @@ void drawProjectDialog(AppState& app)
             ImGui::InputText("Folder", &app.projectFolderInput);
             browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
                          "Choose the folder of a project");
-            if (ImGui::Button("Open") &&
-                openProject(app, minidaw::pathFromUtf8(minidaw::cleanPathText(app.projectFolderInput)))) {
-                app.projectDialog = D::None;
+            if (ImGui::Button("Open")) {
+                const std::string folder = minidaw::cleanPathText(app.projectFolderInput);
+                startBusy(app, "Opening project " + folder, [&app, folder] {
+                    if (openProject(app, minidaw::pathFromUtf8(folder))) app.projectDialog = D::None;
+                });
             }
         } else {
             ImGui::SetNextItemWidth(20 * em);
@@ -2055,14 +2139,17 @@ void drawProjectDialog(AppState& app)
             } else {
                 ImGui::TextWrapped("Starts with an empty track list; new takes are recorded into the project folder.");
             }
-            ImGui::BeginDisabled(app.projectNameInput.empty());
-            if (ImGui::Button(app.projectDialog == D::New ? "Create" : "Save") &&
-                createProject(app, target, app.projectDialog == D::SaveAs)) {
-                app.projectDialog = D::None;
+            minidaw::app::beginDisabled(app.projectNameInput.empty());
+            if (ImGui::Button(app.projectDialog == D::New ? "Create" : "Save")) {
+                const bool keepTracks = app.projectDialog == D::SaveAs;  // Save as copies the takes
+                startBusy(app, (keepTracks ? "Saving the project as " : "Making the project ") + minidaw::pathToUtf8(target),
+                          [&app, target, keepTracks] {
+                              if (createProject(app, target, keepTracks)) app.projectDialog = D::None;
+                          });
             }
-            ImGui::EndDisabled();
+            minidaw::app::endDisabled();
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) app.projectDialog = D::None;
         if (!app.projectDialogError.empty()) ImGui::TextWrapped("%s", app.projectDialogError.c_str());
@@ -2430,11 +2517,11 @@ void audioInputCombo(minidaw::Track& t, unsigned int inputs)
     if (!ImGui::BeginCombo("##in", audioInputLabel(t.channels).c_str())) return;
     for (unsigned int c = 0; c < inputs; ++c) {
         const std::vector<unsigned int> mono{c};
-        if (ImGui::Selectable(audioInputLabel(mono).c_str(), t.channels == mono)) t.channels = mono;
+        if (minidaw::app::choice(audioInputLabel(mono).c_str(), t.channels == mono)) t.channels = mono;
     }
     for (unsigned int c = 0; c + 1 < inputs; ++c) {
         const std::vector<unsigned int> pair{c, c + 1};
-        if (ImGui::Selectable(audioInputLabel(pair).c_str(), t.channels == pair)) t.channels = pair;
+        if (minidaw::app::choice(audioInputLabel(pair).c_str(), t.channels == pair)) t.channels = pair;
     }
     ImGui::EndCombo();
 }
@@ -2451,7 +2538,7 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
     }
     if (ImGui::BeginCombo("##port", preview.c_str())) {
         for (const auto& p : scan.midiInputs) {
-            if (ImGui::Selectable(p.name.c_str(), t.midiPort == p.name)) {
+            if (minidaw::app::choice(p.name.c_str(), t.midiPort == p.name)) {
                 changed = t.midiPort != p.name;
                 t.midiPort = p.name;
             }
@@ -2467,9 +2554,9 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
     const bool open = ImGui::BeginCombo("##ch", chText.c_str());
     if (!open && ImGui::IsItemHovered()) ImGui::SetTooltip("MIDI channel to record");
     if (open) {
-        if (ImGui::Selectable("All channels", t.midiChannel == 0)) t.midiChannel = 0;
+        if (minidaw::app::choice("All channels", t.midiChannel == 0)) t.midiChannel = 0;
         for (int c = 1; c <= 16; ++c) {
-            if (ImGui::Selectable(("Channel " + std::to_string(c)).c_str(), t.midiChannel == c)) t.midiChannel = c;
+            if (minidaw::app::choice(("Channel " + std::to_string(c)).c_str(), t.midiChannel == c)) t.midiChannel = c;
         }
         ImGui::EndCombo();
     }
@@ -2498,25 +2585,25 @@ void drawTransport(AppState& app)
     const bool autoOn = app.session.autoMode();  // auto record (P16): playback may run meanwhile
     const bool recNormal = rec && !autoOn;
 
-    ImGui::BeginDisabled(recNormal || !running);
+    minidaw::app::beginDisabled(recNormal || !running);
     if (ImGui::Button("|< Start (Home)")) returnToStart(app);
     ImGui::SameLine();
-    ImGui::BeginDisabled(!playing && length == 0);
+    minidaw::app::beginDisabled(!playing && length == 0);
     if (ImGui::Button(playing ? "Stop (Space)" : "Play (Space)")) togglePlay(app);
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
+    minidaw::app::endDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0)));  // not while rendering (R5)
+    minidaw::app::beginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0)));  // not while rendering (R5)
     if (ImGui::Button(recNormal ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
     if (!rec && app.renderTrack != 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
     }
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
     ImGui::SameLine();
     // Auto record (SPEC-REC-08).
     const bool anyArmed =
         std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
-    ImGui::BeginDisabled(recNormal || (!autoOn && (!running || app.renderTrack != 0 || !anyArmed)));
+    minidaw::app::beginDisabled(recNormal || (!autoOn && (!running || app.renderTrack != 0 || !anyArmed)));
     if (ImGui::Button(autoOn ? "Stop auto record" : "Auto record")) toggleAuto(app);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip(autoOn ? "Stop waiting for parts (a part being recorded is finished and saved)."
@@ -2526,7 +2613,7 @@ void drawTransport(AppState& app)
                                    "the tracks are not changed.%s",
                           app.config.recording.autoPauseSeconds, anyArmed ? "" : "\nArm a track first.");
     }
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
     ImGui::SameLine();
     const double pos = rate ? static_cast<double>(player.position()) / rate : 0.0;
     const char* state = autoOn ? (app.session.autoInPart() ? "AUTO: RECORDING" : "AUTO: WAITING")
@@ -2541,20 +2628,20 @@ void drawTransport(AppState& app)
         // Position slider: always there, usable while stopped.
         float seconds = static_cast<float>(pos);
         const float rateF = rate > 0 ? static_cast<float>(rate) : 48000.0f;
-        ImGui::BeginDisabled(recNormal || playing || length == 0 || rate == 0);
+        minidaw::app::beginDisabled(recNormal || playing || length == 0 || rate == 0);
         ImGui::SetNextItemWidth(30 * ImGui::GetFontSize());
         if (ImGui::SliderFloat("Position (s)", &seconds, 0.0f, std::max(0.1f, static_cast<float>(length) / rateF),
                                "%.1f s")) {
             player.locate(static_cast<std::uint64_t>(std::max(0.0f, seconds) * rateF));
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
-        ImGui::BeginDisabled(rec);
+        minidaw::app::beginDisabled(rec);
         if (ImGui::SmallButton("Recording settings...")) {
             app.pendingRecording = app.config.recording;
             app.showRecordingSettings = true;
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
     }
     const float infoHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
     if (!ImGui::BeginChild("transport-info", ImVec2(0, infoHeight))) {
@@ -2890,7 +2977,7 @@ void drawTimeline(AppState& app)
                     minidaw::clockLabel(sel->clock, true).c_str(), clockText(sel->seconds).c_str());
         const bool playingThis = !app.previewFolder.empty() && app.previewFolder == sel->folder &&
                                  app.audio.player().playing();
-        ImGui::BeginDisabled(recNormal);
+        minidaw::app::beginDisabled(recNormal);
         if (ImGui::Button(playingThis ? "Stop" : "Play it")) {
             if (playingThis) {
                 stopPlayback(app);
@@ -2898,9 +2985,9 @@ void drawTimeline(AppState& app)
                 previewRecording(app, *sel);
             }
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
-        ImGui::BeginDisabled(app.session.recording() || app.renderTrack != 0);
+        minidaw::app::beginDisabled(app.session.recording() || app.renderTrack != 0);
         if (ImGui::Button("Load onto the tracks")) {
             const std::filesystem::path folder = sel->folder;
             loadRecording(app, folder);
@@ -2912,7 +2999,7 @@ void drawTimeline(AppState& app)
                               : app.renderTrack != 0  ? "\nNot while a render runs."
                                                       : "");
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::TextWrapped("Folder: %s", minidaw::pathToUtf8(sel->folder).c_str());
         std::string files;
         for (const auto& f : sel->files) files += (files.empty() ? "" : ", ") + minidaw::pathToUtf8(f.filename());
@@ -2926,8 +3013,8 @@ void drawTracksPanel(AppState& app)
     ImGui::SeparatorText("Tracks");
     const bool rec = app.session.recording();
     const unsigned int inputs = app.audio.info().inputChannels;
-    ImGui::BeginDisabled(rec);
-    ImGui::BeginDisabled(inputs == 0);
+    minidaw::app::beginDisabled(rec);
+    minidaw::app::beginDisabled(inputs == 0);
     if (ImGui::Button("Add audio track")) {
         minidaw::Track t;
         t.number = minidaw::nextTrackNumber(app.tracks);
@@ -2935,7 +3022,7 @@ void drawTracksPanel(AppState& app)
         t.channels = {0};
         app.tracks.push_back(t);
     }
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Add MIDI track")) {
         minidaw::Track t;
@@ -2945,7 +3032,7 @@ void drawTracksPanel(AppState& app)
         if (!app.scan.midiInputs.empty()) t.midiPort = app.scan.midiInputs.front().name;
         app.tracks.push_back(t);
     }
-    ImGui::EndDisabled();
+    minidaw::app::endDisabled();
     if (inputs == 0) {
         ImGui::SameLine();
         ImGui::TextUnformatted("(audio tracks need an audio input device: Settings > Audio devices)");
@@ -2957,15 +3044,22 @@ void drawTracksPanel(AppState& app)
     }
 
     const float em = ImGui::GetFontSize();
-    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
+    // Every column fits its content (fixed widths, nothing sized from the space left),
+    // and a narrow window gets a horizontal scrollbar instead of cut-off controls (PL1).
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit |
+                                  ImGuiTableFlags_ScrollX;
     int removeIndex = -1;
     int renderRequest = 0;  // a MIDI track whose Render was clicked (handled after the table)
-    // Linked sound tracks made / removed when the output changes (after the table: they change app.tracks).
-    int linkRequest = 0;
+    // An empty linked sound track removed when the output changes (after the table: it changes app.tracks).
     int unlinkRequest = 0;
     const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
     bool monitoring = false;
-    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 9, flags)) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float rowH = ImGui::GetFrameHeight() + 2.0f * style.CellPadding.y;
+    const float tableH = ImGui::GetTextLineHeight() + 2.0f * style.CellPadding.y +
+                         rowH * static_cast<float>(app.tracks.size()) + style.ScrollbarSize + 4.0f;
+    if (!app.tracks.empty() && ImGui::BeginTable("tracks", 10, flags, ImVec2(0.0f, tableH))) {
+        ImGui::TableSetupScrollFreeze(4, 0);  // #, Arm, Monitor and Name stay when scrolled sideways
         // Fixed widths, so the columns do not jump when the state text changes.
         const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TableSetupColumn("#");
@@ -2976,7 +3070,8 @@ void drawTracksPanel(AppState& app)
         ImGui::TableSetupColumn("Input");
         ImGui::TableSetupColumn("Level / activity");
         ImGui::TableSetupColumn("Volume, mute, solo");
-        ImGui::TableSetupColumn("Take (plays)", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Output");
+        ImGui::TableSetupColumn("Take (plays)");
         ImGui::TableSetupColumn("");
         ImGui::TableHeadersRow();
         for (std::size_t i = 0; i < app.tracks.size(); ++i) {
@@ -2996,7 +3091,7 @@ void drawTracksPanel(AppState& app)
                                       owner->number);
                 }
             } else {
-                ImGui::BeginDisabled(rec);
+                minidaw::app::beginDisabled(rec);
                 if (ImGui::Checkbox("##arm", &t.armed) && t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("Armed tracks record when you press Record (Ctrl+R).\n"
@@ -3005,19 +3100,19 @@ void drawTracksPanel(AppState& app)
                 }
                 ImGui::SameLine();
                 ImGui::TextUnformatted(t.armed ? "armed" : "-");  // not by colour alone (SPEC-UI-07)
-                ImGui::EndDisabled();
+                minidaw::app::endDisabled();
             }
             ImGui::TableNextColumn();
             if (linked) {
                 ImGui::TextUnformatted("-");
             } else if (t.kind == minidaw::TrackKind::Audio) {  // can change while recording (SPEC-MON-01)
-                ImGui::BeginDisabled(!hasOutput);
+                minidaw::app::beginDisabled(!hasOutput);
                 ImGui::Checkbox("##mon", &t.monitor);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("Hear this input on the output while the track is armed.\n"
                                       "Use headphones: with speakers a microphone can feed back.");
                 }
-                ImGui::EndDisabled();
+                minidaw::app::endDisabled();
                 ImGui::SameLine();
                 const char* state = !hasOutput   ? "no output"
                                     : !t.monitor ? "off"
@@ -3028,7 +3123,7 @@ void drawTracksPanel(AppState& app)
             } else {
                 ImGui::TextUnformatted("-");
             }
-            ImGui::BeginDisabled(rec);
+            minidaw::app::beginDisabled(rec);
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(8 * em);
             ImGui::InputText("##name", &t.name);
@@ -3039,10 +3134,10 @@ void drawTracksPanel(AppState& app)
                 const std::string instr = "Sound from: instrument (track " + std::to_string(owner->number) + ")";
                 const char* recText = "Sound from: this recording";
                 if (ImGui::BeginCombo("##soundfrom", owner->soundFromRecording ? recText : instr.c_str())) {
-                    if (ImGui::Selectable(instr.c_str(), !owner->soundFromRecording)) owner->soundFromRecording = false;
-                    ImGui::BeginDisabled(t.take.empty());
-                    if (ImGui::Selectable(recText, owner->soundFromRecording)) owner->soundFromRecording = true;
-                    ImGui::EndDisabled();
+                    if (minidaw::app::choice(instr.c_str(), !owner->soundFromRecording)) owner->soundFromRecording = false;
+                    minidaw::app::beginDisabled(t.take.empty());
+                    if (minidaw::app::choice(recText, owner->soundFromRecording)) owner->soundFromRecording = true;
+                    minidaw::app::endDisabled();
                     ImGui::EndCombo();
                 } else if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("What plays for track %d: its instrument playing the MIDI take (this track is "
@@ -3054,12 +3149,12 @@ void drawTracksPanel(AppState& app)
                 ImGui::SetNextItemWidth(9.5f * em);
                 audioInputCombo(t, inputs);
             } else {
-                // The port list takes what the channel list leaves, so both stay visible.
-                const float chWidth = kMidiChannelBoxEm * em + ImGui::GetStyle().ItemSpacing.x;
-                ImGui::SetNextItemWidth(std::max(9.5f * em, ImGui::GetContentRegionAvail().x - chWidth));
+                // A fixed width (the full name is the tooltip): sized from the space left,
+                // the list would widen the column every frame (PL1).
+                ImGui::SetNextItemWidth(10.0f * em);
                 if (midiPortCombo(t, app.scan) && t.armed) app.midiPortsDirty = true;
             }
-            ImGui::EndDisabled();
+            minidaw::app::endDisabled();
             ImGui::TableNextColumn();
             if (linked) {
                 ImGui::TextUnformatted(owner->soundFromRecording ? "plays this recording" : "silent (instrument plays)");
@@ -3103,12 +3198,12 @@ void drawTracksPanel(AppState& app)
             ImGui::SameLine();
             ImGui::Checkbox("S##solo", &t.solo);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solo: only soloed tracks are played.");
-            // Take, and for MIDI the output it plays to (SPEC-PLAY-03).
+            // Output: for MIDI the instrument or MIDI output it plays to (SPEC-PLAY-03), with
+            // Edit and Render; its own column so it is never squeezed by the take name (PL1).
             ImGui::TableNextColumn();
-            if (t.kind == minidaw::TrackKind::Midi) {
-                // Leave room for the take name beside it.
-                const float nameW = t.take.empty() ? ImGui::CalcTextSize("-").x
-                                                   : ImGui::CalcTextSize(minidaw::pathToUtf8(t.take.filename()).c_str()).x;
+            if (t.kind != minidaw::TrackKind::Midi) {
+                ImGui::TextUnformatted("-");
+            } else {
                 // Where the track's MIDI goes: a MIDI output, or a VST3 instrument (P10).
                 const bool hasInst = !t.instrumentClass.empty();
                 const bool instLoaded = app.instruments.count(t.number) != 0;
@@ -3117,7 +3212,7 @@ void drawTracksPanel(AppState& app)
                 // Before the output list, so it stays visible in a narrow column.
                 // The instrument's own window: sounds, presets (SPEC-VST-05a).
                 if (instLoaded) {
-                    ImGui::BeginDisabled(!minidaw::app::PluginWindows::supported());
+                    minidaw::app::beginDisabled(!minidaw::app::PluginWindows::supported());
                     if (ImGui::SmallButton(editLabel)) {
                         if (editorOpen) {
                             app.pluginWindows.close(t.number);
@@ -3132,7 +3227,7 @@ void drawTracksPanel(AppState& app)
                                                              : "Open the instrument's own window (sounds, presets). It "
                                                                "can stay open while you play.");
                     }
-                    ImGui::EndDisabled();
+                    minidaw::app::endDisabled();
                     ImGui::SameLine();
                     // Render the take through the instrument (SPEC-VST-04a), or its progress.
                     if (app.renderTrack == t.number) {
@@ -3141,31 +3236,30 @@ void drawTracksPanel(AppState& app)
                         if (ImGui::SmallButton("Cancel##render")) app.renderer.cancel();
                         ImGui::SameLine();
                     } else if (!t.take.empty()) {
-                        ImGui::BeginDisabled(app.renderTrack != 0 || rec);
+                        minidaw::app::beginDisabled(app.renderTrack != 0 || rec);
                         if (ImGui::SmallButton("Render##render")) renderRequest = t.number;
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                             ImGui::SetTooltip("Render this track's MIDI take through its instrument to a WAV file, "
                                               "faster than real time.\nThe sound goes on its linked track (\"Sound "
                                               "from\" chooses what plays). Playing goes on meanwhile.");
                         }
-                        ImGui::EndDisabled();
+                        minidaw::app::endDisabled();
                         ImGui::SameLine();
                     }
                 }
-                ImGui::SetNextItemWidth(std::max(7 * em, ImGui::GetContentRegionAvail().x - nameW -
-                                                             ImGui::GetStyle().ItemSpacing.x));
+                ImGui::SetNextItemWidth(14.0f * em);
                 const std::string out = hasInst ? "Instrument: " + t.instrumentName + (instLoaded ? "" : " (not loaded)")
                                         : t.midiOut.empty() ? std::string("(no MIDI output)")
                                                             : t.midiOut;
                 if (ImGui::BeginCombo("##out", out.c_str())) {
-                    if (ImGui::Selectable("(no MIDI output)", !hasInst && t.midiOut.empty())) {
+                    if (minidaw::app::choice("(no MIDI output)", !hasInst && t.midiOut.empty())) {
                         if (hasInst) unlinkRequest = t.number;
                         unloadInstrument(app, t.number);
                         t.instrumentClass.clear();
                         t.midiOut.clear();
                     }
                     for (const auto& name : app.midiPlayer.outputPorts()) {
-                        if (ImGui::Selectable(name.c_str(), !hasInst && t.midiOut == name)) {
+                        if (minidaw::app::choice(name.c_str(), !hasInst && t.midiOut == name)) {
                             if (hasInst) unlinkRequest = t.number;
                             unloadInstrument(app, t.number);
                             t.instrumentClass.clear();
@@ -3177,10 +3271,17 @@ void drawTracksPanel(AppState& app)
                     if (list.empty()) ImGui::TextUnformatted("None found yet: Settings > Instruments > Scan");
                     for (const auto& c : list) {
                         ImGui::PushID(c.classId.c_str());
-                        if (ImGui::Selectable(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
-                            chooseInstrument(app, t, c);
-                            // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
-                            if (app.instruments.count(t.number) != 0) linkRequest = t.number;
+                        if (minidaw::app::choice(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
+                            // Loading a plugin can take seconds: say so first (PL1, SPEC-UI-16).
+                            const int number = t.number;
+                            const minidaw::PluginClass cls = c;
+                            startBusy(app, "Loading instrument " + c.name, [&app, number, cls] {
+                                minidaw::Track* track = findTrack(app, number);
+                                if (track == nullptr) return;
+                                chooseInstrument(app, *track, cls);
+                                // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
+                                if (app.instruments.count(number) != 0) ensureLinkedTrack(app, number);
+                            });
                         }
                         ImGui::PopID();
                     }
@@ -3189,8 +3290,9 @@ void drawTracksPanel(AppState& app)
                     ImGui::SetTooltip("Where this track's MIDI goes (live when armed, and its take when playing): %s",
                                       out.c_str());
                 }
-                ImGui::SameLine();
             }
+            // Take (SPEC-PLAY-01a): the file name; the full path as the tooltip.
+            ImGui::TableNextColumn();
             if (t.take.empty()) {
                 ImGui::TextUnformatted("-");
             } else {
@@ -3202,10 +3304,10 @@ void drawTracksPanel(AppState& app)
                 }
             }
             ImGui::TableNextColumn();
-            ImGui::BeginDisabled(rec || app.audio.player().playing());  // its take would keep playing (M4)
+            minidaw::app::beginDisabled(rec || app.audio.player().playing());  // its take would keep playing (M4)
             if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove this track");
-            ImGui::EndDisabled();
+            minidaw::app::endDisabled();
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -3224,7 +3326,6 @@ void drawTracksPanel(AppState& app)
         // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
         minidaw::removeTrack(app.tracks, static_cast<std::size_t>(removeIndex));
     }
-    if (linkRequest != 0) ensureLinkedTrack(app, linkRequest);
     // An empty sound track goes with its instrument; one with a take stays (and is kept while a
     // recording or a render of this track may still fill it).
     if (unlinkRequest != 0 && !rec && app.renderTrack != unlinkRequest &&
@@ -3255,9 +3356,9 @@ void drawRecordingSettingsWindow(AppState& app)
                                                                             : "960 PPQ at 120 BPM (default)";
         ImGui::SetNextItemWidth(20 * em);
         if (ImGui::BeginCombo("MIDI file timing", timingText)) {
-            if (ImGui::Selectable("960 PPQ at 120 BPM (default)", p.midiTiming == minidaw::MidiTiming::Ppq))
+            if (minidaw::app::choice("960 PPQ at 120 BPM (default)", p.midiTiming == minidaw::MidiTiming::Ppq))
                 p.midiTiming = minidaw::MidiTiming::Ppq;
-            if (ImGui::Selectable("SMPTE, 1 ms ticks", p.midiTiming == minidaw::MidiTiming::Smpte))
+            if (minidaw::app::choice("SMPTE, 1 ms ticks", p.midiTiming == minidaw::MidiTiming::Smpte))
                 p.midiTiming = minidaw::MidiTiming::Smpte;
             ImGui::EndCombo();
         }
@@ -3285,13 +3386,13 @@ void drawRecordingSettingsWindow(AppState& app)
                               "round-trip latency plus this value. Raise it if overdubs land late, lower it if\n"
                               "they land early. -500 to 500.");
         }
-        ImGui::BeginDisabled(app.session.recording());
+        minidaw::app::beginDisabled(app.session.recording());
         if (ImGui::Button("Apply")) {
             p.folder = minidaw::cleanPathText(p.folder);  // quotes / spaces around a pasted path (V8)
             app.config.recording = p;
             saveConfig(app);
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Close")) app.showRecordingSettings = false;
         if (app.session.recording()) ImGui::TextUnformatted("Changes apply after the current recording.");
@@ -3386,11 +3487,11 @@ void drawLogWindow(AppState& app)
             ImGui::TextWrapped("File: %s (the previous run: %s)", minidaw::pathToUtf8(file).c_str(),
                                minidaw::pathToUtf8(minidaw::Log::oldFileFor(file).filename()).c_str());
         }
-        ImGui::BeginDisabled(file.empty());
+        minidaw::app::beginDisabled(file.empty());
         if (ImGui::Button("Open log folder")) {
             if (!openFolder(file.parent_path())) app.log.warning("The log folder could not be opened.");
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
         const std::vector<minidaw::LogEntry> lines = app.log.recent();
         if (ImGui::Button("Copy all")) {
@@ -3456,7 +3557,7 @@ void drawTakeBrowser(AppState& app)
                            minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
         const bool rec = app.session.recording();
         if (rec) ImGui::TextUnformatted("Recording: stop it before opening a take folder.");
-        ImGui::BeginDisabled(rec);
+        minidaw::app::beginDisabled(rec);
         if (ImGui::BeginChild("folders", ImVec2(0, -4 * ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_Borders)) {
             if (app.takeFolders.empty()) ImGui::TextUnformatted("No take folders found.");
             for (const auto& f : app.takeFolders) {
@@ -3477,7 +3578,7 @@ void drawTakeBrowser(AppState& app)
         if (ImGui::Button("Open") && !app.takeFolderInput.empty()) {
             openTakeFolder(app, minidaw::pathFromUtf8(minidaw::cleanPathText(app.takeFolderInput)));
         }
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) app.showTakeBrowser = false;
         ImGui::SameLine();
@@ -3595,6 +3696,7 @@ int runGui(AppState& app)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    minidaw::app::enableStateCues();  // hover / pressed / disabled cues (PL1, SPEC-UI-15)
     ImGui::GetIO().IniFilename = nullptr;  // window layout is not saved
     // Keyboard use (crosscheck #13, U1): Tab / arrows move between controls, Enter
     // presses the one in focus, Escape leaves it. Space and Home stay the transport
@@ -3727,6 +3829,7 @@ int runGui(AppState& app)
             }
         }
         glfwPollEvents();
+        runBusy(app);  // slow work asked for in the frame before, now that its message is on screen
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
@@ -3736,6 +3839,7 @@ int runGui(AppState& app)
         }
         minidaw::app::rendererNewFrame(window);
         ImGui::NewFrame();
+        minidaw::app::beginStateCuesFrame();
 
         // No shortcuts while a modal window (the folder browser) or a menu is open: they
         // would act unseen behind it, e.g. start a recording (crosscheck #14, V4).
@@ -3795,7 +3899,7 @@ int runGui(AppState& app)
             const std::string requested = app.selectTab;
             app.selectTab.clear();
             bool timelineOpen = false;
-            if (ImGui::BeginTabBar(barId.c_str(), ImGuiTabBarFlags_Reorderable)) {
+            if (ImGui::BeginTabBar(barId.c_str(), ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_DrawSelectedOverline)) {
                 for (const std::string& id : app.config.tabs.order) {
                     const ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
                     if (!ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags)) continue;
@@ -3857,6 +3961,8 @@ int runGui(AppState& app)
         drawInstrumentsWindow(app);
         updateFolderChooser(app);
 
+        minidaw::app::drawStateCues(app.palette);
+        drawBusy(app);
         ImGui::Render();
         const auto& bg = app.palette[minidaw::Role::Background];
         const float clear[4] = {static_cast<float>(bg.r), static_cast<float>(bg.g), static_cast<float>(bg.b), 1.0f};
@@ -4016,6 +4122,7 @@ int main(int argc, char** argv)
         auto result = buildPalette(app.config.contrast);
         app.palette = result.palette;
         app.unresolved = result.unresolved;
+        app.disabledOpacity = result.disabledOpacity;
         return printContrastReport(app);
     }
     case Action::Gui:

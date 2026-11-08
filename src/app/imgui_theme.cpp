@@ -77,7 +77,7 @@ Role roleForImGuiColor(int col)
     }
 }
 
-void applyPalette(const Palette& palette)
+void applyPalette(const Palette& palette, double disabledOpacity)
 {
     ImGuiStyle& style = ImGui::GetStyle();
     for (int i = 0; i < ImGuiCol_COUNT; ++i) {
@@ -96,6 +96,9 @@ void applyPalette(const Palette& palette)
     style.FrameBorderSize = 1.0f;
     style.PopupBorderSize = 1.0f;
     style.TabBorderSize = 1.0f;
+
+    // Disabled controls fade only as far as the contrast minimum allows (PL1).
+    style.DisabledAlpha = static_cast<float>(disabledOpacity);
 }
 
 } // namespace minidaw::app

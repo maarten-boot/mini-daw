@@ -123,4 +123,21 @@ ContrastAdjustment adjustToContrast(const Rgb& color, const Rgb& against, double
     return {best, false};
 }
 
+double minimumOpacity(const Rgb& fg, const Rgb& bg, double minimum)
+{
+    // Contrast grows monotonically with the opacity (the blend moves from bg
+    // straight towards fg), so a binary search finds the smallest one.
+    auto good = [&](double a) { return meetsContrast(contrastRatio(mix(bg, fg, a), bg), minimum); };
+    if (!good(1.0)) return 1.0;
+    double lo = 0.0;
+    double hi = 1.0;
+    for (int i = 0; i < 50; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        (good(mid) ? hi : lo) = mid;
+    }
+    // meetsContrast's rounding tolerance lets a hair below full colour pass;
+    // that is full colour.
+    return hi > 0.999 ? 1.0 : hi;
+}
+
 } // namespace minidaw

@@ -47,4 +47,9 @@ struct ContrastAdjustment {
 // minimum, and only crosses over when it has to.
 ContrastAdjustment adjustToContrast(const Rgb& color, const Rgb& against, double minimum);
 
+// Smallest opacity (0..1) at which `fg`, drawn with that opacity over `bg`
+// (as the GUI blends it: mix(bg, fg, opacity)), still reaches `minimum`
+// against `bg`. 1.0 when even the full colour does not reach it.
+double minimumOpacity(const Rgb& fg, const Rgb& bg, double minimum);
+
 } // namespace minidaw

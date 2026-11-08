@@ -27,3 +27,11 @@
 ## 3. CI of `31658df`
 > pushed it, check the CI run
 - Run 42518027178 green (windows, linux, licence). Docs only: `dist/` keeps the build of run 42421955192. The handover above still holds.
+
+## 4. PL1: look and feel
+> start PL1
+- Looked at the GUI first (Xvfb): hover and pressed differ little from normal (1.2:1, 1.5:1) and not at all at Max; disabled controls were faded by ImGui to 60 % at every setting, below the minimum at AAA and Max (a contrast bug the check did not see); the MIDI port list sized itself from the space left, so the Take column and X were cut off; slow clicks (instrument, Apply, projects) freeze the window without a sign.
+- Asked four questions; the user chose all the recommended options: frames + colours; flat disabled controls faded within the minimum; an Output column + sideways scrollbar; a busy message.
+- Core: `minimumOpacity`, `disabledPairs`, `disabledOpacity` (AA 89 %, AAA and above 100 %), Accent pairs on every control / list background, pressed #A6A6A6, hovered #CCCCCC, Accent #00336F. `--contrast-report` lists the disabled pairs as drawn.
+- GUI (`src/app/state_cues`): ImGui's item hooks (`IMGUI_ENABLE_TEST_ENGINE`, hooks only) find the hovered / pressed / disabled controls; an Accent frame is drawn round the hovered one; disabled ones are flat with a dashed frame (flat alone is invisible at Max); `choice()` gives the current list entry "> " and a bar; the selected tab gets a thick line (`DrawSelectedOverline`). Track table: Output column, fixed widths, scrollbar, first four columns frozen. `startBusy()` for instrument, Apply, open / new / save-as project.
+- Spec v0.41 (SPEC-UI-02a, -10, -15, -16, PLAY-03a, §8 Max), Plan PL1 done, T-UI-24..27, README, Demo-checklist, CLAUDE.md. Linux 177/177, Wine 176/176; GUI on Xvfb and Wine.

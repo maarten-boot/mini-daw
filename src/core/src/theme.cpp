@@ -32,7 +32,26 @@ constexpr ColorPair kPairs[] = {
     {Role::Accent, Role::Control},
     {Role::Accent, Role::ControlHovered},
     {Role::Accent, Role::ControlActive},
+    // The hover / pressed frame and the selection bar (PL1) are drawn in Accent
+    // on every background a control or list item can have.
+    {Role::Accent, Role::Selection},
+    {Role::Accent, Role::SelectionHovered},
+    {Role::Accent, Role::SelectionActive},
+    {Role::Accent, Role::TableHeader},
+    {Role::Accent, Role::TableRowAlt},
     {Role::ScrollbarThumb, Role::ScrollbarTrack},
+};
+
+// A disabled control is flat: what shows behind it is the window, a table
+// row or (for a disabled control drawn on a button-like frame) Control.
+// Each one is also a normal pair, so enforcement lifts it at full colour.
+constexpr ColorPair kDisabledPairs[] = {
+    {Role::Text, Role::Background},          {Role::Text, Role::TableRowAlt},
+    {Role::Text, Role::Control},             {Role::TextDisabled, Role::Background},
+    {Role::TextDisabled, Role::TableRowAlt}, {Role::TextDisabled, Role::Control},
+    {Role::Border, Role::Background},        {Role::Border, Role::TableRowAlt},
+    {Role::Accent, Role::Background},
+    {Role::Accent, Role::TableRowAlt},       {Role::Accent, Role::Control},
 };
 
 std::string lower(std::string_view s)
@@ -80,8 +99,8 @@ Palette defaultPalette()
     Palette p;
     p[Role::Background]       = hex("#FFFFFF");
     p[Role::Control]          = hex("#E8E8E8");
-    p[Role::ControlHovered]   = hex("#D4D4D4");
-    p[Role::ControlActive]    = hex("#BDBDBD");
+    p[Role::ControlHovered]   = hex("#CCCCCC");  // PL1: 1.3:1 from Control, plus the hover frame
+    p[Role::ControlActive]    = hex("#A6A6A6");  // PL1: 2:1 from Control, so a press is seen
     p[Role::Selection]        = hex("#C7DCF7");
     p[Role::SelectionHovered] = hex("#B3CEF2");
     p[Role::SelectionActive]  = hex("#9DBFEC");
@@ -91,7 +110,7 @@ Palette defaultPalette()
     p[Role::Text]             = hex("#000000");
     p[Role::TextDisabled]     = hex("#595959");
     p[Role::Border]           = hex("#595959");
-    p[Role::Accent]           = hex("#003F8A");
+    p[Role::Accent]           = hex("#00336F");  // darker than before (#003F8A) for the darker pressed colour
     p[Role::ScrollbarThumb]   = hex("#595959");
     return p;
 }
@@ -99,6 +118,20 @@ Palette defaultPalette()
 std::span<const ColorPair> colorPairs()
 {
     return kPairs;
+}
+
+std::span<const ColorPair> disabledPairs()
+{
+    return kDisabledPairs;
+}
+
+double disabledOpacity(const Palette& palette, double minimum)
+{
+    double opacity = kMinDisabledOpacity;
+    for (const ColorPair& pair : kDisabledPairs) {
+        opacity = std::max(opacity, minimumOpacity(palette[pair.foreground], palette[pair.background], minimum));
+    }
+    return std::min(opacity, 1.0);
 }
 
 LowestPair lowestContrast(const Palette& palette)
@@ -205,7 +238,7 @@ EnforceResult enforceMinimumContrast(const Palette& input, double minimum)
         }
     }
 
-    EnforceResult result{p, {}};
+    EnforceResult result{p, {}, disabledOpacity(p, minimum)};
     for (const ColorPair& pair : kPairs) {
         if (!meetsContrast(contrastRatio(p[pair.foreground], p[pair.background]), minimum)) {
             result.unresolved.push_back(pair);

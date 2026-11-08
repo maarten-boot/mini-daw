@@ -61,6 +61,16 @@ struct ColorPair {
 // All foreground/background combinations that appear on screen.
 std::span<const ColorPair> colorPairs();
 
+// Disabled controls (SPEC-UI-02a, PL1): every foreground that can be drawn on
+// a disabled control, with each background it can be drawn on. Disabled
+// controls are flat (no fill of their own) and faded to disabledOpacity().
+std::span<const ColorPair> disabledPairs();
+
+// Lowest opacity (at least kMinDisabledOpacity) at which every disabled pair
+// still reaches `minimum`; 1.0 (no fading) when only full colour does.
+inline constexpr double kMinDisabledOpacity = 0.6;
+double disabledOpacity(const Palette& palette, double minimum);
+
 // Lowest contrast ratio over all pairs, and which pair it is.
 struct LowestPair {
     ColorPair pair;
@@ -102,6 +112,7 @@ std::string validateCustomContrast(double value);
 struct EnforceResult {
     Palette palette;
     std::vector<ColorPair> unresolved;  // pairs that could not reach the minimum (should be empty)
+    double disabledOpacity = 1.0;       // disabledOpacity(palette, minimum)
 };
 
 // Adjust the palette so every pair reaches `minimum`. Foregrounds move first,

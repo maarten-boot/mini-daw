@@ -1,4 +1,5 @@
 #include "folder_chooser.hpp"
+#include "state_cues.hpp"
 
 #include "minidaw/folder_browse.hpp"
 #include "minidaw/path_util.hpp"
@@ -251,14 +252,14 @@ bool FolderChooser::update(fs::path& chosen)
         ImGui::TextWrapped("%s", d.title.c_str());
         // Up, Home, the drives (Windows), hidden folders.
         const fs::path parent = d.current.parent_path();
-        ImGui::BeginDisabled(parent.empty() || parent == d.current);
+        minidaw::app::beginDisabled(parent.empty() || parent == d.current);
         if (ImGui::Button("Up")) d.go(parent);
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         ImGui::SameLine();
         const fs::path home = homeFolder();
-        ImGui::BeginDisabled(home.empty());
+        minidaw::app::beginDisabled(home.empty());
         if (ImGui::Button("Home")) d.go(home);
-        ImGui::EndDisabled();
+        minidaw::app::endDisabled();
         const auto roots = filesystemRoots();
         if (roots.size() > 1) {
             for (const auto& r : roots) {

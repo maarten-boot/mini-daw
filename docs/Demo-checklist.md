@@ -8,7 +8,7 @@ For a short (about 5 minute) demo on Windows 10. Build: the CI download of run 4
 - [ ] **Settings → Audio devices…**: the output (speakers or headphones) and the input (Line In or the audio interface). Check that the **Output** meter (top line of the Recording tab; also on the Audio setup tab) moves when something plays.
 - [ ] **Settings → Instruments (VST®3)… → Scan**: the Arturia instruments appear in the list. (Plugins in another folder: **Browse…**, choose that folder, then Scan.) A module that fails or crashes is listed with the reason and skipped from then on.
 - [ ] Plug in the MIDI keyboard. Add a MIDI track and arm it: its "messages / receiving" count moves when you play.
-- [ ] Text size (**Ctrl+=** / **Ctrl+−**) and window size: the whole track table must be visible, including the **Take** column. Maximise the window.
+- [ ] Text size (**Ctrl+=** / **Ctrl+−**) and window size: maximise the window, so the whole track table (up to **Output**, **Take** and **X**) is visible without the scrollbar under it.
 - [ ] Close other audio programs (DAWs, browsers playing sound). Use **headphones**: they avoid feedback and hide the faint pulsing noise on the input.
 
 ## 2. Rehearse once (this is also test T-VST-20 and T-VST-30)
@@ -46,7 +46,7 @@ Note anything that goes wrong. **View → Log (Ctrl+L)** shows what mini-daw did
 | The plugin crashes mini-daw | Start it again: takes already on disk are safe, and the scan marks the plugin so it is skipped. Continue with another instrument |
 | The instrument window does not appear | Click **Edit** again (the button reads **Close** while it is open); otherwise continue without it |
 | Ticking or pulsing on the input | Use headphones, or show MIDI instruments only |
-| The Take column is cut off | Maximise the window or press **Ctrl+−** |
+| The Output or Take column is not visible | Scroll the track table sideways (the bar under it), maximise the window or press **Ctrl+−** |
 
 ## 5. Afterwards
 
