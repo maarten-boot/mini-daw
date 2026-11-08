@@ -36,6 +36,7 @@ struct Track {
     std::string instrumentName;              // for messages when it is missing
     std::string instrumentState;             // the plugin's processor state (bytes)
     std::string instrumentControllerState;   // the plugin's controller state (bytes)
+    std::string instrumentPreset;            // name of the preset or program chosen last (PL2), for display
     float volumeDb = 0.0f;                   // -60 (= silent) .. +6
     bool mute = false;
     bool solo = false;

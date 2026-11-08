@@ -50,3 +50,10 @@
 ## 7. CI of `8008ffc`
 > pushed it, check the CI run / commit the CI log lines
 - Run 42529973283 green (Linux 182/182, Windows 183/183, the headless ImGui tests also with MSVC); both builds in `dist/`, `dist/TESTS.txt` updated (T-UI-25: File menu while recording, no frame on title bars / scrollbars).
+
+## 8. PL2: preset menu
+> start PL2
+- The instrument host read no program lists yet. Explained the two VST3 preset kinds (a plugin's program list through IUnitInfo; .vstpreset files in standard folders) and that Arturia may offer neither (its sounds live in its own browser; not checked). Asked two questions; the user chose all three sources (program list, .vstpreset files, Save my own presets) and the button in the Output column.
+- Core: `Vst3Instrument::programs / currentProgram / selectProgram / savePreset / loadPreset / vendor`; `presets.hpp`: own .vstpreset reader / writer (the SDK's PresetFile needs SDK parts that are not built), the standard folders per platform and the bundle's Resources/Presets, listing with groups and a limit, safe replace. Test synth: program list "Factory" (Soft / Medium / Loud) through EditControllerEx1.
+- GUI: Presets, < and > after Edit; the menu (programs, files, "(mine)", the current one marked, the plugin's current program before a choice), Save preset window (Replace when it exists); files load through the busy message; the preset name kept in the project; a log line per instrument says what it offers (for the Arturia test).
+- Spec v0.43 (SPEC-VST-07, -07a), Plan PL2, T-VST-33..36, README, CLAUDE.md. Linux 187/187, Wine 186/186; GUI on Xvfb and Wine.

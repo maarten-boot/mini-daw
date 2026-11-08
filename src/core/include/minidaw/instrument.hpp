@@ -23,6 +23,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Steinberg::Vst {
 class IEditController;
@@ -61,6 +62,7 @@ public:
     const std::string& name() const;
     const std::string& classId() const;
     const std::filesystem::path& modulePath() const;
+    const std::string& vendor() const;  // from the class (or factory) info
     double sampleRate() const;   // the rate it was loaded for
     // Changes with every load (unique in the process); 0 when nothing is loaded.
     std::uint64_t serial() const;
@@ -68,6 +70,22 @@ public:
     // The plugin's state (processor and controller), as bytes.
     bool getState(std::string& component, std::string& controller, std::string& error) const;
     bool setState(const std::string& component, const std::string& controller, std::string& error);
+
+    // Programs (PL2, SPEC-VST-07a): the plugin's program list (IUnitInfo), chosen
+    // with its program-change parameter. GUI thread. False when it has none.
+    struct Programs {
+        std::uint32_t parameter = 0;
+        std::string listName;
+        std::vector<std::string> names;
+    };
+    bool programs(Programs& out) const;
+    int currentProgram() const;  // index in programs().names, -1 if there is no list
+    bool selectProgram(int index, std::string& error);
+
+    // .vstpreset files (PL2): the processor and controller state with the class
+    // ID. Loading refuses a preset of another plugin. GUI thread.
+    bool savePreset(const std::filesystem::path& file, std::string& error) const;
+    bool loadPreset(const std::filesystem::path& file, std::string& error);
 
     // A parameter change from the host (any thread except the audio thread):
     // given to the processor in its next block.

@@ -17,6 +17,7 @@ add_library(minidaw_core STATIC
     core/src/monitor.cpp
     core/src/player.cpp
     core/src/plugin_scan.cpp
+    core/src/presets.cpp
     core/src/project.cpp
     core/src/recorder.cpp
     core/src/midi_input.cpp

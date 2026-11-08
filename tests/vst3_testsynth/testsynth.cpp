@@ -18,6 +18,11 @@
 // Controller state: the editor's last size (like real plugins keep their
 // window state), so the tests can check the controller state round-trip.
 //
+// Programs (PL2): a program list "Factory" with Soft, Medium and Loud
+// (gain 0.2, 0.5, 0.9), published through IUnitInfo (EditControllerEx1) and
+// chosen with the program-change parameter "Program" (3); choosing one sets
+// the gain, in the processor and in the controller.
+//
 // Test hook: the hidden parameter "Restart request" (4), set by the host,
 // makes the controller call restartComponent: above 0.5 with kIoChanged |
 // kLatencyChanged, else with kParamValuesChanged.
@@ -55,7 +60,17 @@ namespace {
 
 constexpr ParamID kGain = 1;
 constexpr ParamID kEditorScale = 2;  // read-only, hidden: the scale the host gave the editor
+constexpr ParamID kProgram = 3;         // program change (PL2)
 constexpr ParamID kRestartRequest = 4;  // hidden test hook (see above)
+constexpr ProgramListID kFactoryList = 1;
+constexpr double kProgramGain[] = {0.2, 0.5, 0.9};  // Soft, Medium, Loud
+constexpr int32 kProgramCount = 3;
+
+double programGain(ParamValue normalized)
+{
+    const int i = std::clamp(static_cast<int>(std::lround(normalized * (kProgramCount - 1))), 0, kProgramCount - 1);
+    return kProgramGain[i];
+}
 constexpr const char* kTestPlatform = "minidaw-test";
 
 // Class IDs (random, fixed): processor and controller.
@@ -95,9 +110,9 @@ public:
                 IParamValueQueue* q = data.inputParameterChanges->getParameterData(i);
                 ParamValue v = 0;
                 int32 offset = 0;
-                if (q && q->getParameterId() == kGain && q->getPoint(q->getPointCount() - 1, offset, v) == kResultOk) {
-                    gain_ = v;
-                }
+                if (!q || q->getPoint(q->getPointCount() - 1, offset, v) != kResultOk) continue;
+                if (q->getParameterId() == kGain) gain_ = v;
+                if (q->getParameterId() == kProgram) gain_ = programGain(v);
             }
         }
         if (data.numOutputs < 1 || data.outputs[0].numChannels < 2) return kResultOk;
@@ -316,13 +331,25 @@ private:
     EditorSize* size_;  // the controller's (kept in its state)
 };
 
-class TestSynthController : public EditController, public IMidiMapping {
+class TestSynthController : public EditControllerEx1, public IMidiMapping {
 public:
     static FUnknown* create(void*) { return static_cast<IEditController*>(new TestSynthController); }
     tresult PLUGIN_API initialize(FUnknown* context) override
     {
-        const tresult r = EditController::initialize(context);
+        const tresult r = EditControllerEx1::initialize(context);
         if (r != kResultOk) return r;
+        // The program list on the root unit, chosen with the "Program" parameter (PL2).
+        auto* list = new ProgramList(STR16("Factory"), kFactoryList, kRootUnitId);
+        list->addProgram(STR16("Soft"));
+        list->addProgram(STR16("Medium"));
+        list->addProgram(STR16("Loud"));
+        addUnit(new Unit(STR16("Root"), kRootUnitId, kNoParentUnitId, kFactoryList));
+        addProgramList(list);
+        Parameter* program = list->getParameter();  // kIsProgramChange | kIsList, 3 steps
+        program->getInfo().id = kProgram;
+        program->getInfo().defaultNormalizedValue = 0.5;  // Medium (gain 0.5, the default)
+        program->setNormalized(0.5);
+        parameters.addParameter(program);
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5, ParameterInfo::kCanAutomate, kGain);
         parameters.addParameter(STR16("Editor scale"), nullptr, 0, 0.0,
                                 ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorScale);
@@ -335,7 +362,8 @@ public:
             componentHandler->restartComponent(value > 0.5 ? (kIoChanged | kLatencyChanged) : kParamValuesChanged);
             return kResultOk;
         }
-        return EditController::setParamNormalized(tag, value);
+        if (tag == kProgram) EditControllerEx1::setParamNormalized(kGain, programGain(value));
+        return EditControllerEx1::setParamNormalized(tag, value);
     }
     IPlugView* PLUGIN_API createView(FIDString name) override
     {
@@ -371,11 +399,11 @@ public:
         return kResultOk;
     }
 
-    OBJ_METHODS(TestSynthController, EditController)
+    OBJ_METHODS(TestSynthController, EditControllerEx1)
     DEFINE_INTERFACES
         DEF_INTERFACE(IMidiMapping)
-    END_DEFINE_INTERFACES(EditController)
-    REFCOUNT_METHODS(EditController)
+    END_DEFINE_INTERFACES(EditControllerEx1)
+    REFCOUNT_METHODS(EditControllerEx1)
 
 private:
     EditorSize editorSize_;

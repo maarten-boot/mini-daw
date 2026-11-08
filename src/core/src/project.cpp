@@ -136,6 +136,7 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
                                    {"name", t.instrumentName},
                                    {"state", base64Encode(t.instrumentState)},
                                    {"controllerState", base64Encode(t.instrumentControllerState)}};
+                if (!t.instrumentPreset.empty()) j["instrument"]["preset"] = t.instrumentPreset;  // PL2
             }
             if (t.soundFromRecording) j["soundFrom"] = "recording";  // P11; default "instrument"
         }
@@ -273,6 +274,7 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
                     t.instrumentClass = ins["classId"].get<std::string>();
                     t.instrumentModule = field("module", names);
                     t.instrumentName = field("name", names);
+                    t.instrumentPreset = field("preset", names);  // PL2; optional
                     if (!names) warnings.push_back(where + "the instrument's module or name has a wrong value; ignored.");
                     bool states = true;
                     const std::string state = field("state", states);

@@ -2,6 +2,7 @@
 
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
+#include "minidaw/presets.hpp"
 #include "minidaw/render.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
@@ -590,3 +591,62 @@ TEST_CASE("T-VST-29: a MIDI take is rendered through its instrument, with its se
     CHECK_FALSE(err.empty());
 }
 
+
+TEST_CASE("T-VST-33: the plugin's program list: names, current, choosing one changes the sound", "[vst][T-VST-33]")
+{
+    Vst3Instrument inst;
+    std::string err;
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    CHECK(inst.vendor() == "mini-daw tests");
+    Vst3Instrument::Programs p;
+    REQUIRE(inst.programs(p));
+    CHECK(p.listName == "Factory");
+    REQUIRE(p.names == std::vector<std::string>{"Soft", "Medium", "Loud"});
+    CHECK(inst.currentProgram() == 1);  // Medium
+
+    std::vector<float> l(1024), r(1024);
+    const InstrumentMidi on = msg(0, 0x90, 69, 127);
+    REQUIRE(inst.selectProgram(2, err));  // Loud: gain 0.9
+    CHECK(inst.currentProgram() == 2);
+    inst.process(&on, 1, 1024, {}, l.data(), r.data());
+    CHECK(peak(l, 0, 1024) == Approx(0.9f).margin(0.01));
+    REQUIRE(inst.selectProgram(0, err));  // Soft: gain 0.2
+    inst.process(nullptr, 0, 1024, {}, l.data(), r.data());
+    CHECK(peak(l, 0, 1024) == Approx(0.2f).margin(0.01));
+    CHECK_FALSE(inst.selectProgram(3, err));
+    CHECK_FALSE(inst.selectProgram(-1, err));
+}
+
+TEST_CASE("T-VST-34: a preset saved from an instrument loads its sound back; another plugin's is refused",
+          "[vst][T-VST-34]")
+{
+    test::TempDir tmp;
+    Vst3Instrument inst;
+    std::string err;
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    inst.setParameter(1, 0.75);
+    std::vector<float> l(1024), r(1024);
+    const InstrumentMidi on = msg(0, 0x90, 69, 127);
+    inst.process(&on, 1, 1024, {}, l.data(), r.data());  // gain 0.75 reaches the processor
+    const fs::path file = tmp.path() / "Wärm pad.vstpreset";
+    REQUIRE(inst.savePreset(file, err));
+    INFO(err);
+
+    inst.setParameter(1, 0.1);
+    inst.process(nullptr, 0, 1024, {}, l.data(), r.data());
+    CHECK(peak(l, 0, 1024) == Approx(0.1f).margin(0.01));
+    REQUIRE(inst.loadPreset(file, err));
+    inst.process(nullptr, 0, 1024, {}, l.data(), r.data());
+    CHECK(peak(l, 0, 1024) == Approx(0.75f).margin(0.01));
+
+    // The class ID in the file is the FUID text other hosts write and read.
+    std::string bytes;
+    REQUIRE(readWholeFile(file, bytes, err));
+    auto d = decodeVstPreset(bytes, err);
+    REQUIRE(d);
+    d->classId = "00000000000000000000000000000001";
+    const fs::path other = tmp.path() / "other.vstpreset";
+    REQUIRE(writeFileReplacing(other, encodeVstPreset(*d), err));
+    CHECK_FALSE(inst.loadPreset(other, err));
+    CHECK(err.find("another plugin") != std::string::npos);
+}

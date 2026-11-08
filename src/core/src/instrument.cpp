@@ -3,6 +3,7 @@
 #include "console_capture.hpp"
 #include "no_error_dialogs.hpp"
 #include "minidaw/path_util.hpp"
+#include "minidaw/presets.hpp"
 #include "minidaw/ring_buffer.hpp"
 
 #include "pluginterfaces/gui/iplugview.h"
@@ -13,6 +14,7 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/ivstunits.h"
 #include "public.sdk/source/common/memorystream.h"
 #include "public.sdk/source/vst/hosting/eventlist.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
@@ -20,9 +22,11 @@
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 #include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
+#include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 
@@ -93,7 +97,7 @@ struct Vst3Instrument::Impl {
     IPtr<IAudioProcessor> processor;
     IPtr<IEditController> controller;
     std::unique_ptr<ComponentHandlerImpl> handler;
-    std::string name, classId;
+    std::string name, classId, vendor;
     std::filesystem::path modulePath;
     double sampleRate = 48000;
     bool active = false;
@@ -147,6 +151,11 @@ double Vst3Instrument::sampleRate() const
     return impl_->sampleRate;
 }
 
+const std::string& Vst3Instrument::vendor() const
+{
+    return impl_->vendor;
+}
+
 std::uint64_t Vst3Instrument::serial() const
 {
     return impl_->serial;
@@ -198,6 +207,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
         }
         m.processor = proc;
         m.name = info->name();
+        m.vendor = info->vendor().empty() ? factory.info().vendor() : info->vendor();
         m.classId = classId;
         m.modulePath = module;
         m.sampleRate = sampleRate;
@@ -290,6 +300,7 @@ void Vst3Instrument::unload()
     m.handler.reset();
     m.module = nullptr;     // unloads the library last
     m.name.clear();
+    m.vendor.clear();
     m.classId.clear();
     m.modulePath.clear();
     m.serial = 0;
@@ -349,6 +360,131 @@ bool Vst3Instrument::setState(const std::string& component, const std::string& c
         }
     }
     return true;
+}
+
+namespace {
+
+// The plugin's program-change parameter: the one on the root unit if there are several.
+bool findProgramParameter(IEditController* c, ParameterInfo& found)
+{
+    if (c == nullptr) return false;
+    bool any = false;
+    const int32 n = c->getParameterCount();
+    for (int32 i = 0; i < n; ++i) {
+        ParameterInfo pi{};
+        if (c->getParameterInfo(i, pi) != kResultOk || (pi.flags & ParameterInfo::kIsProgramChange) == 0) continue;
+        if (!any || pi.unitId == kRootUnitId) found = pi;
+        if (pi.unitId == kRootUnitId) return true;
+        any = true;
+    }
+    return any;
+}
+
+// The class ID as a .vstpreset stores it (FUID text, as other hosts write it).
+std::string presetClassString(const std::string& classId)
+{
+    const auto uid = VST3::UID::fromString(classId);
+    if (!uid) return {};
+    char8 text[33] = {};
+    FUID::fromTUID(uid->data()).toString(text);
+    return std::string(text, 32);
+}
+
+} // namespace
+
+bool Vst3Instrument::programs(Programs& out) const
+{
+    const Impl& m = *impl_;
+    out = Programs{};
+    IEditController* c = m.controller.get();
+    ParameterInfo pi{};
+    if (!m.active || !findProgramParameter(c, pi)) return false;
+    detail::NoErrorDialogs noDialogs;
+    out.parameter = pi.id;
+    if (FUnknownPtr<IUnitInfo> units(c); units) {
+        ProgramListID list = kNoProgramListId;
+        for (int32 i = 0; i < units->getUnitCount(); ++i) {
+            UnitInfo u{};
+            if (units->getUnitInfo(i, u) == kResultOk && u.id == pi.unitId) list = u.programListId;
+        }
+        for (int32 i = 0; i < units->getProgramListCount(); ++i) {
+            ProgramListInfo info{};
+            if (units->getProgramListInfo(i, info) != kResultOk) continue;
+            if (list != kNoProgramListId && info.id != list) continue;
+            out.listName = Steinberg::Vst::StringConvert::convert(info.name);
+            for (int32 k = 0; k < info.programCount && k < 4096; ++k) {
+                String128 name{};
+                units->getProgramName(info.id, k, name);
+                out.names.push_back(Steinberg::Vst::StringConvert::convert(name));
+            }
+            break;
+        }
+    }
+    // Without a unit's list: the parameter's own value names (a list parameter).
+    if (out.names.empty() && pi.stepCount > 0 && pi.stepCount < 4096) {
+        for (int32 k = 0; k <= pi.stepCount; ++k) {
+            String128 name{};
+            c->getParamStringByValue(pi.id, static_cast<double>(k) / pi.stepCount, name);
+            out.names.push_back(Steinberg::Vst::StringConvert::convert(name));
+        }
+    }
+    return !out.names.empty();
+}
+
+int Vst3Instrument::currentProgram() const
+{
+    ParameterInfo pi{};
+    IEditController* c = impl_->controller.get();
+    if (!impl_->active || !findProgramParameter(c, pi)) return -1;
+    if (pi.stepCount <= 0) return 0;
+    return static_cast<int>(std::lround(c->getParamNormalized(pi.id) * pi.stepCount));
+}
+
+bool Vst3Instrument::selectProgram(int index, std::string& error)
+{
+    ParameterInfo pi{};
+    IEditController* c = impl_->controller.get();
+    if (!impl_->active || !findProgramParameter(c, pi)) {
+        error = "The instrument has no program list.";
+        return false;
+    }
+    const int last = std::max<int>(0, pi.stepCount);
+    if (index < 0 || index > last) {
+        error = "No program " + std::to_string(index + 1) + ".";
+        return false;
+    }
+    const double v = last > 0 ? static_cast<double>(index) / last : 0.0;
+    detail::NoErrorDialogs noDialogs;
+    c->setParamNormalized(pi.id, v);   // the controller (and an open editor) follows
+    queueParameter(pi.id, v, false);   // the processor, at its next block
+    return true;
+}
+
+bool Vst3Instrument::savePreset(const std::filesystem::path& file, std::string& error) const
+{
+    VstPresetData d;
+    d.classId = presetClassString(impl_->classId);
+    if (d.classId.empty()) {
+        error = "The instrument's class ID is not valid.";
+        return false;
+    }
+    if (!getState(d.component, d.controller, error)) return false;
+    return writeFileReplacing(file, encodeVstPreset(d), error);
+}
+
+bool Vst3Instrument::loadPreset(const std::filesystem::path& file, std::string& error)
+{
+    std::string bytes;
+    if (!readWholeFile(file, bytes, error)) return false;
+    auto d = decodeVstPreset(bytes, error);
+    if (!d) return false;
+    FUID wanted, inFile;
+    const std::string mine = presetClassString(impl_->classId);
+    if (mine.empty() || !wanted.fromString(mine.c_str()) || !inFile.fromString(d->classId.c_str()) || !(wanted == inFile)) {
+        error = "the preset is for another plugin";
+        return false;
+    }
+    return setState(d->component, d->controller, error);
 }
 
 void Vst3Instrument::setParameter(std::uint32_t id, double normalized)
