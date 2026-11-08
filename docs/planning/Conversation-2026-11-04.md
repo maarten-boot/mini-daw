@@ -26,13 +26,13 @@ Continues `Conversation-2026-11-03.md` (P10a–c, e, the CI hang fix and the use
 
 ## 4. Crosscheck #9
 > do the crosscheck #9
-- Written up in `Crosscheck-2026-11-02.md` (Claude + independent reviewer; every reviewer claim checked against the code, one proposed fix disputed: Q5).
+- Written up in `Crosscheck-2026-11-02-to-11-07.md` (Claude + independent reviewer; every reviewer claim checked against the code, one proposed fix disputed: Q5).
 - Medium: Q1 `stable_sort` allocates in the audio callback; Q2 a module that crashes in its first scan is not recorded (crash loop); Q3 hung notes on disarm / slot shift, per-slot state kept; Q4 parameter changes beyond 4 per block dropped; Q6 take timing after a rate change. Low: Q5 restart requests, Q7 needless reloads, Q8 wrong-typed instrument field, Q9 echo. Docs Q11, tests Q12, notes Q10.
 - Waiting for the user's go.
 
 ## 5. Crosscheck #9 fixes
 > yes fix Q1–Q12, Q1 first
-- Q1 + Q3 together (the same loop): no sort; per-instrument state that follows the instrument; live notes released on disarm; gain in the configuration; note-offs kept when the block is full. Then Q2, Q4/Q9, Q12 (test synth: CC 7 mapping, controller state, restart hook), Q6/Q7, Q5, Q8, Q11. Details in `Crosscheck-2026-11-02.md`.
+- Q1 + Q3 together (the same loop): no sort; per-instrument state that follows the instrument; live notes released on disarm; gain in the configuration; note-offs kept when the block is full. Then Q2, Q4/Q9, Q12 (test synth: CC 7 mapping, controller state, restart hook), Q6/Q7, Q5, Q8, Q11. Details in `Crosscheck-2026-11-02-to-11-07.md`.
 - My first Q4 version would have allocated (a new offset adds a point): changed to reuse the last point's offset before testing.
 - Tests T-VST-21..23, T-LIC-06; T-VST-11 and T-VST-15 extended; T-VST-22 and T-LIC-06 checked to fail without their fixes. Linux 131/131, Wine 131/131.
 - The Wine prefix in /dev/shm was gone (cleared since last night) and was made again; its first test run had one failed assertion (not captured), 8 runs after that passed.

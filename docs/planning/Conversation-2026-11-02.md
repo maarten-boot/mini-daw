@@ -77,14 +77,14 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 > pushed it, check the CI run; and do a crosscheck
 
 - No CI run for `c80053f`: GitHub's `main` is still `341fc26`; `d2ca5b2` and `c80053f` did not arrive (push failed or went elsewhere).
-- Crosscheck #4 in `Crosscheck-2026-11-02.md`. Spec ↔ Plan ↔ Tests by Claude; the P6 code also by an independent reviewer (subagent), main findings re-checked.
+- Crosscheck #4 in `Crosscheck-2026-11-02-to-11-07.md`. Spec ↔ Plan ↔ Tests by Claude; the P6 code also by an independent reviewer (subagent), main findings re-checked.
 - **J1:** `Tests.md` had been cut to 59 lines by commit `341fc26` (my edit script dropped the rest of the file). Rebuilt from `b571a1e` + P6 rows + results since; no other file affected.
 - Code findings J2–J14 (3 medium: MIDI port retry, default tracks wiping user tracks, MIDI end taken from the first audio take). Waiting for the user's go.
 
 ## 10. Crosscheck #4 fixes
 > yes fix J2–J14, medium ones first
 
-- Medium first: J2 (MIDI port retried every 2 s and at Record), J3 (default track only if none exists), J4 (MIDI end = recorder timeline). Then J5–J14; details in `Crosscheck-2026-11-02.md`.
+- Medium first: J2 (MIDI port retried every 2 s and at Record), J3 (default track only if none exists), J4 (MIDI end = recorder timeline). Then J5–J14; details in `Crosscheck-2026-11-02-to-11-07.md`.
 - J13: session now talks to `SessionAudio` / `SessionMidi`; `test_session.cpp` drives the real session and recorder with stand-ins (T-REC-23..26, 28), plus T-REC-27.
 - On the way: the first J7 rule ("a `\"` followed only by a comment closes the value") broke device names like `Mic \"Pro\"; USB #2` — caught by the existing round-trip test; the rule now also requires that no other quote follows.
 - `Tests.md` edited by replacing one row with itself plus the new rows, then diffed: only the intended lines changed (lesson from J1).
@@ -139,14 +139,14 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 > do the crosscheck #5
 
 - CI run 41518587535 for `bc3d8e5` started (result below when finished).
-- Crosscheck #5 in `Crosscheck-2026-11-02.md`: Spec ↔ Plan ↔ Tests ↔ code by Claude; code also by an independent reviewer (subagent), K1/K2/K4 re-checked in the code.
+- Crosscheck #5 in `Crosscheck-2026-11-02-to-11-07.md`: Spec ↔ Plan ↔ Tests ↔ code by Claude; code also by an independent reviewer (subagent), K1/K2/K4 re-checked in the code.
 - Main finding K1 (medium): with two identical MIDI devices, Windows renumbering can hide an unplug (and with three, close a working port). K2–K7 low (base-name rule for future backends, log gaps, NaN to the output, log rename failure, `xdg-open` wait, output meter after limiting); K8 docs; K9/K10 notes. Waiting for the user's go.
 - CI run 41518587535 (`bc3d8e5`): windows 97/97 (MSVC, no warnings), linux 97/97, licence: green.
 
 ## 17. Crosscheck #5 fixes
 > yes fix K1–K8, K1 first
 
-- K1: port check moved into a pure `planMidiCheck` (per base name, by count; ambiguous unplug of identical devices → all closed and blocked, user re-arms). K2: naming style per backend. K3–K7 as proposed; K8 docs. Details in `Crosscheck-2026-11-02.md`.
+- K1: port check moved into a pure `planMidiCheck` (per base name, by count; ambiguous unplug of identical devices → all closed and blocked, user re-arms). K2: naming style per backend. K3–K7 as proposed; K8 docs. Details in `Crosscheck-2026-11-02-to-11-07.md`.
 - One test expectation of mine was wrong (NaN frame: the whole sample is silence, as specified); test corrected, not the code.
 - Spec v0.17; tests T-REC-33, T-LOG-05, T-MON-04 extended; T-UI-09 recorded.
 - Linux 99/99, Wine 98/98, live hot-plug regression. `dist/windows` refreshed.
@@ -167,13 +167,13 @@ Continues `Conversation-2026-11-01.md` (last section 29: Windows CI failure in T
 > do the crosscheck #6
 
 - CI run 41521684543 (`42e3402`) green (99/99). Run 41532845975 (`2892d9e`): Windows 107/108, T-PLAY-11 fails ("Gitaar Ã©"): the test made the file name through the ANSI code page; the code is right (M0).
-- Crosscheck #6 in `Crosscheck-2026-11-02.md` (Claude + independent reviewer). M1 (take folder opened during a recording) and M2 (Play at the end does nothing) medium; M3–M9 low; M10 duplicate test ID; M11 calibration field in the GUI; M12 test gaps. Waiting for the user's go.
+- Crosscheck #6 in `Crosscheck-2026-11-02-to-11-07.md` (Claude + independent reviewer). M1 (take folder opened during a recording) and M2 (Play at the end does nothing) medium; M3–M9 low; M10 duplicate test ID; M11 calibration field in the GUI; M12 test gaps. Waiting for the user's go.
 
 ## 20. Crosscheck #6 fixes
 > yes fix M0–M12, M0 first
 
 - M0 (CI): the test built the non-ASCII file name through the ANSI code page; now `pathFromUtf8`.
-- M1–M12 as in `Crosscheck-2026-11-02.md`; placement rule moved into the core (`placeRecordedTake`) so it is tested.
+- M1–M12 as in `Crosscheck-2026-11-02-to-11-07.md`; placement rule moved into the core (`placeRecordedTake`) so it is tested.
 - One test of mine wrong at first (3-channel file via WavWriter, which only writes 1–2 channels).
 - Spec v0.19; tests T-PLAY-14..17. Linux 113/113, Wine 112/112, ThreadSanitizer clean. `dist/windows` refreshed.
 

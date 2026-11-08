@@ -78,3 +78,6 @@ vcpkg_installed/
 Testing/
 .cache/
 /tmp/
+
+# Image editor metadata (sidecar files)
+*.xmp

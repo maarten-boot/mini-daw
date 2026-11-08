@@ -1,6 +1,6 @@
 # mini-daw demo checklist
 
-For a short (about 5 minute) demo on Windows 10. Build: the CI download of run 42036513972 (commit `4be4d48`): `mini-daw-0.1.0-setup.exe`, `mini-daw.exe`, `mini-daw.com`.
+For a short (about 5 minute) demo on Windows 10. Build: the CI download of run 42421955192 (commit `0309fed`, P19 + crosscheck #14 fixes; the same build as in `dist/windows`): `mini-daw-0.1.0-setup.exe`, `mini-daw.exe`, `mini-daw.com`.
 
 ## 1. The day before: prepare the machine
 

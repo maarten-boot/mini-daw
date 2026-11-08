@@ -26,7 +26,7 @@ Continues `Conversation-2026-11-04.md` (P10d, crosscheck #9 and its fixes were d
 
 ## 4. Crosscheck #10
 > do the crosscheck #10
-- Written up in `Crosscheck-2026-11-02.md` (Claude + independent reviewer; each reviewer claim checked against the code).
+- Written up in `Crosscheck-2026-11-02-to-11-07.md` (Claude + independent reviewer; each reviewer claim checked against the code).
 - Medium: R1 a cancelled/failed re-render deletes the file that plays; R2 removing the linked track can leave the MIDI track silent; R3 the instrument WAV in an overdub is not shifted like its MIDI take (my Spec rule was wrong); R4 a silent take can replace a good one when the plugin did not load. Low: R5 Record during a render, R6 doubled sound while recording with "Sound from: recording", R7 blocks over 8192 frames, R8 render leftovers / target, R9 hand-edited armed linked track. Docs: R10 "P11b" twice (ASIO → P14), R11 real-time rendering. Tests R12.
 - Waiting for the user's go.
 
@@ -34,7 +34,7 @@ Continues `Conversation-2026-11-04.md` (P10d, crosscheck #9 and its fixes were d
 > yes fix R1–R12, R1 first
 - R1: a new file per render (not .tmp + rename: renaming over a file the player has open fails on Windows). R2/R4/R9: core helpers `removeTrack`, `tracksToRecord`. R3: `placedAsAudioInput` — the linked sound is placed like its MIDI take. R5–R8 in the GUI; R7 as `InstrumentSound::Lost`. R10: ASIO step renamed P14. R11: Spec. R12: tests.
 - My first 1500-event render test had note-on and note-off in the same held-back block (silent): fixed the test.
-- Spec v0.29; Linux 137/137, Wine 137/137 (2 runs). Details in `Crosscheck-2026-11-02.md`.
+- Spec v0.29; Linux 137/137, Wine 137/137 (2 runs). Details in `Crosscheck-2026-11-02-to-11-07.md`.
 
 ## 6. CI after the crosscheck #10 fixes; demo readiness
 > pushed it, check the CI run
