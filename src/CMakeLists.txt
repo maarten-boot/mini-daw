@@ -9,6 +9,7 @@ add_library(minidaw_core STATIC
     core/src/config.cpp
     core/src/devices.cpp
     core/src/folder_browse.cpp
+    core/src/instance_lock.cpp
     core/src/instrument.cpp
     core/src/instrument_rack.cpp
     core/src/render.cpp

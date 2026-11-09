@@ -24,3 +24,13 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 3. CI of `2730bf9`
 > pushed it, check the CI run / commit the CI log lines (when CI is done)
 - Run 42626012113 green (Linux 191/191, Windows 192/192: X0 is fixed on MSVC). Both builds downloaded and checked first, then put in `dist/`; `dist/TESTS.txt` has T-VST-36 (presets; the log line that shows what Arturia offers) on top of the PL1 tests still open.
+
+## 4. One mini-daw per user (P20); timeline right-click and notes planned (P21, P22)
+> can we block the mini-daw from starting 2 times for the same user, it makes no sesns i think. in the timeline tab when we right click on one of the takes can we add a delete function and a rename. I would also allow the user to make annotations per take and for the while recording would that be possible ?
+- Read "sesns" as "sense"; asked what "for the while recording" meant, and three design questions. Answers: notes both per take, while recording (at their moment) and for the whole project; Delete moves the take to a `deleted` folder; Rename is a name shown, the folder keeps its date and time; a second start brings the first window up.
+- Plan: P20 (one instance), P21 (timeline: Rename, Notes, Delete), P22 (notes while recording, project note).
+- P20 done: `InstanceLock` (OS file lock in the config folder, owner's process ID, show request polled twice a second), checked before the log is opened; command-line runs not blocked. SPEC-RUN-01, T-RUN-01/02. Linux 193/193, Wine 192/192; second start under Xvfb and Wine.
+> when in the plan will we bw able to use the linux vst3 edit function on a track?
+- Answer: it is part of P12 (full Linux support, "later"); it needs a VST3 run loop (IRunLoop) and an X11 window to embed the editor, a step like P10d. Offered to schedule it after P20–P23 or earlier; not decided yet.
+> we should add a terminology tab in the notebook explaining the keywords likel app, recording track, take instrument and so on
+- Read "likel" as "like". Planned as P23: a Terms tab (in the tab order like the others), after P21 and P22 unless the user wants it sooner.

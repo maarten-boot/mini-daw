@@ -24,6 +24,7 @@
 #include "minidaw/config.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/folder_browse.hpp"
+#include "minidaw/instance_lock.hpp"
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
 #include "minidaw/presets.hpp"
@@ -99,6 +100,9 @@ struct AppState {
         std::function<void()> work;
     };
     std::optional<BusyJob> busy;
+    // One window per config folder (P20, SPEC-RUN-01): held while the GUI runs.
+    minidaw::InstanceLock instanceLock;
+    std::string instanceLockNote;  // why there is no lock (logged once the log is open)
     float trackTableExtra = 0.0f;  // track table height the hand count missed (crosscheck #15, W8)
 
     // Presets of a track's instrument (PL2, SPEC-VST-07a): read when its menu opens or
@@ -4144,6 +4148,18 @@ int runGui(AppState& app)
         runBusy(app);  // slow work asked for in the frame before, now that its message is on screen
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
+        // A second start asked for this window (P20): restore it and bring it to the front.
+        static double lastShowCheck = 0.0;
+        if (glfwGetTime() - lastShowCheck > 0.5) {
+            lastShowCheck = glfwGetTime();
+            if (app.instanceLock.showRequested()) {
+                if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) glfwRestoreWindow(window);
+                glfwShowWindow(window);
+                glfwFocusWindow(window);
+                glfwRequestWindowAttention(window);  // the taskbar button flashes if the system kept the focus elsewhere
+                app.log.info("mini-daw was started again: this window was brought to the front");
+            }
+        }
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
             updateAuto(app);  // auto record goes on while minimised (crosscheck #11, S2)
             glfwWaitEventsTimeout(0.05);  // minimised: don't render
@@ -4441,7 +4457,33 @@ int main(int argc, char** argv)
     case Action::Gui:
         break;
     }
+    // One window per config folder (P20, SPEC-RUN-01); checked before the log is opened,
+    // which would otherwise rename the running one's log. Command-line runs are not blocked.
+    {
+        const std::filesystem::path folder = app.configPath.parent_path().empty()
+                                                 ? std::filesystem::current_path()
+                                                 : app.configPath.parent_path();
+        std::string err;
+        switch (app.instanceLock.acquire(folder, err)) {
+        case minidaw::InstanceLock::Result::HeldByOther: {
+#if defined(_WIN32)
+            // The running mini-daw may take the foreground (this process may, it was just started).
+            AllowSetForegroundWindow(static_cast<DWORD>(minidaw::InstanceLock::ownerProcess(folder)));
+#endif
+            minidaw::InstanceLock::requestShow(folder);
+            std::fprintf(stderr, "mini-daw is already running (config folder %s); its window is brought to the front.\n",
+                         minidaw::pathToUtf8(folder).c_str());
+            return 0;
+        }
+        case minidaw::InstanceLock::Result::Failed:
+            app.instanceLockNote = "Not protected against a second start: " + err;
+            break;
+        case minidaw::InstanceLock::Result::Acquired:
+            break;
+        }
+    }
     openLog(app, "GUI");
+    if (!app.instanceLockNote.empty()) app.log.warning(app.instanceLockNote);
     const int rc = runGui(app);
     app.log.info("mini-daw closed");
     return rc;
