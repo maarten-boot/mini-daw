@@ -1,0 +1,49 @@
+#pragma once
+
+// A recording's name and notes (P21, SPEC-PLAY-08) and its marks made while
+// recording (P22, SPEC-REC-09), kept in `recording.json` in its folder (a take
+// folder or an auto record part). The folder's own name keeps its date and
+// time, so the timeline places it the same as before.
+//
+//   {"format": "mini-daw recording", "version": 1, "name": "Chorus",
+//    "note": "…", "marks": [{"seconds": 83.2, "text": "good part"}]}
+//
+// Deleting a recording (P21) moves its folder into "deleted" in the takes
+// folder ("deleted/<take folder>" or "deleted/auto/<part>"), where the
+// timeline does not look; it can be moved back by hand.
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace minidaw {
+
+struct RecordingMark {
+    double seconds = 0.0;  // from the recording's start
+    std::string text;
+};
+
+struct RecordingNotes {
+    std::string name;   // empty: none (the timeline shows the time only)
+    std::string note;   // any text, several lines
+    std::vector<RecordingMark> marks;
+    bool empty() const { return name.empty() && note.empty() && marks.empty(); }
+};
+
+inline constexpr const char* kRecordingNotesFile = "recording.json";
+
+// A missing file gives empty notes (true). A damaged one: false with a reason,
+// `notes` empty (the recording is still shown).
+bool loadRecordingNotes(const std::filesystem::path& folder, RecordingNotes& notes, std::string& error);
+// Writes the file (via a temporary file and a rename); empty notes remove it.
+bool saveRecordingNotes(const std::filesystem::path& folder, const RecordingNotes& notes, std::string& error);
+
+// Moves `folder` (a recording in `takesFolder`, or in its "auto" folder) to
+// takesFolder/deleted/[auto/]<name>, with "-2", "-3" … when that exists.
+// `movedTo` is where it went.
+bool moveRecordingToDeleted(const std::filesystem::path& takesFolder, const std::filesystem::path& folder,
+                            std::filesystem::path& movedTo, std::string& error);
+
+// (Whether a track's take lies in a recording: isInsideFolder in project.hpp.)
+
+} // namespace minidaw

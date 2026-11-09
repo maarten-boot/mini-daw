@@ -188,6 +188,13 @@ struct AppState {
     std::vector<minidaw::RecordingInfo> recordings;  // in the takes folder, oldest first
     bool recordingsDirty = true;                      // read them again before drawing
     std::filesystem::path selectedRecording;
+    // P21: a recording's name / note window, and the Delete question (empty = closed).
+    std::filesystem::path recordingEdit;
+    std::string recordingEditName, recordingEditNote, recordingEditError;
+    bool recordingEditFocusNote = false;
+    bool recordingEditFocus = false;
+    std::filesystem::path recordingDelete;
+    std::string recordingDeleteError;
     std::filesystem::path livePart;                   // the auto record part being recorded
     std::size_t recordingsSeen = 0;                   // to follow new ones (scroll to the end)
     std::uint64_t recordingsVersion = 0;              // +1 per rescan: the cached layout below
@@ -2862,6 +2869,136 @@ void loadRecording(AppState& app, const std::filesystem::path& folder)
                  " file(s)");
 }
 
+// --- A recording's name, notes and Delete (P21, SPEC-PLAY-08) ---------------
+std::string trimSpaces(const std::string& s);  // further down
+
+void openRecordingEdit(AppState& app, const minidaw::RecordingInfo& r, bool focusNote)
+{
+    app.recordingEdit = r.folder;
+    app.recordingEditName = r.notes.name;
+    app.recordingEditNote = r.notes.note;
+    app.recordingEditError = r.notesProblem.empty() ? std::string() : "Its notes could not be read: " + r.notesProblem;
+    app.recordingEditFocusNote = focusNote;
+    app.recordingEditFocus = true;
+}
+
+// Why a recording cannot be deleted now (empty: it can).
+std::string deleteRecordingBlocked(const AppState& app, const minidaw::RecordingInfo& r)
+{
+    if (app.session.recording() || !app.livePart.empty()) return "Not while recording (also not while auto record is on).";
+    if (app.audio.player().playing()) return "Stop playing first (its files may be open).";
+    if (app.renderTrack != 0) return "Not while a render runs (it writes into a take folder).";
+    (void)r;
+    return {};
+}
+
+void drawRecordingWindows(AppState& app)
+{
+    const float em = ImGui::GetFontSize();
+    // Name and note.
+    if (!app.recordingEdit.empty()) {
+        bool open = true;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(60 * em, FLT_MAX));
+        const std::string title = "Recording " + minidaw::pathToUtf8(app.recordingEdit.filename()) + "###recordingedit";
+        if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (app.recordingEditFocus && !app.recordingEditFocusNote) ImGui::SetKeyboardFocusHere();
+            ImGui::SetNextItemWidth(30 * em);
+            ImGui::InputText("Name", &app.recordingEditName);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Shown on the timeline; the folder keeps its date and time, so its place stays.");
+            }
+            ImGui::TextUnformatted("Note:");
+            if (app.recordingEditFocus && app.recordingEditFocusNote) ImGui::SetKeyboardFocusHere();
+            app.recordingEditFocus = false;
+            ImGui::InputTextMultiline("##note", &app.recordingEditNote, ImVec2(34 * em, 8 * ImGui::GetTextLineHeight()));
+            if (ImGui::Button("Save")) {
+                // Keep what else is in the file (marks made while recording, P22).
+                minidaw::RecordingNotes notes;
+                std::string err;
+                minidaw::loadRecordingNotes(app.recordingEdit, notes, err);
+                notes.name = trimSpaces(app.recordingEditName);
+                notes.note = app.recordingEditNote;
+                if (minidaw::saveRecordingNotes(app.recordingEdit, notes, err)) {
+                    app.log.info("Recording " + minidaw::pathToUtf8(app.recordingEdit) + ": name \"" + notes.name +
+                                 "\", note saved");
+                    app.recordingsDirty = true;
+                    open = false;
+                } else {
+                    app.recordingEditError = "Not saved: " + err;
+                    app.log.error(app.recordingEditError);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) open = false;
+            if (!app.recordingEditError.empty()) ImGui::TextWrapped("%s", app.recordingEditError.c_str());
+        }
+        ImGui::End();
+        if (!open) app.recordingEdit.clear();
+    }
+    // Delete: moved to the "deleted" folder after this question.
+    if (!app.recordingDelete.empty()) {
+        const auto it = std::find_if(app.recordings.begin(), app.recordings.end(),
+                                     [&](const minidaw::RecordingInfo& r) { return r.folder == app.recordingDelete; });
+        if (it == app.recordings.end()) {  // gone meanwhile
+            app.recordingDelete.clear();
+            return;
+        }
+        const minidaw::RecordingInfo rec = *it;
+        bool open = true;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(50 * em, FLT_MAX));
+        if (ImGui::Begin("Delete recording###recordingdelete", &open,
+                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("%s%s%s %s, %s long, %zu file(s).", rec.notes.name.c_str(), rec.notes.name.empty() ? "" : ": ",
+                               rec.autoPart ? "Auto record part" : "Record take",
+                               minidaw::clockLabel(rec.clock, true).c_str(), clockText(rec.seconds).c_str(),
+                               rec.files.size());
+            const std::filesystem::path target = activeTakesFolder(app) / "deleted";
+            ImGui::TextWrapped("It is moved to %s (not shown on the timeline; move it back to get it again).",
+                               minidaw::pathToUtf8(target).c_str());
+            std::string users;
+            for (const auto& t : app.tracks) {
+                if (minidaw::isInsideFolder(t.take, rec.folder)) users += (users.empty() ? "" : ", ") + t.name;
+            }
+            if (!users.empty()) ImGui::TextWrapped("These tracks play it and lose their take: %s.", users.c_str());
+            const std::string why = deleteRecordingBlocked(app, rec);
+            if (!why.empty()) ImGui::TextWrapped("%s", why.c_str());
+            minidaw::app::beginDisabled(!why.empty());
+            if (ImGui::Button("Delete")) {
+                std::filesystem::path movedTo;
+                std::string err;
+                if (minidaw::moveRecordingToDeleted(activeTakesFolder(app), rec.folder, movedTo, err)) {
+                    int cleared = 0;
+                    for (auto& t : app.tracks) {
+                        if (!minidaw::isInsideFolder(t.take, rec.folder)) continue;
+                        t.take.clear();
+                        t.takeStart = 0;
+                        refreshTakeLength(app, t);
+                        ++cleared;
+                    }
+                    app.log.info("Recording " + minidaw::pathToUtf8(rec.folder) + " moved to " + minidaw::pathToUtf8(movedTo) +
+                                 (cleared ? "; " + std::to_string(cleared) + " track(s) lost their take" : ""));
+                    app.timelineNote = (rec.notes.name.empty() ? minidaw::pathToUtf8(rec.folder.filename()) : rec.notes.name) +
+                                       " was moved to " + minidaw::pathToUtf8(movedTo) +
+                                       (cleared ? " (" + std::to_string(cleared) + " track(s) lost their take)." : ".");
+                    if (app.selectedRecording == rec.folder) app.selectedRecording.clear();
+                    if (app.recordingEdit == rec.folder) app.recordingEdit.clear();
+                    app.recordingsDirty = true;
+                    open = false;
+                } else {
+                    app.recordingDeleteError = "Not deleted: " + err;
+                    app.log.error(app.recordingDeleteError);
+                }
+            }
+            minidaw::app::endDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) open = false;
+            if (!app.recordingDeleteError.empty()) ImGui::TextWrapped("%s", app.recordingDeleteError.c_str());
+        }
+        ImGui::End();
+        if (!open) app.recordingDelete.clear();
+    }
+}
+
 void drawTimeline(AppState& app)
 {
     ImGui::SeparatorText("Timeline of recordings");
@@ -2923,7 +3060,14 @@ void drawTimeline(AppState& app)
     const float gapWidth = 6.0f * em;
     if (anyLive || app.layoutVersion != app.recordingsVersion || app.layoutPps != pps ||
         app.layoutMinWidth != minWidth || app.layoutGapWidth != gapWidth) {
-        app.timelineLayout = minidaw::layoutTimeline(recs, pps, 10.0, gapWidth, minWidth);
+        // A block with a name is as wide as its label (P21).
+        std::vector<double> widths(recs.size(), 0.0);
+        for (std::size_t i = 0; i < recs.size(); ++i) {
+            if (recs[i].notes.name.empty()) continue;
+            widths[i] = ImGui::CalcTextSize(("> " + recs[i].notes.name + " 00:00 00:00 REC").c_str()).x +
+                        2 * ImGui::GetStyle().FramePadding.x;
+        }
+        app.timelineLayout = minidaw::layoutTimeline(recs, pps, 10.0, gapWidth, minWidth, &widths);
         app.layoutVersion = app.recordingsVersion;
         app.layoutPps = pps;
         app.layoutMinWidth = minWidth;
@@ -2964,28 +3108,54 @@ void drawTimeline(AppState& app)
             const bool live = (!app.livePart.empty() && r.folder == app.livePart) ||
                               (recNormal && r.folder == app.session.folder());
             const bool playing = !app.previewFolder.empty() && r.folder == app.previewFolder;
-            // "21:50 0:07": start and length (minutes:seconds).
+            // "Chorus 21:50 0:07": its name (P21), start and length (minutes:seconds).
             const auto len = static_cast<int>(r.seconds + 0.5);
-            char label[96];
-            std::snprintf(label, sizeof label, "%s%s %d:%02d%s##%s", selected ? "> " : "",
-                          minidaw::clockLabel(r.clock, false).c_str(), len / 60, len % 60,
-                          live ? " REC" : playing ? " PLAY" : "", minidaw::pathToUtf8(r.folder).c_str());
+            char timeText[48];
+            std::snprintf(timeText, sizeof timeText, "%s %d:%02d%s", minidaw::clockLabel(r.clock, false).c_str(), len / 60,
+                          len % 60, live ? " REC" : playing ? " PLAY" : "");
+            const std::string label = std::string(selected ? "> " : "") +
+                                      (r.notes.name.empty() ? std::string() : r.notes.name + " ") + timeText + "##" +
+                                      minidaw::pathToUtf8(r.folder);
             ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(b.x), r.autoPart ? yAuto : yTakes));
             if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
-            if (ImGui::Button(label, ImVec2(static_cast<float>(b.width) - 2, rowH))) {
+            if (ImGui::Button(label.c_str(), ImVec2(static_cast<float>(b.width) - 2, rowH))) {
                 app.selectedRecording = r.folder;
             }
             if (selected) ImGui::PopStyleColor();
+            // Right-click: Rename, Notes, Delete (P21, SPEC-PLAY-08).
+            ImGui::PushID(minidaw::pathToUtf8(r.folder).c_str());  // not the label: it changes when selected
+            if (ImGui::BeginPopupContextItem("recording-menu")) {
+                app.selectedRecording = r.folder;
+                ImGui::TextUnformatted(timeText);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Rename...")) openRecordingEdit(app, r, false);
+                if (ImGui::MenuItem("Notes...")) openRecordingEdit(app, r, true);
+                const std::string why = deleteRecordingBlocked(app, r);
+                if (ImGui::MenuItem("Delete...", nullptr, false, why.empty())) {
+                    app.recordingDelete = r.folder;
+                    app.recordingDeleteError.clear();
+                }
+                if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", why.c_str());
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 doubleClicked = static_cast<int>(b.index);
             }
             if (ImGui::IsItemHovered()) {
                 std::string problems;  // files whose length could not be read (T11)
                 for (const auto& pr : r.problems) problems += "\nNot readable: " + pr;
-                ImGui::SetTooltip("%s\n%s, %.1f s, %zu file(s)%s%s\nClick: select. Double-click: play it.",
-                                  minidaw::pathToUtf8(r.folder.filename()).c_str(),
+                const std::string named = r.notes.name.empty() ? std::string() : r.notes.name + "\n";
+                std::string note = r.notes.note.substr(0, r.notes.note.find('\n'));  // the first line
+                if (note.size() > 80) note = note.substr(0, 80) + "...";
+                if (!note.empty()) note = "\nNote: " + note;
+                ImGui::SetTooltip("%s%s\n%s, %.1f s, %zu file(s)%s%s%s\nClick: select. Double-click: play it. "
+                                  "Right-click: rename, notes, delete.",
+                                  named.c_str(), minidaw::pathToUtf8(r.folder.filename()).c_str(),
                                   minidaw::clockLabel(r.clock, true).c_str(), r.seconds, r.files.size(),
-                                  live ? " (being recorded)" : "", problems.c_str());
+                                  live ? " (being recorded)" : "", problems.c_str(), note.c_str());
             }
         }
         ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(layout.width) + pad, yTakes + rowH));
@@ -3009,8 +3179,11 @@ void drawTimeline(AppState& app)
     if (sel == recs.end()) {
         ImGui::TextUnformatted("Click a recording to select it; double-click to play it.");
     } else {
-        ImGui::Text("%s: %s, %s long", sel->autoPart ? "Auto record part" : "Record take",
+        ImGui::Text("%s%s%s: %s, %s long", sel->notes.name.empty() ? "" : sel->notes.name.c_str(),
+                    sel->notes.name.empty() ? "" : " - ", sel->autoPart ? "Auto record part" : "Record take",
                     minidaw::clockLabel(sel->clock, true).c_str(), clockText(sel->seconds).c_str());
+        if (!sel->notes.note.empty()) ImGui::TextWrapped("Note: %s", sel->notes.note.c_str());
+        if (!sel->notesProblem.empty()) ImGui::TextWrapped("Its notes could not be read: %s", sel->notesProblem.c_str());
         const bool playingThis = !app.previewFolder.empty() && app.previewFolder == sel->folder &&
                                  app.audio.player().playing();
         minidaw::app::beginDisabled(recNormal);
@@ -3035,6 +3208,17 @@ void drawTimeline(AppState& app)
                               : app.renderTrack != 0  ? "\nNot while a render runs."
                                                       : "");
         }
+        minidaw::app::endDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Name and notes...")) openRecordingEdit(app, *sel, false);
+        ImGui::SameLine();
+        const std::string why = deleteRecordingBlocked(app, *sel);
+        minidaw::app::beginDisabled(!why.empty());
+        if (ImGui::Button("Delete...")) {
+            app.recordingDelete = sel->folder;
+            app.recordingDeleteError.clear();
+        }
+        if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
         minidaw::app::endDisabled();
         ImGui::TextWrapped("Folder: %s", minidaw::pathToUtf8(sel->folder).c_str());
         std::string files;
@@ -4288,6 +4472,7 @@ int runGui(AppState& app)
         drawProjectDialog(app);
         drawInstrumentsWindow(app);
         drawSavePresetWindow(app);
+        drawRecordingWindows(app);
         updateFolderChooser(app);
 
         minidaw::app::drawStateCues(app.palette);

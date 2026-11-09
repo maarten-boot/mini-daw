@@ -154,6 +154,8 @@ void addFolder(std::vector<RecordingInfo>& out, const std::filesystem::path& fol
         r.files.push_back(path);
         r.fileSizes.push_back(size);
     }
+    // Name, note and marks: small, read every time (they change without the files changing).
+    if (std::string err; !loadRecordingNotes(folder, r.notes, err)) r.notesProblem = err;
     // Read before and unchanged: keep its lengths (T4).
     const auto known = previous.find(folder);
     if (known != previous.end() && known->second->files == r.files && known->second->fileSizes == r.fileSizes) {
@@ -233,7 +235,7 @@ std::string clockLabel(std::int64_t seconds, bool withDate)
 }
 
 TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recs, double pps, double maxRealGap, double gapWidth,
-                              double minWidth)
+                              double minWidth, const std::vector<double>* minWidths)
 {
     TimelineLayout l;
     double x = 0.0;          // the end of what is drawn so far (both rows)
@@ -256,7 +258,8 @@ TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recs, double pps
                 bx = std::max(lastX + (start - static_cast<double>(recs[i - 1].start)) * pps, lastX);
             }
         }
-        const double w = std::max(minWidth, r.seconds * pps);
+        const double least = minWidths != nullptr && i < minWidths->size() ? std::max(minWidth, (*minWidths)[i]) : minWidth;
+        const double w = std::max(least, r.seconds * pps);
         double& row = rowEnd[r.autoPart ? 1 : 0];
         bx = std::max(bx, row);  // never on top of the row's block before it (T10)
         l.blocks.push_back({i, bx, w});

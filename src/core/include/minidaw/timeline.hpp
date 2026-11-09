@@ -4,6 +4,7 @@
 // auto record parts ("auto/<date time>") in the takes folder, in time order,
 // with long gaps between them drawn short; loading one onto the tracks.
 
+#include "minidaw/recording_notes.hpp"
 #include "minidaw/track.hpp"
 
 #include <cstdint>
@@ -23,6 +24,8 @@ struct RecordingInfo {
     std::vector<std::filesystem::path> files;  // "NN-name.wav" / ".mid", by name
     std::vector<std::uintmax_t> fileSizes;     // with `files`: a folder read before is reused if unchanged
     std::vector<std::string> problems;         // files whose length could not be read
+    RecordingNotes notes;                      // name, note, marks (recording.json; P21, P22)
+    std::string notesProblem;                  // why recording.json could not be read
 };
 
 // Start time from a folder name: "take-YYYYMMDD-HHMMSS" or (auto part)
@@ -63,8 +66,11 @@ struct TimelineLayout {
 // seconds; a longer gap becomes a marker of `gapWidth` pixels labelled with
 // its real length. Blocks are at least `minWidth` wide; a block never starts
 // before the end of the one before it in the same row (auto parts / takes).
+// `minWidths` (optional, one per recording): a wider minimum for that block
+// (its label with a name, P21).
 TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recordings, double pixelsPerSecond,
-                              double maxRealGap, double gapWidth, double minWidth);
+                              double maxRealGap, double gapWidth, double minWidth,
+                              const std::vector<double>* minWidths = nullptr);
 
 // "+45 s", "+12 min", "+2 h 05 min", "+3 days".
 std::string gapLabel(double seconds);

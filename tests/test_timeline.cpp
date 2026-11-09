@@ -1,6 +1,7 @@
 // Timeline of recordings (SPEC-PLAY-07, P17): T-PLAY-18.
 
 #include "minidaw/path_util.hpp"
+#include "minidaw/project.hpp"
 #include "minidaw/smf.hpp"
 #include "minidaw/timeline.hpp"
 #include "minidaw/wav.hpp"
@@ -261,4 +262,119 @@ TEST_CASE("T-PLAY-18: loading a recording onto the tracks keeps them", "[timelin
     test::TempDir empty;
     CHECK(assignTakeFolder(tracks, empty.path(), err) == 0);
     CHECK_FALSE(err.empty());
+}
+
+namespace {
+void wavFile(const std::filesystem::path& p, unsigned frames)
+{
+    std::string err;
+    std::filesystem::create_directories(p.parent_path());
+    WavWriter w;
+    REQUIRE(w.open(p, 48000, 1, err));
+    REQUIRE(w.write(nullptr, frames, err));
+    REQUIRE(w.close(err));
+}
+} // namespace
+
+TEST_CASE("T-PLAY-19: a recording's name and note are kept beside it and shown", "[timeline][T-PLAY-19]")
+{
+    test::TempDir dir;
+    std::string err;
+    const auto take = dir / "take-20261109-143000";
+    wavFile(take / "01-Gtr.wav", 4800);
+
+    RecordingNotes n;
+    REQUIRE(loadRecordingNotes(take, n, err));  // none yet: empty, fine
+    CHECK(n.empty());
+    n.name = "Chorus — take 2";
+    n.note = "line one\nline \"two\"";
+    n.marks.push_back({83.25, "good part"});
+    REQUIRE(saveRecordingNotes(take, n, err));
+    RecordingNotes back;
+    REQUIRE(loadRecordingNotes(take, back, err));
+    CHECK(back.name == n.name);
+    CHECK(back.note == n.note);
+    REQUIRE(back.marks.size() == 1);
+    CHECK(back.marks[0].seconds == Catch::Approx(83.25));
+    CHECK(back.marks[0].text == "good part");
+
+    // The timeline shows it; the folder keeps its name (and its place in time).
+    auto recs = listRecordings(dir.path());
+    REQUIRE(recs.size() == 1);
+    CHECK(recs[0].notes.name == n.name);
+    CHECK(recs[0].folder == take);
+    // Changed notes are read again, also when the files are the same (no reading again of the WAV).
+    n.name = "Verse";
+    REQUIRE(saveRecordingNotes(take, n, err));
+    recs = listRecordings(dir.path(), recs);
+    CHECK(recs[0].notes.name == "Verse");
+
+    // Empty notes remove the file.
+    REQUIRE(saveRecordingNotes(take, RecordingNotes{}, err));
+    CHECK_FALSE(std::filesystem::exists(take / kRecordingNotesFile));
+
+    // Damaged, another file, newer version: an error, empty notes, the recording still listed.
+    for (const char* text : {"{not json", R"({"format":"other"})", R"({"format":"mini-daw recording","version":9})"}) {
+        std::ofstream(take / kRecordingNotesFile) << text;
+        CHECK_FALSE(loadRecordingNotes(take, back, err));
+        CHECK(back.empty());
+    }
+    recs = listRecordings(dir.path());
+    REQUIRE(recs.size() == 1);
+    CHECK_FALSE(recs[0].notesProblem.empty());
+    // Wrong-typed fields are left out, the rest is read.
+    std::ofstream(take / kRecordingNotesFile)
+        << R"({"format":"mini-daw recording","version":1,"name":7,"note":"ok","marks":[{"seconds":"x"},{"seconds":-1},{"seconds":2,"text":"t"}]})";
+    REQUIRE(loadRecordingNotes(take, back, err));
+    CHECK(back.name.empty());
+    CHECK(back.note == "ok");
+    CHECK(back.marks.size() == 1);
+}
+
+TEST_CASE("T-PLAY-19: deleting a recording moves it to 'deleted', out of the timeline", "[timeline][T-PLAY-19]")
+{
+    test::TempDir dir;
+    std::string err;
+    const auto take = dir / "take-20261109-143000";
+    const auto part = dir / "auto" / "2026-11-09 14-35-00";
+    wavFile(take / "01-Gtr.wav", 4800);
+    wavFile(part / "01-Gtr.wav", 4800);
+    REQUIRE(listRecordings(dir.path()).size() == 2);
+
+    CHECK(isInsideFolder(take / "01-Gtr.wav", take));
+    CHECK_FALSE(isInsideFolder(dir / "take-20261109-143000x" / "01-Gtr.wav", take));
+    CHECK_FALSE(isInsideFolder(take, take));
+
+    std::filesystem::path to;
+    REQUIRE(moveRecordingToDeleted(dir.path(), take, to, err));
+    CHECK(to == dir.path() / "deleted" / "take-20261109-143000");
+    CHECK(std::filesystem::exists(to / "01-Gtr.wav"));
+    REQUIRE(moveRecordingToDeleted(dir.path(), part, to, err));
+    CHECK(to == dir.path() / "deleted" / "auto" / "2026-11-09 14-35-00");
+    CHECK(listRecordings(dir.path()).empty());
+
+    // The same name deleted again: "-2".
+    wavFile(take / "01-Gtr.wav", 4800);
+    REQUIRE(moveRecordingToDeleted(dir.path(), take, to, err));
+    CHECK(to.filename() == "take-20261109-143000-2");
+
+    // Not a recording of this takes folder, or gone: refused.
+    CHECK_FALSE(moveRecordingToDeleted(dir.path(), dir / "elsewhere" / "take-20261109-150000", to, err));
+    std::filesystem::create_directories(dir / "other" / "take-20261109-150000");
+    CHECK_FALSE(moveRecordingToDeleted(dir.path(), dir / "other" / "take-20261109-150000", to, err));
+}
+
+TEST_CASE("T-PLAY-19: a block with a name can be wider than the others", "[timeline][T-PLAY-19]")
+{
+    std::vector<RecordingInfo> recs(2);
+    recs[0].start = 0;
+    recs[0].seconds = 1.0;
+    recs[1].start = 5;
+    recs[1].seconds = 1.0;
+    const std::vector<double> widths = {200.0, 0.0};
+    const auto l = layoutTimeline(recs, 4.0, 10.0, 50.0, 80.0, &widths);
+    REQUIRE(l.blocks.size() == 2);
+    CHECK(l.blocks[0].width == 200.0);
+    CHECK(l.blocks[1].width == 80.0);
+    CHECK(l.blocks[1].x >= l.blocks[0].x + 200.0);  // never starts inside the wider one
 }

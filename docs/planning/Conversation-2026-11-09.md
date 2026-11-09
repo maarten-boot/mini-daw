@@ -38,3 +38,10 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 5. CI of `b5f96c2`
 > pushed it, check the CI run / commit the CI log lines
 - Run 42636015090 green (Linux 193/193, Windows 194/194); both builds checked, then in `dist/`; `dist/TESTS.txt` has T-RUN-02 (starting twice) on top, then the PL2 and PL1 tests still open.
+
+## 6. P21: rename, notes and delete on the timeline
+> yes do P21, linux editor after P23
+- Plan: P24 (the Linux plugin editor) after P23.
+- Core: `recording_notes` (name, note, marks in `recording.json` in the recording's folder; `moveRecordingToDeleted` to `deleted/[auto/]`); the timeline reads the notes with each recording; a block can be wider for its name.
+- GUI: right-click menu on a block (Rename, Notes, Delete), Name and notes window, Delete question naming the tracks that lose their take; Delete not while recording, playing or rendering. Found in the GUI check: the menu closed at once (its ID came from the label, which changes when selected), and a named block cut its label; both fixed.
+- Spec v0.46 (SPEC-PLAY-08), T-PLAY-19/20, README. Linux 196/196, Wine 195/195; GUI on Xvfb.
