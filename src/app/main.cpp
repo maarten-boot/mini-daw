@@ -99,21 +99,29 @@ struct AppState {
         std::function<void()> work;
     };
     std::optional<BusyJob> busy;
-    float trackTableExtra = 0.0f;
+    float trackTableExtra = 0.0f;  // track table height the hand count missed (crosscheck #15, W8)
 
     // Presets of a track's instrument (PL2, SPEC-VST-07a): read when its menu opens or
     // < / > is used, for one track and instrument at a time.
     struct PresetMenu {
         int track = 0;
         std::uint64_t serial = 0;  // the instrument it was read for
+        double readAt = 0.0;       // ImGui time of the reading (< / > read again after 3 s, X9)
         minidaw::Vst3Instrument::Programs programs;
-        std::vector<minidaw::PresetFileEntry> files;
-        bool truncated = false;
+        minidaw::PresetListing listing;
+        std::vector<minidaw::PresetChoice> choices;  // programs, then files
         minidaw::PresetFolders folders;
     } presetMenu;
-    int savePresetTrack = 0;  // the Save preset window, for this track (0 = closed)
+    std::map<int, std::string> presetIds;  // per track: the entry chosen last (this session; X2)
+    // The Save preset window: for this track and instrument (0 = closed).
+    int savePresetTrack = 0;
+    std::uint64_t savePresetSerial = 0;
+    minidaw::PresetFolders savePresetFolders;
     std::string savePresetName;
-    std::string savePresetError;  // track table height the hand count missed (crosscheck #15, W8)
+    std::string savePresetFor;  // the name the file below was made for (X10: not every frame)
+    std::filesystem::path savePresetFile;
+    bool savePresetExists = false;
+    std::string savePresetError;
 
     std::filesystem::path configPath;
     minidaw::AppConfig config;
@@ -3039,6 +3047,23 @@ minidaw::Vst3Instrument* trackInstrument(AppState& app, int number)
     return it != app.instruments.end() && it->second && it->second->loaded() ? it->second.get() : nullptr;
 }
 
+// Runs `work` on a track's instrument while the audio thread does not use it: taken
+// out of the rack (which waits until the audio thread lets go) and put back after,
+// as a project's state is set before the rack has the instrument (crosscheck #16, X1).
+// The instrument is silent meanwhile.
+bool withInstrumentOutOfRack(AppState& app, int number, const std::function<void(minidaw::Vst3Instrument&)>& work)
+{
+    const auto it = app.instruments.find(number);
+    if (it == app.instruments.end() || !it->second) return false;
+    std::unique_ptr<minidaw::Vst3Instrument> inst = std::move(it->second);
+    app.instruments.erase(it);
+    syncRack(app, true);
+    work(*inst);
+    app.instruments[number] = std::move(inst);
+    syncRack(app, true);
+    return true;
+}
+
 // Reads the programs and preset files of a track's instrument (again if `force`).
 void readPresets(AppState& app, const minidaw::Track& t, bool force)
 {
@@ -3050,63 +3075,72 @@ void readPresets(AppState& app, const minidaw::Track& t, bool force)
     m = AppState::PresetMenu{};
     m.track = t.number;
     m.serial = inst->serial();
+    m.readAt = ImGui::GetTime();
     inst->programs(m.programs);
     m.folders = minidaw::presetFolders(inst->vendor(), inst->name(), inst->modulePath());
-    m.files = minidaw::listPresetFiles(m.folders, 2000, m.truncated);
+    m.listing = minidaw::listPresetFiles(m.folders, 2000);
+    m.choices = minidaw::presetChoices(m.programs.names, m.listing.files);
     if (first) {  // what this plugin offers, once per load (for questions about a plugin)
         std::string folders;
         for (const auto& f : m.folders.all) folders += (folders.empty() ? "" : ", ") + minidaw::pathToUtf8(f);
         app.log.info("Presets of " + inst->name() + " (" + inst->vendor() + "): " +
                      std::to_string(m.programs.names.size()) + " program(s)" +
                      (m.programs.listName.empty() ? "" : " in list '" + m.programs.listName + "'") + ", " +
-                     std::to_string(m.files.size()) + (m.truncated ? "+" : "") + " preset file(s) in " + folders);
+                     std::to_string(m.listing.files.size()) + (m.listing.moreFiles ? "+" : "") +
+                     " preset file(s) in " + folders);
     }
 }
 
-std::string presetFileLabel(const minidaw::PresetFileEntry& f)
+// The menu's current entry for a track: the one chosen last, else (nothing chosen here)
+// the plugin's own current program (X2, X11).
+int currentPresetChoice(AppState& app, const minidaw::Track& t)
 {
-    return (f.group.empty() ? std::string() : f.group + "/") + f.name;
+    const auto id = app.presetIds.find(t.number);
+    minidaw::Vst3Instrument* inst = trackInstrument(app, t.number);
+    const int program = t.instrumentPreset.empty() && inst != nullptr ? inst->currentProgram() : -1;
+    return minidaw::findPresetChoice(app.presetMenu.choices, id == app.presetIds.end() ? std::string() : id->second,
+                                     t.instrumentPreset, program);
 }
 
-// Programs first, then files: the order of the menu and of < / >.
-std::vector<std::string> presetLabels(const AppState::PresetMenu& m)
-{
-    std::vector<std::string> labels = m.programs.names;
-    for (const auto& f : m.files) labels.push_back(presetFileLabel(f));
-    return labels;
-}
-
-// Choose entry `index` of presetLabels() for track `number`. A program is set at once;
-// a file is loaded through startBusy (a plugin may take a while).
+// Choose entry `index` of the menu for track `number`. A program is set at once; a
+// file is loaded through startBusy (a plugin may take a while), out of the rack (X1).
+// Allowed while recording (like a knob in the plugin); the log says so (X6).
 void choosePreset(AppState& app, int number, std::size_t index)
 {
     minidaw::Track* t = findTrack(app, number);
     minidaw::Vst3Instrument* inst = trackInstrument(app, number);
-    if (t == nullptr || inst == nullptr) return;
     const auto& m = app.presetMenu;
+    if (t == nullptr || inst == nullptr || index >= m.choices.size()) return;
+    const minidaw::PresetChoice choice = m.choices[index];
+    const std::string during = app.session.recording() ? " (while recording)" : "";
     std::string error;
     if (index < m.programs.names.size()) {
         if (inst->selectProgram(static_cast<int>(index), error)) {
-            t->instrumentPreset = m.programs.names[index];
-            app.log.info("Track " + std::to_string(number) + ": program " + t->instrumentPreset);
+            t->instrumentPreset = choice.label;
+            app.presetIds[number] = choice.id;
+            app.log.info("Track " + std::to_string(number) + ": program " + choice.label + during);
         } else {
             app.log.error("Track " + std::to_string(number) + ": " + error);
         }
         return;
     }
-    index -= m.programs.names.size();
-    if (index >= m.files.size()) return;
-    const minidaw::PresetFileEntry file = m.files[index];
-    startBusy(app, "Loading preset " + file.name, [&app, number, file] {
+    const minidaw::PresetFileEntry file = m.listing.files[index - m.programs.names.size()];
+    startBusy(app, "Loading preset " + file.name, [&app, number, file, choice, during] {
         minidaw::Track* track = findTrack(app, number);
-        minidaw::Vst3Instrument* instrument = trackInstrument(app, number);
-        if (track == nullptr || instrument == nullptr) return;
-        std::string err;
-        if (instrument->loadPreset(file.path, err)) {
-            track->instrumentPreset = presetFileLabel(file);
-            app.log.info("Track " + std::to_string(number) + ": preset " + minidaw::pathToUtf8(file.path));
+        if (track == nullptr || trackInstrument(app, number) == nullptr) return;
+        bool ok = false;
+        std::string err, warning;
+        withInstrumentOutOfRack(app, number, [&](minidaw::Vst3Instrument& instrument) {
+            ok = instrument.loadPreset(file.path, err, &warning);
+        });
+        const std::string where = "Track " + std::to_string(number) + ": preset ";
+        if (ok) {
+            track->instrumentPreset = choice.label;
+            app.presetIds[number] = choice.id;
+            app.log.info(where + minidaw::pathToUtf8(file.path) + during);
+            if (!warning.empty()) app.log.warning(where + file.name + ": " + warning);
         } else {
-            app.log.error("Track " + std::to_string(number) + ": preset " + file.name + " not loaded: " + err);
+            app.log.error(where + file.name + " not loaded: " + err);
         }
     });
 }
@@ -3126,14 +3160,11 @@ void drawPresetControls(AppState& app, minidaw::Track& t)
     for (int step : {-1, +1}) {
         ImGui::SameLine();
         if (ImGui::SmallButton(step < 0 ? "<##prevpreset" : ">##nextpreset")) {
-            readPresets(app, t, false);
-            const auto labels = presetLabels(app.presetMenu);
-            if (!labels.empty()) {
-                const auto at = std::find(labels.begin(), labels.end(), t.instrumentPreset);
-                const std::ptrdiff_t n = static_cast<std::ptrdiff_t>(labels.size());
-                std::ptrdiff_t i = at == labels.end() ? (step < 0 ? n - 1 : 0) : (at - labels.begin()) + step;
-                i = (i % n + n) % n;  // wraps round
-                choosePreset(app, t.number, static_cast<std::size_t>(i));
+            // Read again when it is older than a few seconds: files may have come or gone (X9).
+            readPresets(app, t, app.presetMenu.track != t.number || ImGui::GetTime() - app.presetMenu.readAt > 3.0);
+            const int next = minidaw::stepPresetChoice(app.presetMenu.choices.size(), currentPresetChoice(app, t), step);
+            if (next >= 0) {
+                choosePreset(app, t.number, static_cast<std::size_t>(next));
             } else {
                 app.log.info("Track " + std::to_string(t.number) + ": the instrument has no presets to step through");
             }
@@ -3142,46 +3173,33 @@ void drawPresetControls(AppState& app, minidaw::Track& t)
     }
     if (!ImGui::BeginPopup(popup.c_str())) return;
     const auto& m = app.presetMenu;
-    // Before a preset is chosen here, the plugin's own current program is marked.
-    minidaw::Vst3Instrument* inst = trackInstrument(app, t.number);
-    const int current = t.instrumentPreset.empty() && inst != nullptr ? inst->currentProgram() : -1;
+    const int current = currentPresetChoice(app, t);  // one entry is marked (X2)
     const std::string now = !t.instrumentPreset.empty() ? t.instrumentPreset
-                            : current >= 0 && current < static_cast<int>(m.programs.names.size())
-                                ? m.programs.names[static_cast<std::size_t>(current)] + " (the plugin's current program)"
-                                : std::string("no preset chosen here yet");
+                            : current >= 0 ? m.choices[static_cast<std::size_t>(current)].label +
+                                                 " (the plugin's current program)"
+                                           : std::string("no preset chosen here yet");
     ImGui::Text("Track %d: %s", t.number, now.c_str());
-    const float lines = static_cast<float>(std::min<std::size_t>(m.programs.names.size() + m.files.size() + 3, 20));
+    const float lines = static_cast<float>(std::min<std::size_t>(m.choices.size() + 4, 20));
     if (ImGui::BeginChild("list", ImVec2(28 * ImGui::GetFontSize(), lines * ImGui::GetTextLineHeightWithSpacing()))) {
-        std::size_t index = 0;
-        if (!m.programs.names.empty()) {
-            ImGui::SeparatorText(("Programs" + (m.programs.listName.empty() ? "" : ": " + m.programs.listName)).c_str());
-            for (const auto& name : m.programs.names) {
-                ImGui::PushID(static_cast<int>(index));
-                const bool selected = current >= 0 ? static_cast<int>(index) == current : name == t.instrumentPreset;
-                if (minidaw::app::choice(name.c_str(), selected)) {
-                    choosePreset(app, t.number, index);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopID();
-                ++index;
+        for (std::size_t index = 0; index < m.choices.size(); ++index) {
+            if (index == 0 && !m.programs.names.empty()) {
+                ImGui::SeparatorText(("Programs" + (m.programs.listName.empty() ? "" : ": " + m.programs.listName)).c_str());
             }
-        }
-        if (!m.files.empty()) {
-            ImGui::SeparatorText("Preset files");
-            for (const auto& f : m.files) {
-                const std::string label = presetFileLabel(f) + (f.user ? "  (mine)" : "");
-                ImGui::PushID(static_cast<int>(index));
-                if (minidaw::app::choice(label.c_str(), presetFileLabel(f) == t.instrumentPreset)) {
-                    choosePreset(app, t.number, index);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", minidaw::pathToUtf8(f.path).c_str());
-                ImGui::PopID();
-                ++index;
+            const bool isFile = index >= m.programs.names.size();
+            if (index == m.programs.names.size() && isFile) ImGui::SeparatorText("Preset files");
+            const minidaw::PresetFileEntry* file = isFile ? &m.listing.files[index - m.programs.names.size()] : nullptr;
+            const std::string label = m.choices[index].label + (file != nullptr && file->user ? "  (mine)" : "");
+            ImGui::PushID(static_cast<int>(index));
+            if (minidaw::app::choice(label.c_str(), static_cast<int>(index) == current)) {
+                choosePreset(app, t.number, index);
+                ImGui::CloseCurrentPopup();
             }
-            if (m.truncated) ImGui::TextUnformatted("Only the first 2000 preset files are listed.");
+            if (file != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", minidaw::pathToUtf8(file->path).c_str());
+            ImGui::PopID();
         }
-        if (m.programs.names.empty() && m.files.empty()) {
+        if (m.listing.moreFiles) ImGui::TextUnformatted("Only the first 2000 preset files are listed.");
+        if (m.listing.searchCut) ImGui::TextWrapped("A preset folder is very large: it was not searched to the end.");
+        if (m.choices.empty()) {
             ImGui::TextWrapped("This instrument publishes no programs, and there are no preset files in its "
                                "preset folders. Its own window (Edit) may have its presets; with Save preset... "
                                "you keep a sound of your own.");
@@ -3189,18 +3207,35 @@ void drawPresetControls(AppState& app, minidaw::Track& t)
     }
     ImGui::EndChild();
     ImGui::Separator();
+    minidaw::app::beginDisabled(m.folders.user.empty());
     if (ImGui::Button("Save preset...")) {
+        minidaw::Vst3Instrument* inst = trackInstrument(app, t.number);
         app.savePresetTrack = t.number;
+        app.savePresetSerial = inst != nullptr ? inst->serial() : 0;
+        app.savePresetFolders = m.folders;
         app.savePresetName = t.instrumentPreset.empty() ? t.instrumentName : t.instrumentPreset;
         const std::size_t slash = app.savePresetName.rfind('/');
         if (slash != std::string::npos) app.savePresetName = app.savePresetName.substr(slash + 1);
+        app.savePresetFor = "\x01";  // made at the first frame of the window
         app.savePresetError.clear();
         ImGui::CloseCurrentPopup();
     }
+    minidaw::app::endDisabled();
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 28 * ImGui::GetFontSize());
-    ImGui::TextWrapped("Saved in %s", minidaw::pathToUtf8(m.folders.user).c_str());
+    if (m.folders.user.empty()) {  // X4
+        ImGui::TextWrapped("No folder for your own presets: the Documents (Windows) or home folder is not known.");
+    } else {
+        ImGui::TextWrapped("Saved in %s", minidaw::pathToUtf8(m.folders.user).c_str());
+    }
     ImGui::PopTextWrapPos();
     ImGui::EndPopup();
+}
+
+std::string trimSpaces(const std::string& s)
+{
+    const auto a = s.find_first_not_of(" \t");
+    if (a == std::string::npos) return {};
+    return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
 // Save preset: the instrument's current sound as a .vstpreset in the user's preset folder.
@@ -3209,7 +3244,8 @@ void drawSavePresetWindow(AppState& app)
     if (app.savePresetTrack == 0) return;
     minidaw::Track* t = findTrack(app, app.savePresetTrack);
     minidaw::Vst3Instrument* inst = trackInstrument(app, app.savePresetTrack);
-    if (t == nullptr || inst == nullptr) {  // the track or its instrument went away
+    // The window belongs to the instrument it was opened for: another (or a reloaded) one closes it (X10).
+    if (t == nullptr || inst == nullptr || inst->serial() != app.savePresetSerial) {
         app.savePresetTrack = 0;
         return;
     }
@@ -3220,19 +3256,28 @@ void drawSavePresetWindow(AppState& app)
         ImGui::Text("Track %d: %s", t->number, inst->name().c_str());
         ImGui::SetNextItemWidth(24 * em);
         const bool enter = ImGui::InputText("Name", &app.savePresetName, ImGuiInputTextFlags_EnterReturnsTrue);
-        const minidaw::PresetFolders folders = minidaw::presetFolders(inst->vendor(), inst->name(), inst->modulePath());
-        const std::string name = minidaw::cleanPathText(app.savePresetName);
-        const std::filesystem::path file = minidaw::userPresetPath(folders, name);
-        std::error_code ec;
-        const bool exists = !name.empty() && std::filesystem::exists(file, ec);
-        ImGui::TextWrapped("File: %s", minidaw::pathToUtf8(file).c_str());
-        if (exists) ImGui::TextUnformatted("A preset with this name exists: Save replaces it.");
-        minidaw::app::beginDisabled(name.empty() || folders.user.empty());
-        if (ImGui::Button(exists ? "Replace" : "Save") || (enter && !name.empty())) {
+        const std::string name = trimSpaces(app.savePresetName);  // X3: no path cleaning
+        if (name != app.savePresetFor) {  // the file and whether it exists: only when the name changes (X10)
+            app.savePresetFor = name;
+            app.savePresetFile = name.empty() ? std::filesystem::path() : minidaw::userPresetPath(app.savePresetFolders, name);
+            std::error_code ec;
+            app.savePresetExists = !name.empty() && std::filesystem::exists(app.savePresetFile, ec);
+        }
+        if (!name.empty()) ImGui::TextWrapped("File: %s", minidaw::pathToUtf8(app.savePresetFile).c_str());
+        if (app.savePresetExists) ImGui::TextUnformatted("A preset with this name exists: Save replaces it.");
+        const bool canSave = !name.empty() && !app.savePresetFolders.user.empty();  // one rule for button and Enter (X4)
+        minidaw::app::beginDisabled(!canSave);
+        const bool clicked = ImGui::Button(app.savePresetExists ? "Replace" : "Save");
+        minidaw::app::endDisabled();
+        if (canSave && (clicked || enter)) {
             std::string err;
-            if (inst->savePreset(file, err)) {
-                t->instrumentPreset = name;
-                app.log.info("Track " + std::to_string(t->number) + ": preset saved as " + minidaw::pathToUtf8(file));
+            if (inst->savePreset(app.savePresetFile, err)) {
+                // The label is the file's name, so the menu finds it again (X3).
+                const std::string label = minidaw::pathToUtf8(app.savePresetFile.stem());
+                t->instrumentPreset = label;
+                app.presetIds[t->number] = "f:" + minidaw::pathToUtf8(app.savePresetFile);
+                app.log.info("Track " + std::to_string(t->number) + ": preset saved as " +
+                             minidaw::pathToUtf8(app.savePresetFile));
                 app.presetMenu = AppState::PresetMenu{};  // read again next time
                 open = false;
             } else {
@@ -3240,7 +3285,6 @@ void drawSavePresetWindow(AppState& app)
                 app.log.error(app.savePresetError);
             }
         }
-        minidaw::app::endDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) open = false;
         if (!app.savePresetError.empty()) ImGui::TextWrapped("%s", app.savePresetError.c_str());

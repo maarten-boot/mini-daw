@@ -52,12 +52,51 @@ struct PresetFileEntry {
 };
 
 // Every .vstpreset in the folders (and their subfolders), sorted by folder
-// (user first), group and name (case-insensitive). At most `limit` files;
-// `truncated` tells whether there were more. Unreadable folders are skipped.
-std::vector<PresetFileEntry> listPresetFiles(const PresetFolders& folders, std::size_t limit, bool& truncated);
+// (user first), group and name (case-insensitive). At most `limit` files
+// (`moreFiles` if there were more); each folder is searched through at most
+// `searchLimit` entries (`searchCut` if one was larger). Unreadable folders
+// are skipped.
+struct PresetListing {
+    std::vector<PresetFileEntry> files;
+    bool moreFiles = false;
+    bool searchCut = false;
+};
+PresetListing listPresetFiles(const PresetFolders& folders, std::size_t limit, std::size_t searchLimit = 50000);
 
-// Where "Save preset" writes a preset called `name` (made safe for a file name).
+// A preset or folder name made safe for a file name on every system (crosscheck #16,
+// X3 / X8): safeFileName, Windows device names (CON, NUL, COM1 …) get a "_" in front,
+// at most 120 bytes (whole UTF-8 characters). "Preset" when nothing is left.
+std::string safePresetName(std::string_view name);
+// Where "Save preset" writes a preset called `name`: <user folder>/<safePresetName>.vstpreset.
 std::filesystem::path userPresetPath(const PresetFolders& folders, const std::string& name);
+
+// --- The menu's entries: programs first, then files (crosscheck #16, X2 / X11) ---
+// Each entry has an identity ("p:<index>" for a program, "f:<path>" for a file)
+// and a label ("name", or "group/name" for a file).
+struct PresetChoice {
+    std::string id;
+    std::string label;
+};
+std::vector<PresetChoice> presetChoices(const std::vector<std::string>& programs,
+                                        const std::vector<PresetFileEntry>& files);
+// The current entry: by identity; else by label (the first with it); else, when
+// nothing was chosen (id and label empty), the plugin's current program; else -1.
+int findPresetChoice(const std::vector<PresetChoice>& choices, const std::string& id, const std::string& label,
+                     int currentProgram);
+// One step from `current` (-1: none) by +1 / -1, wrapping round; from none, +1 gives
+// the first and -1 the last. -1 when there are no entries.
+int stepPresetChoice(std::size_t count, int current, int step);
+
+// --- Program-change parameter arithmetic (crosscheck #16, X5) ---------------
+// How many steps the parameter has: its stepCount, or (a continuous one) the
+// list's size - 1. Index <-> normalized value; how many entries are reachable.
+int programSteps(int stepCount, std::size_t listSize);
+double programNormalized(int index, int steps);
+int programIndex(double normalized, int steps);
+std::size_t reachablePrograms(int steps, std::size_t listSize);
+
+// True when `text` is 32 hexadecimal characters (a class ID in a .vstpreset).
+bool isClassIdText(std::string_view text);
 
 // Whole files, UTF-8 safe paths. writeFileReplacing writes a temporary file
 // next to it and renames it over the old one (a crash leaves old or new).

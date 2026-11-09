@@ -304,6 +304,7 @@ TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[p
     t.instrumentName = "Synth";
     t.instrumentState = std::string("\x01\x02\x00\xfe", 4);
     t.instrumentControllerState = "ctrl";
+    t.instrumentPreset = "Bass/Deep";  // PL2: the preset chosen last, for display
     d.tracks.push_back(t);
     REQUIRE(saveProject(dir.path() / "P", d, err));
     ProjectData back;
@@ -315,6 +316,7 @@ TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[p
     CHECK(back.tracks[0].instrumentModule == t.instrumentModule);
     CHECK(back.tracks[0].instrumentState == t.instrumentState);
     CHECK(back.tracks[0].instrumentControllerState == "ctrl");
+    CHECK(back.tracks[0].instrumentPreset == "Bass/Deep");
 
     // A damaged state: a warning, the instrument stays (with its defaults).
     const std::string text = R"({"format":"mini-daw project","version":1,"tracks":[{"number":1,"name":"K","kind":"midi",
@@ -335,6 +337,16 @@ TEST_CASE("T-VST-15: instrument and its state saved in the project; base64", "[p
     CHECK(back.tracks[0].instrumentModule.empty());
     CHECK(back.tracks[0].instrumentState.empty());
     CHECK(w.size() == 2);  // module/name, and the state
+
+    // A wrong-typed preset name: its own warning, the rest stays (crosscheck #16, X13).
+    const std::string preset = R"({"format":"mini-daw project","version":1,"tracks":[{"number":1,"name":"K","kind":"midi",
+        "instrument":{"classId":"0123456789ABCDEF0123456789ABCDEF","name":"Synth","preset":3}}]})";
+    w.clear();
+    REQUIRE(projectFromJson(preset, dir.path(), back, w, err));
+    CHECK(back.tracks[0].instrumentName == "Synth");
+    CHECK(back.tracks[0].instrumentPreset.empty());
+    REQUIRE(w.size() == 1);
+    CHECK(w[0].find("preset name") != std::string::npos);
 
     // Extra instrument folders in the config.
     AppConfig cfg;

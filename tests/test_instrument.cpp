@@ -2,6 +2,7 @@
 
 #include "minidaw/instrument.hpp"
 #include "minidaw/plugin_scan.hpp"
+#include "minidaw/path_util.hpp"
 #include "minidaw/presets.hpp"
 #include "minidaw/render.hpp"
 #include "minidaw/track.hpp"
@@ -628,7 +629,7 @@ TEST_CASE("T-VST-34: a preset saved from an instrument loads its sound back; ano
     std::vector<float> l(1024), r(1024);
     const InstrumentMidi on = msg(0, 0x90, 69, 127);
     inst.process(&on, 1, 1024, {}, l.data(), r.data());  // gain 0.75 reaches the processor
-    const fs::path file = tmp.path() / "Wärm pad.vstpreset";
+    const fs::path file = tmp.path() / pathFromUtf8("Wärm pad.vstpreset");
     REQUIRE(inst.savePreset(file, err));
     INFO(err);
 

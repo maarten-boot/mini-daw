@@ -334,7 +334,8 @@ bool Vst3Instrument::getState(std::string& component, std::string& controller, s
     return true;
 }
 
-bool Vst3Instrument::setState(const std::string& component, const std::string& controller, std::string& error)
+bool Vst3Instrument::setState(const std::string& component, const std::string& controller, std::string& error,
+                              std::string* warning)
 {
     Impl& m = *impl_;
     if (!m.active) {
@@ -350,14 +351,19 @@ bool Vst3Instrument::setState(const std::string& component, const std::string& c
         return false;
     }
     if (m.controller) {
+        // The processor's state is what sounds; a controller that refuses its part is
+        // reported, not fatal (crosscheck #16, X7).
         cs.seek(0, IBStream::kIBSeekSet, nullptr);
-        m.controller->setComponentState(&cs);
+        const tresult rc = m.controller->setComponentState(&cs);
+        tresult re = kResultOk;
         if (!controller.empty()) {
             MemoryStream es;
             es.write(const_cast<char*>(controller.data()), static_cast<int32>(controller.size()), &written);
             es.seek(0, IBStream::kIBSeekSet, nullptr);
-            m.controller->setState(&es);
+            re = m.controller->setState(&es);
         }
+        const bool refused = (rc != kResultOk && rc != kNotImplemented) || (re != kResultOk && re != kNotImplemented);
+        if (refused && warning != nullptr) *warning = "the plugin's controller did not take all of the settings";
     }
     return true;
 }
@@ -402,20 +408,24 @@ bool Vst3Instrument::programs(Programs& out) const
     detail::NoErrorDialogs noDialogs;
     out.parameter = pi.id;
     if (FUnknownPtr<IUnitInfo> units(c); units) {
+        // The list of the unit that owns the parameter; another unit's list only when
+        // it is the plugin's only one (crosscheck #16, X5).
         ProgramListID list = kNoProgramListId;
         for (int32 i = 0; i < units->getUnitCount(); ++i) {
             UnitInfo u{};
             if (units->getUnitInfo(i, u) == kResultOk && u.id == pi.unitId) list = u.programListId;
         }
-        for (int32 i = 0; i < units->getProgramListCount(); ++i) {
+        const int32 lists = units->getProgramListCount();
+        for (int32 i = 0; i < lists; ++i) {
             ProgramListInfo info{};
             if (units->getProgramListInfo(i, info) != kResultOk) continue;
-            if (list != kNoProgramListId && info.id != list) continue;
+            if (list == kNoProgramListId ? lists != 1 : info.id != list) continue;
             out.listName = Steinberg::Vst::StringConvert::convert(info.name);
             for (int32 k = 0; k < info.programCount && k < 4096; ++k) {
                 String128 name{};
-                units->getProgramName(info.id, k, name);
-                out.names.push_back(Steinberg::Vst::StringConvert::convert(name));
+                std::string text;
+                if (units->getProgramName(info.id, k, name) == kResultOk) text = Steinberg::Vst::StringConvert::convert(name);
+                out.names.push_back(text.empty() ? "Program " + std::to_string(k + 1) : text);
             }
             break;
         }
@@ -424,10 +434,16 @@ bool Vst3Instrument::programs(Programs& out) const
     if (out.names.empty() && pi.stepCount > 0 && pi.stepCount < 4096) {
         for (int32 k = 0; k <= pi.stepCount; ++k) {
             String128 name{};
-            c->getParamStringByValue(pi.id, static_cast<double>(k) / pi.stepCount, name);
-            out.names.push_back(Steinberg::Vst::StringConvert::convert(name));
+            std::string text;
+            if (c->getParamStringByValue(pi.id, static_cast<double>(k) / pi.stepCount, name) == kResultOk) {
+                text = Steinberg::Vst::StringConvert::convert(name);
+            }
+            out.names.push_back(text.empty() ? "Program " + std::to_string(k + 1) : text);
         }
     }
+    // Only what the parameter can reach (its steps, or the list's size for a continuous one).
+    out.steps = programSteps(pi.stepCount, out.names.size());
+    out.names.resize(reachablePrograms(out.steps, out.names.size()));
     return !out.names.empty();
 }
 
@@ -436,27 +452,31 @@ int Vst3Instrument::currentProgram() const
     ParameterInfo pi{};
     IEditController* c = impl_->controller.get();
     if (!impl_->active || !findProgramParameter(c, pi)) return -1;
-    if (pi.stepCount <= 0) return 0;
-    return static_cast<int>(std::lround(c->getParamNormalized(pi.id) * pi.stepCount));
+    int steps = pi.stepCount;
+    if (steps <= 0) {  // continuous: as many steps as the list has entries
+        Programs p;
+        if (!programs(p)) return -1;
+        steps = p.steps;
+    }
+    return programIndex(c->getParamNormalized(pi.id), steps);
 }
 
 bool Vst3Instrument::selectProgram(int index, std::string& error)
 {
-    ParameterInfo pi{};
+    Programs p;
     IEditController* c = impl_->controller.get();
-    if (!impl_->active || !findProgramParameter(c, pi)) {
+    if (!impl_->active || !programs(p)) {
         error = "The instrument has no program list.";
         return false;
     }
-    const int last = std::max<int>(0, pi.stepCount);
-    if (index < 0 || index > last) {
+    if (index < 0 || index >= static_cast<int>(p.names.size())) {
         error = "No program " + std::to_string(index + 1) + ".";
         return false;
     }
-    const double v = last > 0 ? static_cast<double>(index) / last : 0.0;
+    const double v = programNormalized(index, p.steps);
     detail::NoErrorDialogs noDialogs;
-    c->setParamNormalized(pi.id, v);   // the controller (and an open editor) follows
-    queueParameter(pi.id, v, false);   // the processor, at its next block
+    c->setParamNormalized(p.parameter, v);   // the controller (and an open editor) follows
+    queueParameter(p.parameter, v, false);   // the processor, at its next block
     return true;
 }
 
@@ -472,7 +492,7 @@ bool Vst3Instrument::savePreset(const std::filesystem::path& file, std::string& 
     return writeFileReplacing(file, encodeVstPreset(d), error);
 }
 
-bool Vst3Instrument::loadPreset(const std::filesystem::path& file, std::string& error)
+bool Vst3Instrument::loadPreset(const std::filesystem::path& file, std::string& error, std::string* warning)
 {
     std::string bytes;
     if (!readWholeFile(file, bytes, error)) return false;
@@ -484,7 +504,7 @@ bool Vst3Instrument::loadPreset(const std::filesystem::path& file, std::string& 
         error = "the preset is for another plugin";
         return false;
     }
-    return setState(d->component, d->controller, error);
+    return setState(d->component, d->controller, error, warning);
 }
 
 void Vst3Instrument::setParameter(std::uint32_t id, double normalized)

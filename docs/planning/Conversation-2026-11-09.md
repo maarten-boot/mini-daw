@@ -13,3 +13,10 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 - Next: fix crosscheck #16 X0–X13 (proposed: X0 first, then X1). Not yet confirmed by the user.
 - `dist/`: still run 42529973283 (`8008ffc`, PL1 + crosscheck #15 fixes) with its `TESTS.txt`; refresh it after a green run with the PL2 fixes (add T-VST-36: what Arturia offers in the Presets menu / log line).
 - Waiting for the user (Windows): the tests in `dist/TESTS.txt` (T-UI-25..27 PL1, T-UI-23, -22, -20, -18, -17 / T-PLAY-18, T-REC-34, T-VST-30), later T-VST-36.
+
+## 2. Where are we; crosscheck #16 fixes (PL2a)
+> where are we ?
+- Summary given: PL1 and PL2 done, crosscheck #16 open (X0–X13), CI red on Windows by X0, `dist/` at `8008ffc`.
+> yes fix X0–X13, X0 first
+- X0–X13 as proposed (see `Crosscheck-2026-11-09.md`, actions). The SDK compatibility test needs the SDK's `vstpresetfile.cpp` and its base library in the test program (the same files the test synth builds), compiled without our warnings.
+- Spec v0.44 (SPEC-VST-07a, -06a), Plan PL2a, T-VST-33..36 extended, T-VST-15 (preset name). Linux 191/191, Wine 190/190; GUI on Xvfb.

@@ -24,6 +24,22 @@ add_executable(minidaw_tests
     test_folders.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
+# The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):
+# mini-daw reads and writes the format itself.
+# (with the SDK's base library it needs, the same files the test synth builds)
+set(minidaw_sdk_preset_sources ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/vstpresetfile.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/baseiids.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/fbuffer.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/fdebug.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/fobject.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/fstring.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/timer.cpp
+    ${vst3sdk_SOURCE_DIR}/base/source/updatehandler.cpp
+    ${vst3sdk_SOURCE_DIR}/base/thread/source/fcondition.cpp
+    ${vst3sdk_SOURCE_DIR}/base/thread/source/flock.cpp)
+target_sources(minidaw_tests PRIVATE ${minidaw_sdk_preset_sources})
+# The SDK's code, not ours: without our warning flags.
+set_source_files_properties(${minidaw_sdk_preset_sources} PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
 # The GUI's state cues (PL1, crosscheck #15 W9): a headless Dear ImGui context, no window.
 if(TARGET minidaw_imgui)
     target_sources(minidaw_tests PRIVATE test_state_cues.cpp ${PROJECT_SOURCE_DIR}/src/app/state_cues.cpp)

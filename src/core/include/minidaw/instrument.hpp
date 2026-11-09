@@ -69,14 +69,17 @@ public:
 
     // The plugin's state (processor and controller), as bytes.
     bool getState(std::string& component, std::string& controller, std::string& error) const;
-    bool setState(const std::string& component, const std::string& controller, std::string& error);
+    // `warning` (optional): set when the controller refused its part (the sound is set).
+    bool setState(const std::string& component, const std::string& controller, std::string& error,
+                  std::string* warning = nullptr);
 
     // Programs (PL2, SPEC-VST-07a): the plugin's program list (IUnitInfo), chosen
     // with its program-change parameter. GUI thread. False when it has none.
     struct Programs {
         std::uint32_t parameter = 0;
         std::string listName;
-        std::vector<std::string> names;
+        std::vector<std::string> names;  // only the ones the parameter can reach
+        int steps = 0;                   // the parameter's steps (presets.hpp: programSteps)
     };
     bool programs(Programs& out) const;
     int currentProgram() const;  // index in programs().names, -1 if there is no list
@@ -85,7 +88,7 @@ public:
     // .vstpreset files (PL2): the processor and controller state with the class
     // ID. Loading refuses a preset of another plugin. GUI thread.
     bool savePreset(const std::filesystem::path& file, std::string& error) const;
-    bool loadPreset(const std::filesystem::path& file, std::string& error);
+    bool loadPreset(const std::filesystem::path& file, std::string& error, std::string* warning = nullptr);
 
     // A parameter change from the host (any thread except the audio thread):
     // given to the processor in its next block.

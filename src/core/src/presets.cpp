@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cmath>
+#include <iterator>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -127,6 +130,10 @@ std::optional<VstPresetData> decodeVstPreset(std::string_view b, std::string& er
     }
     VstPresetData d;
     d.classId = std::string(b.substr(8, 32));
+    if (!isClassIdText(d.classId)) {  // FUID::fromString would read garbage (crosscheck #16, X7)
+        error = "the preset file is damaged (its class ID is not valid)";
+        return std::nullopt;
+    }
     const std::uint64_t listOffset = getLE(b, 40, 8);
     if (listOffset < kHeaderSize || listOffset > b.size() || b.size() - listOffset < 8 ||
         b.substr(static_cast<std::size_t>(listOffset), 4) != "List") {
@@ -167,8 +174,8 @@ std::optional<VstPresetData> decodeVstPreset(std::string_view b, std::string& er
 
 PresetFolders presetFolders(const std::string& vendor, const std::string& pluginName, const fs::path& modulePath)
 {
-    const fs::path sub = pathFromUtf8(safeFileName(vendor.empty() ? "Unknown" : vendor)) /
-                         pathFromUtf8(safeFileName(pluginName.empty() ? "Plugin" : pluginName));
+    const fs::path sub = pathFromUtf8(safePresetName(vendor.empty() ? "Unknown" : vendor)) /
+                         pathFromUtf8(safePresetName(pluginName.empty() ? "Plugin" : pluginName));
     PresetFolders f;
 #if defined(_WIN32)
     const fs::path docs = documentsFolder();
@@ -196,10 +203,11 @@ PresetFolders presetFolders(const std::string& vendor, const std::string& plugin
     return f;
 }
 
-std::vector<PresetFileEntry> listPresetFiles(const PresetFolders& folders, std::size_t limit, bool& truncated)
+PresetListing listPresetFiles(const PresetFolders& folders, std::size_t limit, std::size_t searchLimit)
 {
-    truncated = false;
-    std::vector<PresetFileEntry> out;
+    PresetListing result;
+    std::vector<PresetFileEntry>& out = result.files;
+    bool stop = false;
     for (std::size_t r = 0; r < folders.all.size(); ++r) {
         const fs::path& root = folders.all[r];
         std::error_code ec;
@@ -208,8 +216,8 @@ std::vector<PresetFileEntry> listPresetFiles(const PresetFolders& folders, std::
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
         std::size_t looked = 0;
         for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (++looked > 50000) {  // never stall on a huge tree
-                truncated = true;
+            if (++looked > searchLimit) {  // never stall on a huge tree
+                result.searchCut = true;
                 break;
             }
             std::error_code fe;
@@ -217,7 +225,8 @@ std::vector<PresetFileEntry> listPresetFiles(const PresetFolders& folders, std::
             const fs::path& p = it->path();
             if (lowerAscii(pathToUtf8(p.extension())) != ".vstpreset") continue;
             if (out.size() + here.size() >= limit) {
-                truncated = true;
+                result.moreFiles = true;
+                stop = true;
                 break;
             }
             PresetFileEntry e;
@@ -237,14 +246,109 @@ std::vector<PresetFileEntry> listPresetFiles(const PresetFolders& folders, std::
             return lowerAscii(a.name) < lowerAscii(b.name);
         });
         out.insert(out.end(), std::make_move_iterator(here.begin()), std::make_move_iterator(here.end()));
-        if (truncated) break;
+        if (stop) break;
     }
-    return out;
+    return result;
+}
+
+std::string safePresetName(std::string_view name)
+{
+    std::string s = safeFileName(name);
+    if (s == "track" && name.find("track") == std::string_view::npos) s = "Preset";  // safeFileName's fallback
+    // At most 120 bytes, cut before a UTF-8 continuation byte; no space or dot at the end.
+    if (s.size() > 120) {
+        std::size_t cut = 120;
+        while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+        s.resize(cut);
+        while (!s.empty() && (s.back() == ' ' || s.back() == '.')) s.pop_back();
+        if (s.empty()) s = "Preset";
+    }
+    // Windows device names, also with an extension ("con.txt").
+    std::string stem = lowerAscii(s.substr(0, s.find('.')));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    static const char* const kDevices[] = {"con", "prn", "aux", "nul"};
+    bool device = std::find(std::begin(kDevices), std::end(kDevices), stem) != std::end(kDevices);
+    if (stem.size() == 4 && (stem.rfind("com", 0) == 0 || stem.rfind("lpt", 0) == 0) && stem[3] >= '1' && stem[3] <= '9') {
+        device = true;
+    }
+    return device ? "_" + s : s;
 }
 
 fs::path userPresetPath(const PresetFolders& folders, const std::string& name)
 {
-    return folders.user / pathFromUtf8(safeFileName(name) + ".vstpreset");
+    return folders.user / pathFromUtf8(safePresetName(name) + ".vstpreset");
+}
+
+std::vector<PresetChoice> presetChoices(const std::vector<std::string>& programs,
+                                        const std::vector<PresetFileEntry>& files)
+{
+    std::vector<PresetChoice> out;
+    for (std::size_t i = 0; i < programs.size(); ++i) out.push_back({"p:" + std::to_string(i), programs[i]});
+    for (const auto& f : files) {
+        out.push_back({"f:" + pathToUtf8(f.path), (f.group.empty() ? std::string() : f.group + "/") + f.name});
+    }
+    return out;
+}
+
+int findPresetChoice(const std::vector<PresetChoice>& choices, const std::string& id, const std::string& label,
+                     int currentProgram)
+{
+    if (!id.empty()) {
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            if (choices[i].id == id) return static_cast<int>(i);
+        }
+    }
+    if (!label.empty()) {
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            if (choices[i].label == label) return static_cast<int>(i);
+        }
+        return -1;
+    }
+    if (id.empty() && currentProgram >= 0) {
+        const std::string want = "p:" + std::to_string(currentProgram);
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            if (choices[i].id == want) return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int stepPresetChoice(std::size_t count, int current, int step)
+{
+    if (count == 0) return -1;
+    const long long n = static_cast<long long>(count);
+    long long i = current < 0 || current >= n ? (step < 0 ? n - 1 : 0) : current + step;
+    i = (i % n + n) % n;
+    return static_cast<int>(i);
+}
+
+int programSteps(int stepCount, std::size_t listSize)
+{
+    if (stepCount > 0) return stepCount;
+    return listSize > 1 ? static_cast<int>(std::min<std::size_t>(listSize - 1, 4095)) : 0;
+}
+
+double programNormalized(int index, int steps)
+{
+    return steps > 0 ? static_cast<double>(std::clamp(index, 0, steps)) / steps : 0.0;
+}
+
+int programIndex(double normalized, int steps)
+{
+    if (steps <= 0) return 0;
+    return std::clamp(static_cast<int>(std::lround(normalized * steps)), 0, steps);
+}
+
+std::size_t reachablePrograms(int steps, std::size_t listSize)
+{
+    return std::min<std::size_t>(listSize, static_cast<std::size_t>(std::max(steps, 0)) + 1);
+}
+
+bool isClassIdText(std::string_view text)
+{
+    return text.size() == 32 && std::all_of(text.begin(), text.end(), [](char c) {
+               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+           });
 }
 
 bool readWholeFile(const fs::path& path, std::string& bytes, std::string& error)
@@ -255,7 +359,7 @@ bool readWholeFile(const fs::path& path, std::string& bytes, std::string& error)
     std::FILE* f = std::fopen(path.c_str(), "rb");
 #endif
     if (!f) {
-        error = "cannot open " + pathToUtf8(path);
+        error = "cannot open " + pathToUtf8(path) + ": " + std::strerror(errno);
         return false;
     }
     bytes.clear();
@@ -290,19 +394,21 @@ bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::str
     tmp += ".tmp";
     std::FILE* f = detail::openForWriting(tmp, false);
     if (!f) {
-        error = "cannot write " + pathToUtf8(tmp);
+        error = "cannot write " + pathToUtf8(tmp) + ": " + std::strerror(errno);
         return false;
     }
     const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && detail::syncToDisk(f);
+    const int writeErrno = errno;
     if (std::fclose(f) != 0 || !ok) {
         fs::remove(tmp, ec);
-        error = "cannot write " + pathToUtf8(path);
+        error = "cannot write " + pathToUtf8(path) + ": " + std::strerror(writeErrno);
         return false;
     }
     fs::rename(tmp, path, ec);
     if (ec) {
-        fs::remove(tmp, ec);
-        error = "cannot replace " + pathToUtf8(path);
+        error = "cannot replace " + pathToUtf8(path) + ": " + ec.message();  // e.g. open in another program
+        std::error_code ignored;
+        fs::remove(tmp, ignored);
         return false;
     }
     return true;

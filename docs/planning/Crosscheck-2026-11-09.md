@@ -29,3 +29,23 @@ Scope: Spec v0.43, Plan, Tests, README, CLAUDE.md, code at commit `f8cf624` (cha
 | X11 | low (Spec) | Before a choice in mini-daw the menu marks the plugin's current program, but `<` / `>` start at the first / last entry (Spec: "from the current entry"). | Start from the plugin's current program when nothing was chosen here. |
 | X12 | tests | The "size outside the file" case changes the offset's top byte, not the size (branch untested); nothing proves "compatible with other hosts" although the SDK is in the build tree; program-list variants untested. | Fix the byte; a test that reads a file written by the SDK's `PresetFile::savePreset` (with Info and Prog chunks) and has the SDK read ours (the hosting library gets `vstpresetfile.cpp` for the tests only if it builds without more SDK parts, else a byte-exact fixture); tests for the stepping logic in core. |
 | X13 | docs | A comment of crosscheck #15 (W8) moved onto `savePresetError` (`main.cpp:116`); a wrong-typed `preset` in project.json warns about "module or name"; SPEC-VST-06a does not mention the preset name; which vendor name other hosts use for the folder is unverified (class's, then factory's). | Fix the comment and the warning; Spec. |
+
+## Actions taken (user: "yes fix X0–X13, X0 first")
+| # | Done |
+|---|------|
+| X0 | Non-ASCII test file names made with `pathFromUtf8` (T-VST-34, T-VST-35, the instrument preset test); MSVC to be confirmed by CI. |
+| X1 | `withInstrumentOutOfRack`: a preset file's state is set with the instrument out of the rack (the rack waits until the audio thread lets go), then it is put back; silent meanwhile. GUI: Soft, then the file, no errors. |
+| X2 | Entries have an identity (`p:<index>`, `f:<path>`); the track remembers the one chosen last (this session); one entry marked; stepping and labels moved into core (`presetChoices`, `findPresetChoice`, `stepPresetChoice`) and tested (same name twice). |
+| X3 | Names only trimmed; after Save the label is the file's stem. GUI: "Warm: pad" → `Warm_ pad.vstpreset`, listed and marked. |
+| X4 | One rule for Save and Enter (a name and a user folder); "No folder for your own presets" in the menu, Save preset disabled then. |
+| X5 | Only the parameter's unit's list (another only when it is the only one); "Program N" for a missing name; only reachable entries; continuous parameters use the list's size (core arithmetic, tested). |
+| X6 | Allowed while recording; "(while recording)" in the log; Spec. |
+| X7 | Class ID must be 32 hex characters; a controller that refuses its part is a warning (`setState` / `loadPreset` warning). |
+| X8 | `safePresetName` (device names, 120 bytes, whole UTF-8 characters) also for the vendor / plugin folders; errors carry the system's reason. Tests. (Windows behaviour of device names unverified.) |
+| X9 | < / > read the list again when it is older than 3 s; listing reports `moreFiles` and `searchCut` with their own notes. Test. |
+| X10 | The Save window remembers the instrument's serial and closes when it changes; folders made at open, the file and its existence only when the name changes. |
+| X11 | Stepping starts at the marked entry, also the plugin's current program. GUI: fresh synth (Medium), > → Loud. |
+| X12 | The size byte fixed and the offset case added; SDK compatibility test (the SDK's `vstpresetfile.cpp` and its base library compiled into the test program only, without our warnings); arithmetic and stepping tests. |
+| X13 | Comment moved back to `trackTableExtra`; a wrong-typed `preset` has its own warning (test); SPEC-VST-06a names the preset. |
+
+Spec v0.44, Plan PL2a. Linux 191/191, Wine 190/190 Catch2 cases (3141 assertions); GUI on Xvfb.

@@ -274,8 +274,10 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
                     t.instrumentClass = ins["classId"].get<std::string>();
                     t.instrumentModule = field("module", names);
                     t.instrumentName = field("name", names);
-                    t.instrumentPreset = field("preset", names);  // PL2; optional
                     if (!names) warnings.push_back(where + "the instrument's module or name has a wrong value; ignored.");
+                    bool preset = true;  // PL2; optional, only for display (crosscheck #16, X13)
+                    t.instrumentPreset = field("preset", preset);
+                    if (!preset) warnings.push_back(where + "the instrument's preset name has a wrong value; ignored.");
                     bool states = true;
                     const std::string state = field("state", states);
                     const std::string controllerState = field("controllerState", states);
