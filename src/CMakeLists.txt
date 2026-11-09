@@ -22,6 +22,7 @@ add_library(minidaw_core STATIC
     core/src/project.cpp
     core/src/recorder.cpp
     core/src/recording_notes.cpp
+    core/src/terms.cpp
     core/src/midi_input.cpp
     core/src/midi_player.cpp
     core/src/auto_record.cpp

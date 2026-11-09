@@ -147,9 +147,12 @@ std::string getEnv(const char* name)
 
 } // namespace
 
-std::vector<std::string> defaultTabOrder() { return {"recording", "timeline", "audio"}; }
+std::vector<std::string> defaultTabOrder() { return {"recording", "timeline", "audio", "terms"}; }
 
-bool isTabId(std::string_view id) { return id == "recording" || id == "timeline" || id == "audio"; }
+bool isTabId(std::string_view id)
+{
+    return id == "recording" || id == "timeline" || id == "audio" || id == "terms";
+}
 
 std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order)
 {
@@ -212,7 +215,7 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 warn("font_size '" + value + "' must be a whole number from 12 to 32. Using 16.");
             }
         } else if (section == "tabs" && key == "order") {
-            // "recording, timeline, audio"
+            // "recording, timeline, audio, terms"
             std::vector<std::string> ids;
             std::string bad;
             std::size_t at = 0;
@@ -228,14 +231,14 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 }
                 at = comma + 1;
             }
-            if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: recording, timeline, audio); left out.");
+            if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: recording, timeline, audio, terms); left out.");
             cfg.tabs.order = normalizeTabOrder(ids);
         } else if (section == "tabs" && key == "last") {
             const std::string id = lower(trim(value));
             if (isTabId(id)) {
                 cfg.tabs.last = id;
             } else {
-                warn("unknown tab '" + value + "' for last (known: recording, timeline, audio). Using recording.");
+                warn("unknown tab '" + value + "' for last (known: recording, timeline, audio, terms). Using recording.");
             }
         } else if (section == "window" && key == "remember") {
             if (!parseBool(value, cfg.window.remember)) {
@@ -423,8 +426,8 @@ std::string defaultConfigText()
            "\n"
            "[tabs]\n"
            "; The order of the main window's tabs (also set by dragging a tab, or in\n"
-           "; Settings > Tabs...): recording, timeline, audio (Audio setup).\n"
-           "order = recording, timeline, audio\n"
+           "; Settings > Tabs...): recording, timeline, audio (Audio setup), terms.\n"
+           "order = recording, timeline, audio, terms\n"
            "; The tab shown at start: the one used last (written by mini-daw).\n"
            "last = recording\n"
            "\n"

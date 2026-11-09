@@ -72,3 +72,13 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 12. CI of `7837f17`
 > pushed it, check the CI run
 - Run 42664805653 green (Linux 200/200, Windows 200/200); both builds checked, then in `dist/`; `dist/TESTS.txt` has steps for the fixes (a note saved at Ctrl+R, MIDI-only ticks, the note window closing with another project).
+
+## 13. P23: the Terms tab
+
+User: "pushed it, yes do P23" (`75bf825` pushed).
+
+- New core module `terms` (`terms.hpp/.cpp`): 47 terms in 6 topics (Basics, Recording, Playing, Instruments, Projects and files, Sound and audio setup), each with what it means, where it is in mini-daw and See also; `findTerms` (any case, name matches first; also the Where text) and `termIndex`.
+- Tab id `terms` added to the tab order (`defaultTabOrder`, `isTabId`, config text and warnings); an older `order` gets it at the end without a warning.
+- GUI (`main.cpp`): `drawTermsTab` / `drawTerm`: Find field, Show all, "N of M terms", the list in a scrolling child; See also buttons wrap and jump to the term ("> " mark).
+- Tests: `test_terms.cpp` (T-UI-28, 3 cases), `test_config.cpp` updated for four tabs. Linux 203/203; MinGW build under Wine 201/201; GUI checked on Xvfb.
+- Spec v0.49: SPEC-UI-17; SPEC-UI-11 / -12 name the Terms tab. Plan P23 done.

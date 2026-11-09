@@ -23,6 +23,7 @@ add_executable(minidaw_tests
     test_presets.cpp
     test_folders.cpp
     test_instance_lock.cpp
+    test_terms.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):

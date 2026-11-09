@@ -139,7 +139,7 @@ struct ScreenRect {
 std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const std::vector<ScreenRect>& workAreas);
 
 // Main window tabs (SPEC-UI-12): their order and the one shown at start.
-// Ids: "recording", "timeline", "audio" (Audio setup).
+// Ids: "recording", "timeline", "audio" (Audio setup), "terms" (P23).
 std::vector<std::string> defaultTabOrder();
 // Every known id once, in the order given; unknown ids and repeats left out,
 // missing ones added at the end in the default order.

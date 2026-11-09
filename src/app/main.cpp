@@ -37,6 +37,7 @@
 #include "minidaw/project.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/render.hpp"
+#include "minidaw/terms.hpp"
 #include "minidaw/timeline.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
@@ -226,6 +227,10 @@ struct AppState {
     bool showTabsWindow = false;
     std::string tabsFocus;      // Tabs window: the tab moved to the top / bottom, its other button gets the focus (U4)
     bool tabsFocusUp = false;
+    // Terms tab (P23, SPEC-UI-17)
+    std::string termsFind;
+    std::size_t termsJump = SIZE_MAX;   // a "See also" clicked: scroll to this term in the next frame
+    std::size_t termsMarked = SIZE_MAX; // the term jumped to last (shown with "> ")
     bool showRecordingSettings = false;
     minidaw::RecordingSettings pendingRecording;
 
@@ -876,11 +881,97 @@ void drawMenuBar(AppState& app, bool& quit)
     ImGui::EndMenuBar();
 }
 
+// --- Terms tab (P23, SPEC-UI-17) ------------------------------------------
+// mini-daw's words explained (minidaw/terms.hpp): all by topic, or those found.
+// "See also" jumps to that term in the whole list.
+void drawTerm(AppState& app, std::size_t index, bool showGroup)
+{
+    const minidaw::Term& t = minidaw::terms()[index];
+    ImGui::PushID(static_cast<int>(index));
+    if (app.termsJump == index) {
+        ImGui::SetScrollHereY(0.0f);
+        app.termsJump = SIZE_MAX;
+    }
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.15f);
+    const std::string title = (app.termsMarked == index ? "> " : "") + t.name;
+    ImGui::TextUnformatted(title.c_str());
+    ImGui::PopFont();
+    if (showGroup) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", t.group.c_str());
+    }
+    ImGui::Indent();
+    ImGui::TextWrapped("%s", t.text.c_str());
+    if (!t.where.empty()) ImGui::TextWrapped("Where: %s", t.where.c_str());
+    if (!t.seeAlso.empty()) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("See also:");
+        for (const std::string& other : t.seeAlso) {
+            const std::size_t to = minidaw::termIndex(other);
+            if (to >= minidaw::terms().size()) continue;
+            // Wraps to the next line when the button would not fit.
+            const float w = ImGui::CalcTextSize(other.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            const float right = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w;
+            if (right <= ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+            if (ImGui::Button(other.c_str())) {
+                app.termsFind.clear();
+                app.termsJump = to;
+                app.termsMarked = to;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Go to \"%s\"", other.c_str());
+        }
+    }
+    ImGui::Unindent();
+    ImGui::Spacing();
+    ImGui::PopID();
+}
+
+void drawTermsTab(AppState& app)
+{
+    ImGui::TextWrapped("The words mini-daw uses, and what they mean. Type a word to find it.");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Find:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(std::min(24.0f * ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x * 0.6f));
+    ImGui::InputTextWithHint("##terms-find", "a word, e.g. take", &app.termsFind);
+    const std::vector<std::size_t> found = minidaw::findTerms(app.termsFind);
+    const bool all = found.size() == minidaw::terms().size();
+    ImGui::SameLine();
+    minidaw::app::beginDisabled(app.termsFind.empty());
+    if (ImGui::Button("Show all")) app.termsFind.clear();
+    minidaw::app::endDisabled();
+    ImGui::SameLine();
+    if (all) {
+        ImGui::Text("%zu terms", found.size());
+    } else {
+        ImGui::Text("%zu of %zu terms", found.size(), minidaw::terms().size());
+    }
+    if (ImGui::BeginChild("terms-list", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        if (found.empty()) {
+            ImGui::TextWrapped("No term has \"%s\". Try a shorter word, or Show all.", app.termsFind.c_str());
+        } else if (all) {
+            std::string group;
+            for (std::size_t i : found) {
+                const minidaw::Term& t = minidaw::terms()[i];
+                if (t.group != group) {
+                    group = t.group;
+                    ImGui::SeparatorText(group.c_str());
+                }
+                drawTerm(app, i, false);
+            }
+        } else {
+            for (std::size_t i : found) drawTerm(app, i, true);
+        }
+    }
+    ImGui::EndChild();
+}
+
 // --- Tabs (P18, SPEC-UI-12) ------------------------------------------------
 const char* tabTitle(const std::string& id)
 {
     if (id == "timeline") return "Timeline";
     if (id == "audio") return "Audio setup";
+    if (id == "terms") return "Terms";
     return "Recording";
 }
 
@@ -4673,6 +4764,8 @@ int runGui(AppState& app)
                         drawAudioStatus(app);
                         ImGui::SeparatorText("Devices");
                         drawDevicesPanel(app);
+                    } else if (id == "terms") {
+                        drawTermsTab(app);
                     }
                     ImGui::EndTabItem();
                 }
