@@ -56,3 +56,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 - GUI: "Note at mm:ss.t: [ ] Add note" in the transport area while a take or an auto part is recorded; ticks on the timeline blocks with tooltips; marks in the details and with Remove in the Name and notes window; File → Project note… and a button and line above the timeline.
 - Found in the GUI check: the note was stored at the moment of Enter, not when typing began (now the first key's moment, the time shown freezes while typing); the tick lines ran through the label (now the top third).
 - Spec v0.47 (SPEC-REC-09, SPEC-PRJ-03), T-REC-35, T-PRJ-09, README. Linux 198/198, Wine 197/197; GUI on Xvfb.
+
+## 9. CI of `968ef45`
+> pushed it, check the CI run / commit the CI log lines (when CI is done)
+- Run 42652851158 green (Linux 198/198, Windows 199/199); both builds checked, then in `dist/`; `dist/TESTS.txt` has T-REC-35 and T-PRJ-09 on top, then the P21, P20, PL2 and PL1 tests still open.
