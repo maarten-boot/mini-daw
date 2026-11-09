@@ -68,3 +68,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 11. Crosscheck #17 fixes (P22a)
 > pushed it, yes fix Y1–Y12, Y1 first
 - Y1–Y12 as proposed (see `Crosscheck-2026-11-09.md`, actions). Spec v0.48, Plan P22a, CLAUDE.md `src/core/` list. Linux 200/200, Wine 198/198; GUI on Xvfb.
+
+## 12. CI of `7837f17`
+> pushed it, check the CI run
+- Run 42664805653 green (Linux 200/200, Windows 200/200); both builds checked, then in `dist/`; `dist/TESTS.txt` has steps for the fixes (a note saved at Ctrl+R, MIDI-only ticks, the note window closing with another project).
