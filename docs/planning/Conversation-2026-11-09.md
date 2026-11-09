@@ -82,3 +82,7 @@ User: "pushed it, yes do P23" (`75bf825` pushed).
 - GUI (`main.cpp`): `drawTermsTab` / `drawTerm`: Find field, Show all, "N of M terms", the list in a scrolling child; See also buttons wrap and jump to the term ("> " mark).
 - Tests: `test_terms.cpp` (T-UI-28, 3 cases), `test_config.cpp` updated for four tabs. Linux 203/203; MinGW build under Wine 201/201; GUI checked on Xvfb.
 - Spec v0.49: SPEC-UI-17; SPEC-UI-11 / -12 name the Terms tab. Plan P23 done.
+
+## 14. CI of `c89fec7`
+
+User: "pushed it, check the CI run". Run 42694188393: windows, linux, licence green; Linux 203/203, Windows 203/203. Both builds downloaded and checked (the Terms texts are in them), then `dist/` refilled; `dist/TESTS.txt` has T-UI-28 at the top.
