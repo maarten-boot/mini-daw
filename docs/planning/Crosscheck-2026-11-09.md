@@ -49,3 +49,33 @@ Scope: Spec v0.43, Plan, Tests, README, CLAUDE.md, code at commit `f8cf624` (cha
 | X13 | Comment moved back to `trackTableExtra`; a wrong-typed `preset` has its own warning (test); SPEC-VST-06a names the preset. |
 
 Spec v0.44, Plan PL2a. Linux 191/191, Wine 190/190 Catch2 cases (3141 assertions); GUI on Xvfb.
+
+# Crosscheck #17 — 2026-11-09 (after P20–P22: one instance, timeline rename / notes / delete, notes while recording, project note)
+
+Scope: Spec v0.47, Plan, Tests, README, CLAUDE.md, code at `3121a4a` (changes since `888b68d`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Claude checked at the code: Y1 (`path("/x/takes/") == path("/x/takes")` is false with libstdc++, checked with a small program), Y2 (`openProject` sets the note but not the open window's text), Y3 (`main.cpp:4530`: Ctrl+R acts while a text field has the keyboard), Y4 (`main.cpp:3040`: the load result is ignored before Save). CI run 42652851158 green.
+
+| Area | Verdict |
+|------|---------|
+| Instance lock | ✅ Linux flock / Windows LockFileEx on a byte past the text, PID readable, released at exit and by the system after a crash; checked before the log; show requests coalesce, no half-read shows; ⚠️ tests one process only **Y11** |
+| Delete | ✅ guards (recording, auto, playing, render), tracks lose their take, `deleted/` out of the listing; ❌ a takes folder written with a separator at the end makes every Delete fail **Y1** |
+| recording.json | ✅ writers all on the GUI thread, time bases match the files (auto pre-roll, MIDI-only, overdub); ⚠️ Save overwrites an unreadable / newer file **Y4**; Save can make a folder that is gone **Y9**; reading cost **Y10**; fsync per mark **Y8** |
+| Notes while recording | ⚠️ a half-typed note is lost when the recording ends, also by Ctrl+R typed in the field **Y3**; no ticks on a live MIDI-only take **Y5**; line width / Enter on an empty field **Y7** |
+| Project note | ✅ saved, cleared, kept by Save as; ⚠️ an open note window carries the old project's text into a new one **Y2** |
+| Names | ⚠️ `##` in a name cuts the label; very long names make huge blocks **Y6** |
+| Spec ↔ code ↔ docs | ⚠️ **Y12**; CLAUDE.md's `src/core/` list is out of date |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| Y1 | medium | Delete compares the recording's parent folder with the takes folder as given in the config: written with a separator at the end (`D:\Takes\`, `/home/u/takes/`, hand-edited), they never match and every Delete says "is not a recording in …". | Compare normalised paths without a trailing separator (also when the takes folder is read from the config); test with a trailing separator. |
+| Y2 | medium | Opening or making another project while the Project note window is open keeps the old project's text in it; Save writes it into the new project. Clicking the menu or the button again also throws away text being typed. | Close the window when the project changes; open it with the project's note only when it is not open yet. |
+| Y3 | medium | A note being typed is dropped without a word when the recording or the part ends; Ctrl+R typed while the field has the keyboard stops the recording (and drops the note). | A note being typed is stored when its recording ends (it belongs to the moment typing began), with a line saying so; Ctrl+R stays the Record key also while typing (SPEC-UI-13), so the note is stored first. |
+| Y4 | medium-low | Save in the Name and notes window rewrites a `recording.json` that could not be read (damaged, or from a newer mini-daw), losing its marks and unknown fields; Add note refuses in that case. | Refuse with the reason, and offer "Replace the unreadable file" as a separate button. |
+| Y5 | low-medium | A MIDI-only take being recorded has no file yet; the timeline adds it without reading its notes, so marks made meanwhile show no ticks until Stop. | Read the notes when the live recording is added (and again after a mark). |
+| Y6 | low | A name with `##` is cut at it on the block (ImGui's ID separator); names have no length limit and the block grows with the name. | Show the name as drawn text (no ImGui label parsing) or replace `##`; cap the shown name at 40 characters with "…" (full name in the tooltip and details). |
+| Y7 | low | The transport area (7 lines) needs 9 during an auto part with the note line; the "saved" text is not wrapped (a long note makes a sideways scrollbar); Enter on an empty field leaves the field. | One line more; the result line wrapped / shortened; keep the focus after Enter also when empty. |
+| Y8 | low | Each note forces the small file to disk (`fsync`) on the GUI thread while the recorder writes; on a slow disk the window may stall briefly. | Write marks without the forced sync (the rename keeps the file whole); keep the sync for Save. |
+| Y9 | low | Save in the Name and notes window makes the folder again if the recording was moved away meanwhile (a folder with only `recording.json`). | Save only into a folder that is there (error otherwise). |
+| Y10 | low | Every rescan reads every `recording.json`, and every mark asks for a rescan. | Reuse the notes when the file's size and time are unchanged; after a mark only the live recording is read again. |
+| Y11 | tests | Instance lock only tested with two handles in one process; no test of the failed path, a missing folder for requestShow, an empty PID file. Delete: no trailing separator, no `-2` under `deleted/auto`. Marks: invalid UTF-8, equal times. | Add them (a second process: run the test program itself with a hidden option). |
+| Y12 | docs | SPEC-PLAY-08 "not while playing" is the player's playing state only (a MIDI-only preview?); nothing about unreadable files (Y4) or long names (Y6); CLAUDE.md's list of `src/core/` files is out of date (no `instance_lock`, `recording_notes`, `presets`, `timeline`, `project`, `instrument`, …). | Spec after the fixes; CLAUDE.md list. |

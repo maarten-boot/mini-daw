@@ -60,3 +60,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 9. CI of `968ef45`
 > pushed it, check the CI run / commit the CI log lines (when CI is done)
 - Run 42652851158 green (Linux 198/198, Windows 199/199); both builds checked, then in `dist/`; `dist/TESTS.txt` has T-REC-35 and T-PRJ-09 on top, then the P21, P20, PL2 and PL1 tests still open.
+
+## 10. Crosscheck #17 (after P20–P22)
+> pushed it, do the crosscheck first
+- Crosscheck #17 in `Crosscheck-2026-11-09.md` (Spec v0.47, code at `3121a4a`, independent reviewer): no high finding. Y1 Delete fails when the takes folder is written with a separator at the end; Y2 the project note window carries text into another project; Y3 a half-typed note is lost when the recording ends (also by Ctrl+R); Y4 Save rewrites an unreadable recording.json; Y5–Y10 small (live MIDI-only ticks, `##` / long names, transport lines, fsync per mark, a folder made again, reading cost); Y11 tests; Y12 docs.
