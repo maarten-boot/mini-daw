@@ -56,9 +56,13 @@ bool loadRecordingNotes(const fs::path& folder, RecordingNotes& notes, std::stri
     }
 }
 
-bool saveRecordingNotes(const fs::path& folder, const RecordingNotes& notes, std::string& error)
+bool saveRecordingNotes(const fs::path& folder, const RecordingNotes& notes, std::string& error, bool sync)
 {
     const fs::path p = folder / kRecordingNotesFile;
+    if (std::error_code ec; !fs::is_directory(folder, ec)) {  // moved away meanwhile: not made again (Y9)
+        error = pathToUtf8(folder) + " is not there any more";
+        return false;
+    }
     if (notes.empty()) {
         std::error_code ec;
         fs::remove(p, ec);
@@ -78,7 +82,7 @@ bool saveRecordingNotes(const fs::path& folder, const RecordingNotes& notes, std
     }
     // Names that are not valid UTF-8 are written with U+FFFD (as project.json).
     const std::string text = j.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
-    return writeFileReplacing(p, text, error);
+    return writeFileReplacing(p, text, error, sync);
 }
 
 bool addRecordingMark(const fs::path& folder, const RecordingMark& mark, std::string& error)
@@ -88,12 +92,22 @@ bool addRecordingMark(const fs::path& folder, const RecordingMark& mark, std::st
     const auto at = std::upper_bound(notes.marks.begin(), notes.marks.end(), mark.seconds,
                                      [](double s, const RecordingMark& m) { return s < m.seconds; });
     notes.marks.insert(at, mark);
-    return saveRecordingNotes(folder, notes, error);
+    return saveRecordingNotes(folder, notes, error, /*sync=*/false);
 }
 
-bool moveRecordingToDeleted(const fs::path& takesFolder, const fs::path& folder, fs::path& movedTo,
+fs::path withoutTrailingSeparator(const fs::path& folder)
+{
+    fs::path p = folder.lexically_normal();
+    if (!p.has_filename() && p.has_parent_path() && p != p.root_path()) p = p.parent_path();
+    return p;
+}
+
+bool moveRecordingToDeleted(const fs::path& takesFolderIn, const fs::path& folderIn, fs::path& movedTo,
                             std::string& error)
 {
+    // The takes folder may be written with a separator at the end (Y1).
+    const fs::path takesFolder = withoutTrailingSeparator(takesFolderIn);
+    const fs::path folder = withoutTrailingSeparator(folderIn);
     std::error_code ec;
     if (!fs::is_directory(folder, ec)) {
         error = pathToUtf8(folder) + " is not there any more";

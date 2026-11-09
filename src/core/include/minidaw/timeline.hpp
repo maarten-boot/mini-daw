@@ -26,6 +26,7 @@ struct RecordingInfo {
     std::vector<std::string> problems;         // files whose length could not be read
     RecordingNotes notes;                      // name, note, marks (recording.json; P21, P22)
     std::string notesProblem;                  // why recording.json could not be read
+    std::int64_t notesStamp = 0;               // its size and time: unchanged notes are not read again (Y10)
 };
 
 // Start time from a folder name: "take-YYYYMMDD-HHMMSS" or (auto part)

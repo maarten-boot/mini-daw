@@ -64,3 +64,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 10. Crosscheck #17 (after P20–P22)
 > pushed it, do the crosscheck first
 - Crosscheck #17 in `Crosscheck-2026-11-09.md` (Spec v0.47, code at `3121a4a`, independent reviewer): no high finding. Y1 Delete fails when the takes folder is written with a separator at the end; Y2 the project note window carries text into another project; Y3 a half-typed note is lost when the recording ends (also by Ctrl+R); Y4 Save rewrites an unreadable recording.json; Y5–Y10 small (live MIDI-only ticks, `##` / long names, transport lines, fsync per mark, a folder made again, reading cost); Y11 tests; Y12 docs.
+
+## 11. Crosscheck #17 fixes (P22a)
+> pushed it, yes fix Y1–Y12, Y1 first
+- Y1–Y12 as proposed (see `Crosscheck-2026-11-09.md`, actions). Spec v0.48, Plan P22a, CLAUDE.md `src/core/` list. Linux 200/200, Wine 198/198; GUI on Xvfb.

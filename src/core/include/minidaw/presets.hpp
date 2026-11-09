@@ -101,6 +101,9 @@ bool isClassIdText(std::string_view text);
 // Whole files, UTF-8 safe paths. writeFileReplacing writes a temporary file
 // next to it and renames it over the old one (a crash leaves old or new).
 bool readWholeFile(const std::filesystem::path& path, std::string& bytes, std::string& error);
-bool writeFileReplacing(const std::filesystem::path& path, const std::string& bytes, std::string& error);
+// `sync`: force the file to the disk before the rename (off for small notes
+// written while recording, crosscheck #17 Y8; the rename still keeps it whole).
+bool writeFileReplacing(const std::filesystem::path& path, const std::string& bytes, std::string& error,
+                        bool sync = true);
 
 } // namespace minidaw

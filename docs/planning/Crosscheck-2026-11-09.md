@@ -79,3 +79,21 @@ Scope: Spec v0.47, Plan, Tests, README, CLAUDE.md, code at `3121a4a` (changes si
 | Y10 | low | Every rescan reads every `recording.json`, and every mark asks for a rescan. | Reuse the notes when the file's size and time are unchanged; after a mark only the live recording is read again. |
 | Y11 | tests | Instance lock only tested with two handles in one process; no test of the failed path, a missing folder for requestShow, an empty PID file. Delete: no trailing separator, no `-2` under `deleted/auto`. Marks: invalid UTF-8, equal times. | Add them (a second process: run the test program itself with a hidden option). |
 | Y12 | docs | SPEC-PLAY-08 "not while playing" is the player's playing state only (a MIDI-only preview?); nothing about unreadable files (Y4) or long names (Y6); CLAUDE.md's list of `src/core/` files is out of date (no `instance_lock`, `recording_notes`, `presets`, `timeline`, `project`, `instrument`, …). | Spec after the fixes; CLAUDE.md list. |
+
+## Actions taken (user: "yes fix Y1–Y12, Y1 first")
+| # | Done |
+|---|------|
+| Y1 | `withoutTrailingSeparator`: the takes folder and the recording are compared normalised, without a separator at the end. Test with `dir / ""`. |
+| Y2 | Opening or making a project closes the note window; the menu and the button keep text being typed. |
+| Y3 | `storeUnsentNote` each frame: a note still being typed when its recording ends is saved at its moment, with a line under the transport. GUI: "great solo" typed, Ctrl+R in the field → saved at 2.3 s. Ctrl+R stays the Record key. |
+| Y4 | Save refuses an unreadable file with the reason; "Replace the unreadable file" does it on request. |
+| Y5 | A live recording added to the timeline reads its notes (MIDI-only takes show their marks). |
+| Y6 | `blockName`: at most 40 characters plus "...", "##" shown as "# #"; the block's width from that. |
+| Y7 | The transport area 8 lines; the "saved" line wrapped on its own line; focus kept after an empty Enter. |
+| Y8 | `writeFileReplacing(…, sync)`: marks written without the forced sync; Save keeps it. |
+| Y9 | `saveRecordingNotes` refuses a folder that is not there. Test. |
+| Y10 | The notes are read again only when `recording.json`'s size or time changed (`notesStamp`). |
+| Y11 | Tests: lock from another process (Linux fork), read-only folder, empty owner file, missing folder; Delete with a trailing separator and "-2" under `deleted/auto`; notes into a gone folder; non-UTF-8 note text. |
+| Y12 | SPEC-PLAY-08 (playing includes a recording played from the timeline — a preview always starts the player —, unreadable files, names, trailing separator, cache), SPEC-REC-09, SPEC-PRJ-03; CLAUDE.md `src/core/` list. |
+
+Spec v0.48, Plan P22a. Linux 200/200, Wine 198/198 Catch2 cases (3258 assertions); GUI on Xvfb (Y3).

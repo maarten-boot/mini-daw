@@ -154,10 +154,26 @@ void addFolder(std::vector<RecordingInfo>& out, const std::filesystem::path& fol
         r.files.push_back(path);
         r.fileSizes.push_back(size);
     }
-    // Name, note and marks: small, read every time (they change without the files changing).
-    if (std::string err; !loadRecordingNotes(folder, r.notes, err)) r.notesProblem = err;
-    // Read before and unchanged: keep its lengths (T4).
+    // Name, note and marks: read again only when recording.json changed (Y10); they can
+    // change without the recording's files changing.
     const auto known = previous.find(folder);
+    {
+        std::error_code se;
+        const std::filesystem::path notesFile = folder / kRecordingNotesFile;
+        const auto size = std::filesystem::file_size(notesFile, se);
+        if (!se) {
+            const auto time = std::filesystem::last_write_time(notesFile, se);
+            r.notesStamp = static_cast<std::int64_t>(size) * 1000003 +
+                           (se ? 0 : static_cast<std::int64_t>(time.time_since_epoch().count()));
+            if (r.notesStamp == 0) r.notesStamp = 1;
+        }
+        if (known != previous.end() && known->second->notesStamp == r.notesStamp) {
+            r.notes = known->second->notes;
+            r.notesProblem = known->second->notesProblem;
+        } else if (std::string err; !loadRecordingNotes(folder, r.notes, err)) {
+            r.notesProblem = err;
+        }
+    }
     if (known != previous.end() && known->second->files == r.files && known->second->fileSizes == r.fileSizes) {
         r.seconds = known->second->seconds;
         r.problems = known->second->problems;

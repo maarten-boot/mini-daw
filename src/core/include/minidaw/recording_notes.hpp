@@ -36,13 +36,20 @@ inline constexpr const char* kRecordingNotesFile = "recording.json";
 // `notes` empty (the recording is still shown).
 bool loadRecordingNotes(const std::filesystem::path& folder, RecordingNotes& notes, std::string& error);
 // Writes the file (via a temporary file and a rename); empty notes remove it.
-bool saveRecordingNotes(const std::filesystem::path& folder, const RecordingNotes& notes, std::string& error);
+// The folder must be there (a recording moved away is not made again, Y9).
+// `sync`: force it to the disk (off for marks made while recording, Y8).
+bool saveRecordingNotes(const std::filesystem::path& folder, const RecordingNotes& notes, std::string& error,
+                        bool sync = true);
 
-// Adds a mark (P22, SPEC-REC-09) to the recording in `folder` (made if it is not
-// there yet: a MIDI-only take has no file until it ends), keeping its name, note
-// and the other marks; marks stay sorted by time. A damaged file is not
-// overwritten (false with the reason).
+// Adds a mark (P22, SPEC-REC-09) to the recording in `folder` (made at Record or
+// at a part's start; a MIDI-only take has no file in it yet), keeping its name,
+// note and the other marks; marks stay sorted by time. A damaged file is not
+// overwritten (false with the reason). Not forced to the disk (Y8).
 bool addRecordingMark(const std::filesystem::path& folder, const RecordingMark& mark, std::string& error);
+
+// A folder path without a separator at its end ("D:\Takes\" → "D:\Takes"; a
+// root such as "/" or "C:\" stays), normalised, so two spellings compare equal (Y1).
+std::filesystem::path withoutTrailingSeparator(const std::filesystem::path& folder);
 
 // Moves `folder` (a recording in `takesFolder`, or in its "auto" folder) to
 // takesFolder/deleted/[auto/]<name>, with "-2", "-3" … when that exists.

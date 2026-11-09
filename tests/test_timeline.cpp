@@ -358,6 +358,23 @@ TEST_CASE("T-PLAY-19: deleting a recording moves it to 'deleted', out of the tim
     REQUIRE(moveRecordingToDeleted(dir.path(), take, to, err));
     CHECK(to.filename() == "take-20261109-143000-2");
 
+    // The same auto part name deleted again: "-2" under deleted/auto.
+    wavFile(part / "01-Gtr.wav", 4800);
+    REQUIRE(moveRecordingToDeleted(dir.path(), part, to, err));
+    CHECK(to == dir.path() / "deleted" / "auto" / "2026-11-09 14-35-00-2");
+
+    // The takes folder written with a separator at the end (as typed in config.ini): still works (Y1).
+    wavFile(take / "01-Gtr.wav", 4800);
+    REQUIRE(moveRecordingToDeleted(dir.path() / "", take, to, err));
+    INFO(err);
+    CHECK(to.filename() == "take-20261109-143000-3");
+    CHECK(withoutTrailingSeparator(dir.path() / "") == dir.path());
+    CHECK(withoutTrailingSeparator(std::filesystem::path("/")) == std::filesystem::path("/"));
+
+    // Notes are not saved into a folder that went away (Y9).
+    CHECK_FALSE(saveRecordingNotes(take, RecordingNotes{"Gone", "", {}}, err));
+    CHECK_FALSE(std::filesystem::exists(take));
+
     // Not a recording of this takes folder, or gone: refused.
     CHECK_FALSE(moveRecordingToDeleted(dir.path(), dir / "elsewhere" / "take-20261109-150000", to, err));
     std::filesystem::create_directories(dir / "other" / "take-20261109-150000");
@@ -383,7 +400,9 @@ TEST_CASE("T-REC-35: notes made while recording are stored as marks, in time ord
 {
     test::TempDir dir;
     std::string err;
-    const auto take = dir / "take-20261109-160000";  // not there yet (a MIDI-only take while recording)
+    const auto take = dir / "take-20261109-160000";  // made at Record; a MIDI-only take has no file in it yet
+    CHECK_FALSE(addRecordingMark(take, {1.0, "x"}, err));  // a folder that is not there is not made (Y9)
+    std::filesystem::create_directories(take);
     REQUIRE(addRecordingMark(take, {12.5, "intro ok"}, err));
     REQUIRE(addRecordingMark(take, {3.0, "count in"}, err));
     RecordingNotes n;
@@ -399,6 +418,10 @@ TEST_CASE("T-REC-35: notes made while recording are stored as marks, in time ord
     CHECK(n.name == "Verse");
     REQUIRE(n.marks.size() == 3);
     CHECK(n.marks[2].text == "same moment");  // after the earlier one at that moment
+    // Text that is not valid UTF-8 is written with U+FFFD and read back (as project.json).
+    REQUIRE(addRecordingMark(take, {20.0, std::string("caf\xe9")}, err));
+    REQUIRE(loadRecordingNotes(take, n, err));
+    CHECK(n.marks.back().text == "caf\xef\xbf\xbd");
     // A file that cannot be read is not overwritten.
     std::ofstream(take / kRecordingNotesFile) << "{damaged";
     CHECK_FALSE(addRecordingMark(take, {1.0, "x"}, err));

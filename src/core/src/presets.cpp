@@ -382,7 +382,7 @@ bool readWholeFile(const fs::path& path, std::string& bytes, std::string& error)
     return true;
 }
 
-bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::string& error)
+bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::string& error, bool sync)
 {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
@@ -397,7 +397,7 @@ bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::str
         error = "cannot write " + pathToUtf8(tmp) + ": " + std::strerror(errno);
         return false;
     }
-    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && detail::syncToDisk(f);
+    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && (!sync || detail::syncToDisk(f));
     const int writeErrno = errno;
     if (std::fclose(f) != 0 || !ok) {
         fs::remove(tmp, ec);
