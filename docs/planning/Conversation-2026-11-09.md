@@ -20,3 +20,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 > yes fix X0–X13, X0 first
 - X0–X13 as proposed (see `Crosscheck-2026-11-09.md`, actions). The SDK compatibility test needs the SDK's `vstpresetfile.cpp` and its base library in the test program (the same files the test synth builds), compiled without our warnings.
 - Spec v0.44 (SPEC-VST-07a, -06a), Plan PL2a, T-VST-33..36 extended, T-VST-15 (preset name). Linux 191/191, Wine 190/190; GUI on Xvfb.
+
+## 3. CI of `2730bf9`
+> pushed it, check the CI run / commit the CI log lines (when CI is done)
+- Run 42626012113 green (Linux 191/191, Windows 192/192: X0 is fixed on MSVC). Both builds downloaded and checked first, then put in `dist/`; `dist/TESTS.txt` has T-VST-36 (presets; the log line that shows what Arturia offers) on top of the PL1 tests still open.
