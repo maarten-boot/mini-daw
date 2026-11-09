@@ -49,3 +49,10 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 ## 7. CI of `e2ad215`
 > pushed it, check the CI run / commit the CI log lines
 - Run 42647627344 green (Linux 196/196, Windows 197/197); both builds checked, then in `dist/`; `dist/TESTS.txt` has T-PLAY-20 (rename, notes, delete) on top, then T-RUN-02 and the PL2 / PL1 tests still open.
+
+## 8. P22: notes while recording, project note
+> yes do P22
+- Core: `addRecordingMark` (in time order, folder made if needed, a damaged file not overwritten); `ProjectData::note` (`"note"` in project.json).
+- GUI: "Note at mm:ss.t: [ ] Add note" in the transport area while a take or an auto part is recorded; ticks on the timeline blocks with tooltips; marks in the details and with Remove in the Name and notes window; File → Project note… and a button and line above the timeline.
+- Found in the GUI check: the note was stored at the moment of Enter, not when typing began (now the first key's moment, the time shown freezes while typing); the tick lines ran through the label (now the top third).
+- Spec v0.47 (SPEC-REC-09, SPEC-PRJ-03), T-REC-35, T-PRJ-09, README. Linux 198/198, Wine 197/197; GUI on Xvfb.

@@ -191,10 +191,21 @@ struct AppState {
     // P21: a recording's name / note window, and the Delete question (empty = closed).
     std::filesystem::path recordingEdit;
     std::string recordingEditName, recordingEditNote, recordingEditError;
+    std::vector<minidaw::RecordingMark> recordingEditMarks;    // shown, with Remove (P22)
+    std::vector<minidaw::RecordingMark> recordingEditRemoved;  // removed on Save
     bool recordingEditFocusNote = false;
     bool recordingEditFocus = false;
     std::filesystem::path recordingDelete;
     std::string recordingDeleteError;
+    // P22: a note typed while recording (stored as a mark), and the project's note.
+    std::string markText;
+    std::string markResult;  // "Note at 0:12 saved" / an error
+    bool markFocus = false;
+    double markSeconds = -1.0;           // the moment the note was begun (its first key); -1: none
+    std::filesystem::path markFolder;    // the recording the note line belongs to
+    std::string projectNote;
+    bool showProjectNote = false;
+    std::string projectNoteEdit;
     std::filesystem::path livePart;                   // the auto record part being recorded
     std::size_t recordingsSeen = 0;                   // to follow new ones (scroll to the end)
     std::uint64_t recordingsVersion = 0;              // +1 per rescan: the cached layout below
@@ -374,6 +385,14 @@ void setFontSize(AppState& app, float size, bool save)
     ImGui::GetStyle().FontSizeBase = app.config.fontSize;
     ImGui::GetStyle()._NextFrameFontSizeBase = app.config.fontSize;
     if (save) saveConfig(app);
+}
+
+// Spaces and tabs around a text removed.
+std::string trimSpaces(const std::string& s)
+{
+    const auto a = s.find_first_not_of(" \t");
+    if (a == std::string::npos) return {};
+    return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
 std::string describeContrast(const ContrastSetting& s)
@@ -798,6 +817,10 @@ void drawMenuBar(AppState& app, bool& quit)
             showProjectDialog(app, AppState::ProjectDialog::SaveAs);
         }
         if (ImGui::MenuItem("Close project", nullptr, false, !rec && !app.projectFolder.empty())) closeProject(app);
+        if (ImGui::MenuItem("Project note...", nullptr, false, !app.projectFolder.empty())) {  // P22
+            app.projectNoteEdit = app.projectNote;
+            app.showProjectNote = true;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
             app.showTakeBrowser = true;
@@ -1919,6 +1942,7 @@ minidaw::ProjectData currentProject(const AppState& app)
     minidaw::ProjectData d;
     d.tracks = app.tracks;
     d.sampleRate = app.audio.info().sampleRate ? app.audio.info().sampleRate : app.config.audio.sampleRate;
+    d.note = app.projectNote;  // P22
     return d;
 }
 
@@ -2016,6 +2040,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
     stopPlayback(app);
     unloadAllInstruments(app);
     app.projectFolder = folder;
+    app.projectNote = d.note;  // P22
     app.tracks = std::move(d.tracks);
     app.tracksCreated = true;
     app.midiPortsDirty = true;
@@ -2088,6 +2113,7 @@ bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool
     } else {
         unloadAllInstruments(app);
         app.projectNotes.clear();
+        app.projectNote.clear();  // a new project starts without a note (Save as keeps it)
         app.tracks.clear();
         app.tracksCreated = false;  // the default track comes back
         app.midiPortsDirty = true;
@@ -2110,6 +2136,8 @@ void closeProject(AppState& app)
     app.projectFolder.clear();
     app.projectSavedText.clear();
     app.projectNotes.clear();
+    app.projectNote.clear();
+    app.showProjectNote = false;
     app.projectError.clear();
     unloadAllInstruments(app);
     app.tracks.clear();
@@ -2615,6 +2643,61 @@ std::string clockText(double seconds)
     return buf;
 }
 
+// A note while recording (P22, SPEC-REC-09): stored at this moment in the recording
+// being made (`folder`), `seconds` from its start.
+void drawNoteWhileRecording(AppState& app, const std::filesystem::path& folder, double seconds)
+{
+    if (folder.empty()) return;
+    if (folder != app.markFolder) {  // a new recording: a fresh note line
+        app.markFolder = folder;
+        app.markText.clear();
+        app.markResult.clear();
+        app.markSeconds = -1.0;
+    }
+    // The note belongs to the moment it was begun (its first key), not to Enter.
+    if (app.markText.empty()) app.markSeconds = -1.0;
+    const double at = app.markSeconds >= 0 ? app.markSeconds : seconds;
+    const float em = ImGui::GetFontSize();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Note at %s:", clockText(at).c_str());
+    ImGui::SameLine();
+    if (app.markFocus) {
+        ImGui::SetKeyboardFocusHere();
+        app.markFocus = false;
+    }
+    ImGui::SetNextItemWidth(24 * em);
+    const bool enter = ImGui::InputText("##mark", &app.markText, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!app.markText.empty() && app.markSeconds < 0) app.markSeconds = seconds;
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Type a note and press Enter: it is kept at the moment you began typing it, and shown on "
+                          "the timeline.");
+    }
+    ImGui::SameLine();
+    const std::string text = trimSpaces(app.markText);
+    minidaw::app::beginDisabled(text.empty());
+    const bool clicked = ImGui::Button("Add note");
+    minidaw::app::endDisabled();
+    if ((enter || clicked) && !text.empty()) {
+        std::string err;
+        const double when = app.markSeconds >= 0 ? app.markSeconds : seconds;
+        if (minidaw::addRecordingMark(folder, {when, text}, err)) {
+            app.markResult = "Note at " + clockText(when) + " saved: " + text;
+            app.log.info("Note at " + clockText(when) + " in " + minidaw::pathToUtf8(folder) + ": " + text);
+            app.markText.clear();
+            app.markSeconds = -1.0;
+            app.recordingsDirty = true;
+        } else {
+            app.markResult = "Note not saved: " + err;
+            app.log.error(app.markResult);
+        }
+        app.markFocus = enter;  // keep typing the next one
+    }
+    if (!app.markResult.empty()) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted(app.markResult.c_str());
+    }
+}
+
 void drawTransport(AppState& app)
 {
     ImGui::SeparatorText("Transport");
@@ -2701,6 +2784,7 @@ void drawTransport(AppState& app)
         if (app.session.autoInPart()) {
             ImGui::Text("AUTO RECORD: recording a part, %s so far (quiet for %.1f s; it ends after %d s)",
                         clockText(app.session.autoPartSeconds()).c_str(), app.session.autoQuietSeconds(), pause);
+            drawNoteWhileRecording(app, app.livePart, app.session.autoPartSeconds());
         } else {
             ImGui::TextWrapped("AUTO RECORD: waiting. Play on an armed track to start a part; it ends after %d s "
                                "without playing.",
@@ -2732,6 +2816,7 @@ void drawTransport(AppState& app)
         ImGui::Text("RECORDING  %02d:%04.1f   lost frames: %llu   MIDI messages: %zu (lost: %llu)", m, s - 60.0 * m,
                     static_cast<unsigned long long>(app.session.lostFrames()), app.session.midiMessages(),
                     static_cast<unsigned long long>(app.session.midiLost()));
+        drawNoteWhileRecording(app, app.session.folder(), s);
         ImGui::TextWrapped("Into: %s", minidaw::pathToUtf8(app.session.folder()).c_str());
         const std::string err = app.session.diskError();
         if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
@@ -2870,13 +2955,13 @@ void loadRecording(AppState& app, const std::filesystem::path& folder)
 }
 
 // --- A recording's name, notes and Delete (P21, SPEC-PLAY-08) ---------------
-std::string trimSpaces(const std::string& s);  // further down
-
 void openRecordingEdit(AppState& app, const minidaw::RecordingInfo& r, bool focusNote)
 {
     app.recordingEdit = r.folder;
     app.recordingEditName = r.notes.name;
     app.recordingEditNote = r.notes.note;
+    app.recordingEditMarks = r.notes.marks;
+    app.recordingEditRemoved.clear();
     app.recordingEditError = r.notesProblem.empty() ? std::string() : "Its notes could not be read: " + r.notesProblem;
     app.recordingEditFocusNote = focusNote;
     app.recordingEditFocus = true;
@@ -2895,6 +2980,26 @@ std::string deleteRecordingBlocked(const AppState& app, const minidaw::Recording
 void drawRecordingWindows(AppState& app)
 {
     const float em = ImGui::GetFontSize();
+    // The project's note (P22, SPEC-PRJ-03); saved with the project (autosave).
+    if (app.showProjectNote && app.projectFolder.empty()) app.showProjectNote = false;
+    if (app.showProjectNote) {
+        bool open = true;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(60 * em, FLT_MAX));
+        const std::string title = "Project note - " + minidaw::pathToUtf8(app.projectFolder.filename()) + "###projectnote";
+        if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("A note for the whole project (all its recordings):");
+            ImGui::InputTextMultiline("##projectnote", &app.projectNoteEdit, ImVec2(40 * em, 10 * ImGui::GetTextLineHeight()));
+            if (ImGui::Button("Save")) {
+                app.projectNote = app.projectNoteEdit;
+                app.log.info("Project note saved");
+                open = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) open = false;
+        }
+        ImGui::End();
+        if (!open) app.showProjectNote = false;
+    }
     // Name and note.
     if (!app.recordingEdit.empty()) {
         bool open = true;
@@ -2911,11 +3016,34 @@ void drawRecordingWindows(AppState& app)
             if (app.recordingEditFocus && app.recordingEditFocusNote) ImGui::SetKeyboardFocusHere();
             app.recordingEditFocus = false;
             ImGui::InputTextMultiline("##note", &app.recordingEditNote, ImVec2(34 * em, 8 * ImGui::GetTextLineHeight()));
+            // Notes made while recording (P22): shown with their moment; Remove takes one out on Save.
+            if (!app.recordingEditMarks.empty()) {
+                ImGui::TextUnformatted("Notes made while recording:");
+                for (std::size_t i = 0; i < app.recordingEditMarks.size(); ++i) {
+                    const auto& m = app.recordingEditMarks[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    if (ImGui::SmallButton("Remove")) {
+                        app.recordingEditRemoved.push_back(m);
+                        app.recordingEditMarks.erase(app.recordingEditMarks.begin() + static_cast<std::ptrdiff_t>(i));
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("%s  %s", clockText(m.seconds).c_str(), m.text.c_str());
+                    ImGui::PopID();
+                }
+            }
             if (ImGui::Button("Save")) {
-                // Keep what else is in the file (marks made while recording, P22).
+                // The file again: marks added meanwhile (still recording) stay; removed ones go.
                 minidaw::RecordingNotes notes;
                 std::string err;
                 minidaw::loadRecordingNotes(app.recordingEdit, notes, err);
+                for (const auto& gone : app.recordingEditRemoved) {
+                    const auto it = std::find_if(notes.marks.begin(), notes.marks.end(), [&](const minidaw::RecordingMark& m) {
+                        return m.seconds == gone.seconds && m.text == gone.text;
+                    });
+                    if (it != notes.marks.end()) notes.marks.erase(it);
+                }
                 notes.name = trimSpaces(app.recordingEditName);
                 notes.note = app.recordingEditNote;
                 if (minidaw::saveRecordingNotes(app.recordingEdit, notes, err)) {
@@ -3002,6 +3130,18 @@ void drawRecordingWindows(AppState& app)
 void drawTimeline(AppState& app)
 {
     ImGui::SeparatorText("Timeline of recordings");
+    // The project's note (P22, SPEC-PRJ-03): its first line, and a button to edit it.
+    if (!app.projectFolder.empty()) {
+        if (ImGui::SmallButton("Project note...")) {
+            app.projectNoteEdit = app.projectNote;
+            app.showProjectNote = true;
+        }
+        ImGui::SameLine();
+        const std::string first = app.projectNote.substr(0, app.projectNote.find('\n'));
+        ImGui::TextWrapped("%s: %s%s", minidaw::pathToUtf8(app.projectFolder.filename()).c_str(),
+                           first.empty() ? "(no note)" : first.c_str(),
+                           first.size() < app.projectNote.size() ? " ..." : "");
+    }
     const float em = ImGui::GetFontSize();
     if (app.recordingsDirty) {
         // Folders read before and unchanged are not read again (T4).
@@ -3141,6 +3281,26 @@ void drawTimeline(AppState& app)
                 ImGui::EndPopup();
             }
             ImGui::PopID();
+            // Notes made while recording (P22): a tick at their moment; pointing at one shows it.
+            const ImVec2 bmin = ImGui::GetItemRectMin();
+            const ImVec2 bmax = ImGui::GetItemRectMax();
+            const minidaw::RecordingMark* hoveredMark = nullptr;
+            const float tick = std::max(3.0f, em * 0.3f);
+            for (const auto& m : r.notes.marks) {
+                const double share = r.seconds > 0 ? std::clamp(m.seconds / r.seconds, 0.0, 1.0) : 0.0;
+                const float mx = bmin.x + 1.0f + static_cast<float>(share) * (bmax.x - bmin.x - 2.0f);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddTriangleFilled(ImVec2(mx - tick, bmin.y), ImVec2(mx + tick, bmin.y), ImVec2(mx, bmin.y + 1.6f * tick),
+                                      ImGui::GetColorU32(ImGuiCol_CheckMark));  // Accent
+                // A short line (the top third), so the label below stays readable.
+                dl->AddLine(ImVec2(mx, bmin.y), ImVec2(mx, bmin.y + (bmax.y - bmin.y) * 0.35f),
+                            ImGui::GetColorU32(ImGuiCol_CheckMark), 1.0f);
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                if (std::fabs(mouse.x - mx) <= tick && mouse.y >= bmin.y && mouse.y <= bmax.y &&
+                    ImGui::IsWindowHovered()) {
+                    hoveredMark = &m;
+                }
+            }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 doubleClicked = static_cast<int>(b.index);
             }
@@ -3156,6 +3316,9 @@ void drawTimeline(AppState& app)
                                   named.c_str(), minidaw::pathToUtf8(r.folder.filename()).c_str(),
                                   minidaw::clockLabel(r.clock, true).c_str(), r.seconds, r.files.size(),
                                   live ? " (being recorded)" : "", problems.c_str(), note.c_str());
+            }
+            if (hoveredMark != nullptr) {  // over the block's own tooltip
+                ImGui::SetTooltip("Note at %s: %s", clockText(hoveredMark->seconds).c_str(), hoveredMark->text.c_str());
             }
         }
         ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(layout.width) + pad, yTakes + rowH));
@@ -3183,6 +3346,10 @@ void drawTimeline(AppState& app)
                     sel->notes.name.empty() ? "" : " - ", sel->autoPart ? "Auto record part" : "Record take",
                     minidaw::clockLabel(sel->clock, true).c_str(), clockText(sel->seconds).c_str());
         if (!sel->notes.note.empty()) ImGui::TextWrapped("Note: %s", sel->notes.note.c_str());
+        for (const auto& m : sel->notes.marks) {  // P22
+            ImGui::Bullet();
+            ImGui::TextWrapped("%s  %s", clockText(m.seconds).c_str(), m.text.c_str());
+        }
         if (!sel->notesProblem.empty()) ImGui::TextWrapped("Its notes could not be read: %s", sel->notesProblem.c_str());
         const bool playingThis = !app.previewFolder.empty() && app.previewFolder == sel->folder &&
                                  app.audio.player().playing();
@@ -3417,13 +3584,6 @@ void drawPresetControls(AppState& app, minidaw::Track& t)
     }
     ImGui::PopTextWrapPos();
     ImGui::EndPopup();
-}
-
-std::string trimSpaces(const std::string& s)
-{
-    const auto a = s.find_first_not_of(" \t");
-    if (a == std::string::npos) return {};
-    return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
 // Save preset: the instrument's current sound as a .vstpreset in the user's preset folder.

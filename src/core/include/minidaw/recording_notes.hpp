@@ -38,6 +38,12 @@ bool loadRecordingNotes(const std::filesystem::path& folder, RecordingNotes& not
 // Writes the file (via a temporary file and a rename); empty notes remove it.
 bool saveRecordingNotes(const std::filesystem::path& folder, const RecordingNotes& notes, std::string& error);
 
+// Adds a mark (P22, SPEC-REC-09) to the recording in `folder` (made if it is not
+// there yet: a MIDI-only take has no file until it ends), keeping its name, note
+// and the other marks; marks stay sorted by time. A damaged file is not
+// overwritten (false with the reason).
+bool addRecordingMark(const std::filesystem::path& folder, const RecordingMark& mark, std::string& error);
+
 // Moves `folder` (a recording in `takesFolder`, or in its "auto" folder) to
 // takesFolder/deleted/[auto/]<name>, with "-2", "-3" … when that exists.
 // `movedTo` is where it went.

@@ -27,6 +27,7 @@ inline constexpr int kProjectFormatVersion = 1;
 struct ProjectData {
     std::vector<Track> tracks;
     unsigned int sampleRate = 0;   // stream rate when it was saved (informative)
+    std::string note;              // a note for the whole project (P22, SPEC-PRJ-03)
 };
 
 // Serialise / parse. `folder` is the project folder: take paths inside it

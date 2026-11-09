@@ -407,3 +407,25 @@ TEST_CASE("T-VST-27: the linked sound track and Sound from are kept in the proje
     CHECK(w.size() == 3);
 }
 
+
+TEST_CASE("T-PRJ-09: the project's note is saved and read back", "[project][T-PRJ-09]")
+{
+    test::TempDir dir;
+    ProjectData d;
+    d.note = "Session with Anna\nsecond line";
+    std::string err;
+    std::filesystem::create_directories(dir.path() / "P");
+    REQUIRE(saveProject(dir.path() / "P", d, err));
+    ProjectData back;
+    std::vector<std::string> w;
+    REQUIRE(loadProject(dir.path() / "P", back, w, err));
+    CHECK(w.empty());
+    CHECK(back.note == d.note);
+    // No note: not written; a wrong type: a warning, the project opens.
+    CHECK(projectToJson(ProjectData{}, dir.path()).find("\"note\"") == std::string::npos);
+    const std::string typed = R"({"format":"mini-daw project","version":1,"note":5,"tracks":[]})";
+    REQUIRE(projectFromJson(typed, dir.path(), back, w, err));
+    CHECK(back.note.empty());
+    REQUIRE(w.size() == 1);
+    CHECK(w[0].find("note") != std::string::npos);
+}

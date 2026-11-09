@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <system_error>
 
@@ -78,6 +79,16 @@ bool saveRecordingNotes(const fs::path& folder, const RecordingNotes& notes, std
     // Names that are not valid UTF-8 are written with U+FFFD (as project.json).
     const std::string text = j.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
     return writeFileReplacing(p, text, error);
+}
+
+bool addRecordingMark(const fs::path& folder, const RecordingMark& mark, std::string& error)
+{
+    RecordingNotes notes;
+    if (!loadRecordingNotes(folder, notes, error)) return false;  // never overwrite what could not be read
+    const auto at = std::upper_bound(notes.marks.begin(), notes.marks.end(), mark.seconds,
+                                     [](double s, const RecordingMark& m) { return s < m.seconds; });
+    notes.marks.insert(at, mark);
+    return saveRecordingNotes(folder, notes, error);
 }
 
 bool moveRecordingToDeleted(const fs::path& takesFolder, const fs::path& folder, fs::path& movedTo,

@@ -378,3 +378,32 @@ TEST_CASE("T-PLAY-19: a block with a name can be wider than the others", "[timel
     CHECK(l.blocks[1].width == 80.0);
     CHECK(l.blocks[1].x >= l.blocks[0].x + 200.0);  // never starts inside the wider one
 }
+
+TEST_CASE("T-REC-35: notes made while recording are stored as marks, in time order", "[timeline][T-REC-35]")
+{
+    test::TempDir dir;
+    std::string err;
+    const auto take = dir / "take-20261109-160000";  // not there yet (a MIDI-only take while recording)
+    REQUIRE(addRecordingMark(take, {12.5, "intro ok"}, err));
+    REQUIRE(addRecordingMark(take, {3.0, "count in"}, err));
+    RecordingNotes n;
+    REQUIRE(loadRecordingNotes(take, n, err));
+    REQUIRE(n.marks.size() == 2);
+    CHECK(n.marks[0].text == "count in");
+    CHECK(n.marks[1].seconds == Catch::Approx(12.5));
+    // Name and note stay when marks are added, and marks stay when they are edited (P21).
+    n.name = "Verse";
+    REQUIRE(saveRecordingNotes(take, n, err));
+    REQUIRE(addRecordingMark(take, {12.5, "same moment"}, err));
+    REQUIRE(loadRecordingNotes(take, n, err));
+    CHECK(n.name == "Verse");
+    REQUIRE(n.marks.size() == 3);
+    CHECK(n.marks[2].text == "same moment");  // after the earlier one at that moment
+    // A file that cannot be read is not overwritten.
+    std::ofstream(take / kRecordingNotesFile) << "{damaged";
+    CHECK_FALSE(addRecordingMark(take, {1.0, "x"}, err));
+    std::string bytes;
+    std::ifstream in(take / kRecordingNotesFile);
+    std::getline(in, bytes);
+    CHECK(bytes == "{damaged");
+}

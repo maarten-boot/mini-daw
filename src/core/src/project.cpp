@@ -152,6 +152,7 @@ std::string projectToJson(const ProjectData& data, const fs::path& folder)
     root["format"] = "mini-daw project";
     root["version"] = kProjectFormatVersion;
     root["sampleRate"] = data.sampleRate;
+    if (!data.note.empty()) root["note"] = data.note;  // P22
     root["tracks"] = std::move(tracks);
     // Bytes that are not valid UTF-8 (an odd driver name, a hand-edited file)
     // become U+FFFD instead of throwing (crosscheck #7, N2).
@@ -187,6 +188,13 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
     }
     if (root.contains("sampleRate") && root["sampleRate"].is_number_unsigned()) {
         data.sampleRate = root["sampleRate"].get<unsigned int>();
+    }
+    if (root.contains("note")) {  // P22, optional
+        if (root["note"].is_string()) {
+            data.note = root["note"].get<std::string>();
+        } else {
+            warnings.push_back("The project's note has a wrong value; ignored.");
+        }
     }
     if (!root.contains("tracks") || !root["tracks"].is_array()) {
         error = "The project file has no track list.";
