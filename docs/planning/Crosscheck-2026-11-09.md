@@ -97,3 +97,32 @@ Scope: Spec v0.47, Plan, Tests, README, CLAUDE.md, code at `3121a4a` (changes si
 | Y12 | SPEC-PLAY-08 (playing includes a recording played from the timeline — a preview always starts the player —, unreadable files, names, trailing separator, cache), SPEC-REC-09, SPEC-PRJ-03; CLAUDE.md `src/core/` list. |
 
 Spec v0.48, Plan P22a. Linux 200/200, Wine 198/198 Catch2 cases (3258 assertions); GUI on Xvfb (Y3).
+
+---
+
+# Crosscheck #18 (after P23 and P24)
+
+Scope: Spec v0.50, Plan, Tests, README, CLAUDE.md, code at `6301676` (changes since `6590221`: P23 Terms tab `c89fec7`, P24 Linux plugin editor `6301676`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Claude checked each finding at the code before listing it. CI run 42707274316 green (Linux 207/207 under `xvfb-run`, T-VST-39 ran there; Windows 205/205).
+
+| Area | Verdict |
+|------|---------|
+| Run loop (core) | ✅ readers before timers, a late timer once, callbacks copied and entries found again by id, so a callback can remove itself or others; ❌ a reader whose descriptor was closed (POLLNVAL) is called every frame, and after the number is reused it is told about another file **Z1**; ❌ handler objects can be destroyed inside the run loop's own erase, and their destructors may unregister (re-entry) **Z2** |
+| IRunLoop on the frame | ✅ only on Linux, handlers held while registered, all of an editor's dropped at close and on unload before the module goes; ⚠️ unregister matches a pointer of either kind **Z5** |
+| Linux editor window | ✅ X11 window made on the server before attach, transient for the main window, sizes in pixels, same close rules as Windows; ⚠️ no check that GLFW runs on X11 (safe while GLFW is built without Wayland) **Z3**; keyboard focus inside the plugin's own window not tested **Z6**; the app side is tested by hand only **Z4** |
+| Main loop | ✅ poll after `glfwPollEvents`, outside ImGui frames, also while minimised; not while slow work blocks the thread (as everything else) |
+| Terms tab | ✅ texts checked against Spec and code (names, defaults, labels); search as specified; IDs per term; old configs get the tab; ⚠️ "> " mark never cleared **Z7**; a query that matches every term shows the topic view **Z8** |
+| Tests / CI | ✅ T-VST-37..39 test what they claim; `xvfb-run` affects only the X11 test; ⚠️ the test synth cannot show Z1 / Z2 **Z4** |
+| Spec ↔ Plan ↔ docs | ⚠️ stale "Linux later" in Plan P10d and CLAUDE.md; Spec says hang-up / error descriptors are called (also wrong after Z1) **Z9** |
+
+## Findings
+| # | Sev | Finding | Proposed action |
+|---|-----|---------|-----------------|
+| Z1 | medium | `RunLoop::poll` treats POLLNVAL (descriptor not open) as ready: a plugin that closes its X11 connection before unregistering is called every frame until its editor closes; when the number is reused by another file (audio, MIDI, the log) the plugin is told about a descriptor it does not own. T-VST-37 "hang-up counts as ready" is fine, but nothing covers NVAL. | On POLLNVAL drop the reader (not called) and log it once; keep calling on POLLIN / POLLERR / POLLHUP. Test: close the pipe's read end, poll → not called, reader gone. |
+| Z2 | medium | Removing an entry (`remove`, `removeOwner`, and through them the frame's `unregister` / `dropHandlers`) destroys its callback, and with it the last reference to a plugin object, inside `vector::erase`. In `InstrumentEditor::close()` the view's own reference is released first, so `dropHandlers` can run the view's destructor there; a destructor that unregisters (common) re-enters `remove` / the frame's `handlers_` loop while they are being changed → undefined behaviour. | `RunLoop::remove` / `removeOwner`: move the entries out, erase, and destroy them after the list is consistent. Frame: `unregister` takes its ids out of `handlers_` first, then removes them; `dropHandlers` swaps `handlers_` out before `removeOwner`. Test: a callback object whose destructor removes another entry. |
+| Z3 | low | `plugin_window.cpp` uses `glfwGetX11Display()` / `glfwGetX11Window()` without a check. GLFW is built X11-only now, but with Wayland enabled (P12) they return null and `XSetTransientForHint` / `XSync` crash. | `supported()` also needs `glfwGetPlatform() == GLFW_PLATFORM_X11`; in `open()` a null display gives an error ("needs X11 / XWayland"). |
+| Z4 | low | Test gaps: the app's Linux window code (`plugin_window.cpp`) is tested by hand only (T-VST-40); the test synth always unregisters in `removed()` and never closes its connection first, so it cannot show Z1 / Z2; registering from `setFrame()` is not tested. | Cover Z1 / Z2 in `test_run_loop.cpp` (closed descriptor, destructor that unregisters); test-synth hidden switch to register in `setFrame()` and to close its X11 connection before unregistering (T-VST-38). The app window stays a manual test (T-VST-40). |
+| Z5 | low | The frame keeps readers and timers in one list keyed by the handler pointer: `unregisterTimer(p)` would also remove readers registered with the same pointer, and the other way round (only possible with odd plugins). | Keep the kind (reader / timer) in each record and match it. |
+| Z6 | low | Keyboard input in a plugin's own window (text fields, a plugin's keyboard) is not tested; mini-daw focuses its own X11 window, the plugin's child window has to take the focus itself. | No code change now; add a step to T-VST-40 (type in a plugin's text field) and look at it with a real plugin. |
+| Z7 | low | Terms tab: the "> " mark of a term jumped to stays for the rest of the session, also in later search results. | Clear it when the Find text changes. |
+| Z8 | low | Terms tab: a query that matches every term (e.g. "e") shows the topic view without the topics per term and "47 terms", while the Spec says found terms are shown name-first with their topic; the "no term has" text shows the untrimmed query. | Choose the view by "Find is empty (after trimming)"; show the trimmed query. |
+| Z9 | doc | Plan P10d still says "Linux later … Linux editor later (P12)"; CLAUDE.md line 3 "Windows 10 (Linux/macOS later)"; SPEC-VST-05b "ready descriptors (also on error or hang-up) are called" needs Z1's rule. | Update the texts. |

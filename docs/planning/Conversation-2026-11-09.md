@@ -99,3 +99,9 @@ User: "pushed it, yes do P24" (`6590221` pushed).
 - Linux 207/207 (with and without a display); MinGW under Wine 203/203; the app on Xvfb with the test synth: Edit, clicks, Close, quit with the editor open.
 - Spec v0.50: SPEC-VST-05b; SPEC-VST-05a / -07a updated. Plan P24 done. Terms: "Edit" no longer says "on Linux later". README updated.
 
+## 16. CI of `6301676` and crosscheck #18
+
+User: "pushed it, check the CI run and do the crosscheck". Run 42707274316: windows, linux, licence green; Linux 207/207 under `xvfb-run` (T-VST-39 ran: the X11 editor test), Windows 205/205. Both builds checked and put in `dist/`; `dist/TESTS.txt` has T-VST-40 (Edit on Linux) at the top.
+
+Crosscheck #18 (`Crosscheck-2026-11-09.md`): reviewer subagent on the code, Claude on Spec ↔ Plan ↔ Tests ↔ docs and checking each finding at the code. Findings Z1–Z9: the run loop calls a closed descriptor every frame (Z1) and can destroy plugin objects inside its own erase, with re-entry from their destructors (Z2); no X11 check for a future Wayland GLFW (Z3); test gaps (Z4); unregister by pointer of either kind (Z5); keyboard focus in plugin windows untested (Z6); Terms "> " mark never cleared (Z7) and the view for a query matching all terms (Z8); stale "Linux later" texts (Z9).
+
