@@ -5,6 +5,7 @@
 #include "minidaw/path_util.hpp"
 #include "minidaw/presets.hpp"
 #include "minidaw/ring_buffer.hpp"
+#include "minidaw/run_loop.hpp"
 
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
@@ -26,9 +27,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <utility>
 
 namespace minidaw {
 
@@ -679,23 +682,84 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
 
 // --- Editor (P10d) ---------------------------------------------------------------
 
-// The host side of the view's frame: the view asks here for a new size.
-class PlugFrameImpl : public IPlugFrame {
+// The host side of the view's frame: the view asks here for a new size. On
+// Linux it is also the editor's run loop (P24, SPEC-VST-05b): the view asks
+// for it from the frame and registers its X11 connection and its timers; they
+// run in editorRunLoop(), which the GUI thread polls every frame.
+class PlugFrameImpl : public IPlugFrame
+#if !defined(_WIN32)
+    , public Linux::IRunLoop
+#endif
+{
 public:
     explicit PlugFrameImpl(InstrumentEditor* owner) : owner_(owner) {}
+    ~PlugFrameImpl() { dropHandlers(); }
     tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* newSize) override;
     tresult PLUGIN_API queryInterface(const TUID queried, void** obj) override
     {
         QUERY_INTERFACE(queried, obj, FUnknown::iid, IPlugFrame)
         QUERY_INTERFACE(queried, obj, IPlugFrame::iid, IPlugFrame)
+#if !defined(_WIN32)
+        QUERY_INTERFACE(queried, obj, Linux::IRunLoop::iid, Linux::IRunLoop)
+#endif
         *obj = nullptr;
         return kNoInterface;
     }
     uint32 PLUGIN_API addRef() override { return 1000; }  // owned by the editor
     uint32 PLUGIN_API release() override { return 1000; }
 
+#if !defined(_WIN32)
+    tresult PLUGIN_API registerEventHandler(Linux::IEventHandler* handler, Linux::FileDescriptor fd) override
+    {
+        if (!handler || fd < 0) return kInvalidArgument;
+        IPtr<Linux::IEventHandler> keep(handler);  // held while registered, and during each call
+        const RunLoop::Id id = editorRunLoop().addReader(fd, [keep, fd] { keep->onFDIsSet(fd); }, this);
+        if (id == 0) return kResultFalse;
+        handlers_.push_back({handler, id});
+        return kResultTrue;
+    }
+    tresult PLUGIN_API unregisterEventHandler(Linux::IEventHandler* handler) override
+    {
+        return unregister(handler);
+    }
+    tresult PLUGIN_API registerTimer(Linux::ITimerHandler* handler, Linux::TimerInterval milliseconds) override
+    {
+        if (!handler) return kInvalidArgument;
+        IPtr<Linux::ITimerHandler> keep(handler);
+        const auto ms = std::chrono::milliseconds(static_cast<std::int64_t>(std::min<Linux::TimerInterval>(milliseconds, 3600000)));
+        const RunLoop::Id id = editorRunLoop().addTimer(ms, [keep] { keep->onTimer(); }, this);
+        if (id == 0) return kResultFalse;
+        handlers_.push_back({handler, id});
+        return kResultTrue;
+    }
+    tresult PLUGIN_API unregisterTimer(Linux::ITimerHandler* handler) override { return unregister(handler); }
+#endif
+
+    // The editor closed: whatever the view left registered goes too.
+    void dropHandlers()
+    {
+        editorRunLoop().removeOwner(this);
+        handlers_.clear();
+    }
+
 private:
+    tresult unregister(const void* handler)
+    {
+        bool found = false;
+        for (auto it = handlers_.begin(); it != handlers_.end();) {
+            if (it->first == handler) {
+                editorRunLoop().remove(it->second);
+                it = handlers_.erase(it);
+                found = true;
+            } else {
+                ++it;
+            }
+        }
+        return found ? kResultTrue : kInvalidArgument;
+    }
+
     InstrumentEditor* owner_;
+    std::vector<std::pair<const void*, RunLoop::Id>> handlers_;
 };
 
 struct InstrumentEditor::Impl {
@@ -841,6 +905,7 @@ void InstrumentEditor::close()
         e.view->setFrame(nullptr);
         e.view = nullptr;
     }
+    e.frame.dropHandlers();  // after removed(): the view may unregister its own first
     if (e.instrument) e.instrument->impl_->editor = nullptr;
     e.instrument = nullptr;
     e.attached = false;

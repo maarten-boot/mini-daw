@@ -24,6 +24,7 @@ add_executable(minidaw_tests
     test_folders.cpp
     test_instance_lock.cpp
     test_terms.cpp
+    test_run_loop.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):
@@ -100,6 +101,13 @@ if(WIN32)
     if(MINGW)
         target_link_options(minidaw_testsynth PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
+endif()
+if(UNIX AND NOT APPLE)
+    # The test synth's X11 editor and the X11 editor test (P24).
+    find_package(X11 REQUIRED)
+    target_link_libraries(minidaw_testsynth PRIVATE X11::X11)
+    target_sources(minidaw_tests PRIVATE test_editor_x11.cpp)
+    target_link_libraries(minidaw_tests PRIVATE X11::X11)
 endif()
 set(testsynth_bundle ${CMAKE_CURRENT_BINARY_DIR}/vst3/minidaw-testsynth.vst3)
 add_custom_command(TARGET minidaw_testsynth POST_BUILD

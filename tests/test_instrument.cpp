@@ -5,6 +5,7 @@
 #include "minidaw/path_util.hpp"
 #include "minidaw/presets.hpp"
 #include "minidaw/render.hpp"
+#include "minidaw/run_loop.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
 #include "test_support.hpp"
@@ -650,4 +651,55 @@ TEST_CASE("T-VST-34: a preset saved from an instrument loads its sound back; ano
     REQUIRE(writeFileReplacing(other, encodeVstPreset(*d), err));
     CHECK_FALSE(inst.loadPreset(other, err));
     CHECK(err.find("another plugin") != std::string::npos);
+}
+
+TEST_CASE("T-VST-38: the editor gets the host's run loop on Linux; its handlers go when it closes", "[vst][T-VST-38]")
+{
+    Vst3Instrument inst;
+    std::string err;
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    RunLoop& loop = editorRunLoop();
+    REQUIRE(loop.readerCount() == 0);
+    REQUIRE(loop.timerCount() == 0);
+    [[maybe_unused]] const auto ticks = [&] { return std::lround(inst.controller()->getParamNormalized(5) * 1000); };
+    [[maybe_unused]] const auto reads = [&] { return std::lround(inst.controller()->getParamNormalized(6) * 1000); };
+    {
+        InstrumentEditor ed;
+        ed.onResizeRequest = [](InstrumentEditor::Size) { return true; };
+        REQUIRE(ed.create(inst, "minidaw-test", err));
+        REQUIRE(ed.attach(nullptr, err));
+#if defined(_WIN32)
+        // Windows editors have their own message loop: no IRunLoop.
+        CHECK(loop.timerCount() == 0);
+        CHECK(loop.readerCount() == 0);
+#else
+        // The test view registered a 10 ms timer and a pipe.
+        CHECK(loop.timerCount() == 1);
+        CHECK(loop.readerCount() == 1);
+        const auto t = RunLoop::Clock::now();
+        CHECK(loop.poll(t + std::chrono::milliseconds(20)) == 1);  // the timer: it writes into the pipe
+        CHECK(ticks() == 1);
+        CHECK(reads() == 0);
+        CHECK(loop.poll(t + std::chrono::milliseconds(25)) == 1);  // the pipe can be read
+        CHECK(reads() == 1);
+        CHECK(loop.poll(t + std::chrono::milliseconds(40)) == 1);
+        CHECK(ticks() == 2);
+#endif
+        ed.close();
+        CHECK(loop.timerCount() == 0);
+        CHECK(loop.readerCount() == 0);
+    }
+#if !defined(_WIN32)
+    // Unloading the instrument with the editor open removes them too.
+    {
+        InstrumentEditor ed;
+        REQUIRE(ed.create(inst, "minidaw-test", err));
+        REQUIRE(ed.attach(nullptr, err));
+        CHECK(loop.timerCount() == 1);
+        inst.unload();
+        CHECK_FALSE(ed.isOpen());
+        CHECK(loop.timerCount() == 0);
+        CHECK(loop.readerCount() == 0);
+    }
+#endif
 }

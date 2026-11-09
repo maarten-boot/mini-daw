@@ -77,7 +77,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libasound2-dev libpulse-dev xorg-dev libgl-dev
+            ninja-build libasound2-dev libpulse-dev xorg-dev libgl-dev xvfb
 
       - name: Cache fetched dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -92,7 +92,8 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        # On a virtual X11 display, so the plugin editor test in an X11 window runs too (P24, T-VST-39).
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Smoke-run the program
         run: |

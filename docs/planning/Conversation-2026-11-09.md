@@ -86,3 +86,16 @@ User: "pushed it, yes do P23" (`75bf825` pushed).
 ## 14. CI of `c89fec7`
 
 User: "pushed it, check the CI run". Run 42694188393: windows, linux, licence green; Linux 203/203, Windows 203/203. Both builds downloaded and checked (the Terms texts are in them), then `dist/` refilled; `dist/TESTS.txt` has T-UI-28 at the top.
+
+## 15. P24: the plugin editor on Linux
+
+User: "pushed it, yes do P24" (`6590221` pushed).
+
+- Core `run_loop` (`RunLoop`, `editorRunLoop()`): readers (file descriptors, POSIX `poll`) and timers with an owner tag; safe to change from a callback; a late timer runs once.
+- `instrument.cpp`: the editor's frame (`PlugFrameImpl`) also implements `Linux::IRunLoop` (not on Windows): handlers are held (IPtr) while registered and removed when the editor closes.
+- `plugin_window.cpp`: Linux branch with `X11EmbedWindowID`, a GLFW window (no API) transient for the main window, XSync before attach; `main.cpp` polls `editorRunLoop()` every frame (also while minimised); the Edit tooltip no longer says "Linux later". The app links X11.
+- Test synth: an X11 editor (draws the gain, clicks change it) through the host's run loop, plus a 10 ms timer and a pipe counted in hidden parameters 5 and 6 (not on Windows: the SDK defines those interface IDs only for Linux).
+- Tests: `test_run_loop.cpp` (T-VST-37), T-VST-38 in `test_instrument.cpp`, `test_editor_x11.cpp` (T-VST-39, skipped without a display; separate file because of X11's macros). CI's Linux tests now run under `xvfb-run` (package `xvfb`).
+- Linux 207/207 (with and without a display); MinGW under Wine 203/203; the app on Xvfb with the test synth: Edit, clicks, Close, quit with the editor open.
+- Spec v0.50: SPEC-VST-05b; SPEC-VST-05a / -07a updated. Plan P24 done. Terms: "Edit" no longer says "on Linux later". README updated.
+

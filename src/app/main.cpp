@@ -37,6 +37,7 @@
 #include "minidaw/project.hpp"
 #include "minidaw/recording_session.hpp"
 #include "minidaw/render.hpp"
+#include "minidaw/run_loop.hpp"
 #include "minidaw/terms.hpp"
 #include "minidaw/timeline.hpp"
 #include "minidaw/track.hpp"
@@ -4022,7 +4023,7 @@ void drawTracksPanel(AppState& app)
                     }
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                         ImGui::SetTooltip("%s", !minidaw::app::PluginWindows::supported()
-                                                    ? "The instrument's own window: on Windows for now (Linux later)."
+                                                    ? "The instrument's own window is not available on this system yet."
                                                 : editorOpen ? "Close the instrument's window."
                                                              : "Open the instrument's own window (sounds, presets). It "
                                                                "can stay open while you play.");
@@ -4656,6 +4657,7 @@ int runGui(AppState& app)
         runBusy(app);  // slow work asked for in the frame before, now that its message is on screen
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
+        minidaw::editorRunLoop().poll();  // Linux plugin editors: their X11 events and timers (P24)
         // A second start asked for this window (P20): restore it and bring it to the front.
         static double lastShowCheck = 0.0;
         if (glfwGetTime() - lastShowCheck > 0.5) {

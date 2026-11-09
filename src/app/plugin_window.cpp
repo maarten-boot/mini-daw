@@ -1,5 +1,7 @@
 #include "plugin_window.hpp"
 
+#include <cstdint>
+
 #include <GLFW/glfw3.h>
 #if defined(_WIN32)
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -8,6 +10,14 @@
 #endif
 #include <GLFW/glfw3native.h>
 #include <windows.h>
+#define MINIDAW_PLUGIN_WINDOWS 1
+#elif defined(__linux__)
+// Last: X11's macros (None, Success, ...) must not meet other headers (P24).
+#define GLFW_EXPOSE_NATIVE_X11
+#include <GLFW/glfw3native.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#define MINIDAW_PLUGIN_WINDOWS 1
 #endif
 
 namespace minidaw::app {
@@ -18,7 +28,7 @@ struct PluginWindows::Window {
     bool settingSize = false;  // our own glfwSetWindowSize: no size callback loop
 };
 
-#if defined(_WIN32)
+#if defined(MINIDAW_PLUGIN_WINDOWS)
 namespace {
 
 PluginWindows::Window* windowOf(GLFWwindow* w)
@@ -61,7 +71,7 @@ PluginWindows::~PluginWindows()
 
 bool PluginWindows::supported()
 {
-#if defined(_WIN32)
+#if defined(MINIDAW_PLUGIN_WINDOWS)
     return true;
 #else
     return false;
@@ -76,10 +86,15 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
         glfwFocusWindow(it->second->window);
         return true;
     }
-#if defined(_WIN32)
+#if defined(MINIDAW_PLUGIN_WINDOWS)
     auto pw = std::make_unique<Window>();
     Window& win = *pw;
-    if (!win.editor.create(instrument, "HWND", error)) return false;
+#if defined(_WIN32)
+    const char* platform = "HWND";
+#else
+    const char* platform = "X11EmbedWindowID";  // the editor gets the run loop from its frame (P24)
+#endif
+    if (!win.editor.create(instrument, platform, error)) return false;
     float scale = 1.0f, unused = 1.0f;
     if (owner) glfwGetWindowContentScale(owner, &scale, &unused);
     win.editor.setContentScale(scale);
@@ -93,27 +108,43 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // the plugin draws itself
     glfwWindowHint(GLFW_RESIZABLE, win.editor.resizable() ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_FALSE);  // VST3 sizes are pixels on Windows
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_FALSE);  // VST3 sizes are pixels on Windows and Linux
     win.window = glfwCreateWindow(size.width, size.height, title.c_str(), nullptr, nullptr);
     glfwDefaultWindowHints();
     if (!win.window) {
         error = "The editor window could not be created.";
         return false;
     }
-    HWND hwnd = glfwGetWin32Window(win.window);
+#if defined(_WIN32)
+    HWND parent = glfwGetWin32Window(win.window);
     if (owner) {
         // Owned by the main window: above it, minimised with it, no taskbar button of its own.
-        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(glfwGetWin32Window(owner)));
+        SetWindowLongPtrW(parent, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(glfwGetWin32Window(owner)));
+    }
+#else
+    // X11: a window the plugin puts its own window into (by ID, through its own
+    // connection). Transient for the main window: the window manager keeps it
+    // above the main window and minimises it with it.
+    Display* display = glfwGetX11Display();
+    const ::Window xwindow = glfwGetX11Window(win.window);
+    if (owner) XSetTransientForHint(display, xwindow, glfwGetX11Window(owner));
+    void* parent = reinterpret_cast<void*>(static_cast<std::uintptr_t>(xwindow));
+#endif
+    if (owner) {
         int ox = 0, oy = 0;
         glfwGetWindowPos(owner, &ox, &oy);
         glfwSetWindowPos(win.window, ox + 60, oy + 80);
     }
+#if !defined(_WIN32)
+    // The window must exist on the X server before the plugin's own connection uses it.
+    XSync(display, False);
+#endif
     glfwSetWindowUserPointer(win.window, &win);
     win.editor.onResizeRequest = [&win](InstrumentEditor::Size s) {
         setClientSize(win, s);
         return true;
     };
-    if (!win.editor.attach(hwnd, error)) {
+    if (!win.editor.attach(parent, error)) {
         win.editor.close();
         glfwDestroyWindow(win.window);
         return false;
@@ -131,7 +162,7 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     (void)instrument;
     (void)title;
     (void)owner;
-    error = "Plugin editor windows are not available on this system yet (Windows first).";
+    error = "Plugin editor windows are not available on this system yet (Windows and Linux).";
     return false;
 #endif
 }

@@ -146,7 +146,8 @@ std::vector<Term> makeTerms()
          "file becomes the linked sound track's take; earlier files are kept.",
          "Recording tab: a MIDI track's Output column", {"Linked sound track", "Instrument"}},
         {"Edit", kInstruments,
-         "Opens the instrument's own window with its knobs and settings (Windows; on Linux later). Close closes it.",
+         "Opens the instrument's own window with its knobs and settings. Close closes it. It can stay open while you "
+         "play.",
          "Recording tab: a MIDI track's Output column", {"Instrument", "Preset"}},
         {"Program", kInstruments,
          "A sound built into an instrument (\"Grand Piano\", \"Strings\"). An instrument may have a list of them.",

@@ -23,6 +23,7 @@ add_library(minidaw_core STATIC
     core/src/recorder.cpp
     core/src/recording_notes.cpp
     core/src/terms.cpp
+    core/src/run_loop.cpp
     core/src/midi_input.cpp
     core/src/midi_player.cpp
     core/src/auto_record.cpp
@@ -56,6 +57,11 @@ if(MINIDAW_BUILD_APP)
     if(WIN32)
         # shell32: ShellExecuteW (View > Log > Open log folder) and the folder dialog (P19); ole32 / uuid: COM
         target_link_libraries(minidaw_app PUBLIC shell32 ole32 uuid)
+    endif()
+    if(UNIX AND NOT APPLE)
+        # The plugin editor window on Linux (P24): Xlib for its transient hint and XSync.
+        find_package(X11 REQUIRED)
+        target_link_libraries(minidaw_app PUBLIC X11::X11)
     endif()
 
     if(WIN32)

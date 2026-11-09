@@ -23,6 +23,14 @@
 // chosen with the program-change parameter "Program" (3); choosing one sets
 // the gain, in the processor and in the controller.
 //
+// Editor on Linux (P24): "X11EmbedWindowID", a plain X11 window like the
+// Windows one, drawn and clicked through the host's run loop (IRunLoop from
+// the frame): its X11 connection is registered as an event handler. On every
+// system where the frame offers IRunLoop the editor also registers a 10 ms
+// timer, which writes a byte into a pipe it registered too; the hidden
+// read-only parameters "Editor timer ticks" (5) and "Editor reads" (6) count
+// the calls (normalized = count / 1000), so the tests can check the run loop.
+//
 // Test hook: the hidden parameter "Restart request" (4), set by the host,
 // makes the controller call restartComponent: above 0.5 with kIoChanged |
 // kLatencyChanged, else with kParamValuesChanged.
@@ -42,6 +50,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -51,6 +60,13 @@
 #endif
 #include <windows.h>
 extern "C" IMAGE_DOS_HEADER __ImageBase;  // this module's HINSTANCE
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+#if defined(__linux__)
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #endif
 
 using namespace Steinberg;
@@ -62,6 +78,8 @@ constexpr ParamID kGain = 1;
 constexpr ParamID kEditorScale = 2;  // read-only, hidden: the scale the host gave the editor
 constexpr ParamID kProgram = 3;         // program change (PL2)
 constexpr ParamID kRestartRequest = 4;  // hidden test hook (see above)
+constexpr ParamID kEditorTicks = 5;     // read-only, hidden: the editor's timer calls / 1000 (P24)
+constexpr ParamID kEditorReads = 6;     // read-only, hidden: the editor's pipe reads / 1000 (P24)
 constexpr ProgramListID kFactoryList = 1;
 constexpr double kProgramGain[] = {0.2, 0.5, 0.9};  // Soft, Medium, Loud
 constexpr int32 kProgramCount = 3;
@@ -177,7 +195,16 @@ struct EditorSize {
     int32 height = 150;
 };
 
-class TestSynthView : public CPluginView, public IPlugViewContentScaleSupport {
+// The run loop interfaces' IDs are defined by the SDK only for Linux (and
+// other non-Windows systems); Windows editors have their own message loop.
+class TestSynthView : public CPluginView,
+                      public IPlugViewContentScaleSupport
+#if !defined(_WIN32)
+    ,
+                      public Linux::IEventHandler,
+                      public Linux::ITimerHandler
+#endif
+{
 public:
     TestSynthView(EditController* controller, EditorSize* size)
         : CPluginView(nullptr), controller_(controller), size_(size)
@@ -191,12 +218,16 @@ public:
 #if defined(_WIN32)
         if (std::strcmp(type, kPlatformTypeHWND) == 0) return kResultTrue;
 #endif
+#if defined(__linux__)
+        if (std::strcmp(type, kPlatformTypeX11EmbedWindowID) == 0) return kResultTrue;
+#endif
         return std::strcmp(type, kTestPlatform) == 0 ? kResultTrue : kResultFalse;
     }
     tresult PLUGIN_API attached(void* parent, FIDString type) override
     {
         if (isPlatformTypeSupported(type) != kResultTrue) return kResultFalse;
         CPluginView::attached(parent, type);
+        startRunLoop();
         if (std::strcmp(type, kTestPlatform) == 0) {
             if (plugFrame) {
                 ViewRect wanted(0, 0, 320, 160);
@@ -208,6 +239,12 @@ public:
         hwnd_ = makeWindow(static_cast<HWND>(parent));
         if (!hwnd_) return kResultFalse;
 #endif
+#if defined(__linux__)
+        if (!makeX11Window(reinterpret_cast<std::uintptr_t>(parent))) {
+            stopRunLoop();
+            return kResultFalse;
+        }
+#endif
         return kResultOk;
     }
     tresult PLUGIN_API removed() override
@@ -216,8 +253,44 @@ public:
         if (hwnd_) DestroyWindow(hwnd_);
         hwnd_ = nullptr;
 #endif
+        stopRunLoop();
+#if defined(__linux__)
+        closeX11Window();
+#endif
         return CPluginView::removed();
     }
+
+#if !defined(_WIN32)
+    // Linux::IEventHandler: the pipe or the X11 connection can be read.
+    void PLUGIN_API onFDIsSet(Linux::FileDescriptor fd) override
+    {
+        if (fd == pipe_[0]) {
+            char buf[64];
+            while (::read(pipe_[0], buf, sizeof buf) > 0) {
+            }
+            ++reads_;
+            controller_->setParamNormalized(kEditorReads, std::min(1.0, reads_ / 1000.0));
+        }
+#if defined(__linux__)
+        if (display_ && fd == ConnectionNumber(display_)) handleX11Events();
+#endif
+        (void)fd;
+    }
+    // Linux::ITimerHandler: every 10 ms.
+    void PLUGIN_API onTimer() override
+    {
+        ++ticks_;
+        controller_->setParamNormalized(kEditorTicks, std::min(1.0, ticks_ / 1000.0));
+        if (pipe_[1] >= 0) {
+            const char c = 1;
+            const ssize_t n = ::write(pipe_[1], &c, 1);
+            (void)n;
+        }
+#if defined(__linux__)
+        if (display_ && ticks_ % 20 == 0) drawX11();  // the host may change the gain too
+#endif
+    }
+#endif
     tresult PLUGIN_API onSize(ViewRect* newSize) override
     {
         CPluginView::onSize(newSize);
@@ -227,6 +300,13 @@ public:
         }
 #if defined(_WIN32)
         if (hwnd_ && newSize) MoveWindow(hwnd_, 0, 0, newSize->getWidth(), newSize->getHeight(), TRUE);
+#endif
+#if defined(__linux__)
+        if (display_ && window_ && newSize) {
+            XResizeWindow(display_, window_, static_cast<unsigned>(newSize->getWidth()),
+                          static_cast<unsigned>(newSize->getHeight()));
+            XSync(display_, False);
+        }
 #endif
         return kResultTrue;
     }
@@ -247,10 +327,45 @@ public:
     OBJ_METHODS(TestSynthView, CPluginView)
     DEFINE_INTERFACES
         DEF_INTERFACE(IPlugViewContentScaleSupport)
+#if !defined(_WIN32)
+        DEF_INTERFACE(Linux::IEventHandler)
+        DEF_INTERFACE(Linux::ITimerHandler)
+#endif
     END_DEFINE_INTERFACES(CPluginView)
     REFCOUNT_METHODS(CPluginView)
 
 private:
+    // The host's run loop, if its frame offers one (Linux hosts do).
+    void startRunLoop()
+    {
+#if !defined(_WIN32)
+        if (!plugFrame) return;
+        FUnknownPtr<Linux::IRunLoop> loop(plugFrame);
+        if (!loop) return;
+        runLoop_ = loop;
+        if (::pipe(pipe_) == 0) {
+            ::fcntl(pipe_[0], F_SETFL, O_NONBLOCK);
+            ::fcntl(pipe_[1], F_SETFL, O_NONBLOCK);
+            runLoop_->registerEventHandler(this, pipe_[0]);
+        }
+        runLoop_->registerTimer(this, 10);
+#endif
+    }
+    void stopRunLoop()
+    {
+#if !defined(_WIN32)
+        if (runLoop_) {
+            runLoop_->unregisterTimer(this);
+            runLoop_->unregisterEventHandler(this);  // the pipe and the X11 connection
+            runLoop_ = nullptr;
+        }
+        for (int& fd : pipe_) {
+            if (fd >= 0) ::close(fd);
+            fd = -1;
+        }
+#endif
+    }
+
     // A click on the left half lowers the gain by 0.1, on the right half raises it.
     void clicked(bool louder)
     {
@@ -327,6 +442,74 @@ private:
 
     HWND hwnd_ = nullptr;
 #endif
+#if defined(__linux__)
+    bool makeX11Window(std::uintptr_t parent)
+    {
+        display_ = XOpenDisplay(nullptr);
+        if (!display_) return false;
+        const ViewRect& r = getRect();
+        const int screen = DefaultScreen(display_);
+        window_ = XCreateSimpleWindow(display_, static_cast<::Window>(parent), 0, 0,
+                                      static_cast<unsigned>(r.getWidth()), static_cast<unsigned>(r.getHeight()), 0,
+                                      BlackPixel(display_, screen), WhitePixel(display_, screen));
+        XStoreName(display_, window_, "mini-daw Test Synth view");
+        XSelectInput(display_, window_, ExposureMask | ButtonPressMask | StructureNotifyMask);
+        XMapWindow(display_, window_);
+        XSync(display_, False);  // made on the server before attached() returns (the host may look for it)
+        if (runLoop_) runLoop_->registerEventHandler(this, ConnectionNumber(display_));
+        return true;
+    }
+    void closeX11Window()
+    {
+        if (!display_) return;
+        if (window_) XDestroyWindow(display_, window_);
+        window_ = 0;
+        XCloseDisplay(display_);
+        display_ = nullptr;
+    }
+    void handleX11Events()
+    {
+        while (display_ && XPending(display_) > 0) {
+            XEvent ev;
+            XNextEvent(display_, &ev);
+            if (ev.xany.window != window_) continue;
+            if (ev.type == Expose && ev.xexpose.count == 0) {
+                drawX11();
+            } else if (ev.type == ButtonPress && ev.xbutton.button == Button1) {
+                XWindowAttributes a;
+                XGetWindowAttributes(display_, window_, &a);
+                clicked(ev.xbutton.x > a.width / 2);
+                drawX11();
+            }
+        }
+    }
+    void drawX11()
+    {
+        const int screen = DefaultScreen(display_);
+        GC gc = DefaultGC(display_, screen);
+        XClearWindow(display_, window_);
+        XSetForeground(display_, gc, BlackPixel(display_, screen));
+        char gain[64];
+        std::snprintf(gain, sizeof gain, "Gain: %d %%",
+                      static_cast<int>(std::lround(controller_->getParamNormalized(kGain) * 100)));
+        const char* lines[] = {"mini-daw Test Synth", gain, "", "Click left: quieter", "Click right: louder"};
+        int y = 20;
+        for (const char* line : lines) {
+            XDrawString(display_, window_, gc, 8, y, line, static_cast<int>(std::strlen(line)));
+            y += 16;
+        }
+        XFlush(display_);
+    }
+
+    Display* display_ = nullptr;
+    ::Window window_ = 0;
+#endif
+#if !defined(_WIN32)
+    IPtr<Linux::IRunLoop> runLoop_;
+    int pipe_[2] = {-1, -1};
+#endif
+    int ticks_ = 0;
+    int reads_ = 0;
     EditController* controller_;
     EditorSize* size_;  // the controller's (kept in its state)
 };
@@ -354,6 +537,10 @@ public:
         parameters.addParameter(STR16("Editor scale"), nullptr, 0, 0.0,
                                 ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorScale);
         parameters.addParameter(STR16("Restart request"), nullptr, 0, 0.0, ParameterInfo::kIsHidden, kRestartRequest);
+        parameters.addParameter(STR16("Editor timer ticks"), nullptr, 0, 0.0,
+                                ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorTicks);
+        parameters.addParameter(STR16("Editor reads"), nullptr, 0, 0.0,
+                                ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorReads);
         return kResultOk;
     }
     tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override
