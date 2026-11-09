@@ -34,3 +34,7 @@ Continues `Conversation-2026-11-08.md` (PL1, crosscheck #15, PL2).
 - Answer: it is part of P12 (full Linux support, "later"); it needs a VST3 run loop (IRunLoop) and an X11 window to embed the editor, a step like P10d. Offered to schedule it after P20–P23 or earlier; not decided yet.
 > we should add a terminology tab in the notebook explaining the keywords likel app, recording track, take instrument and so on
 - Read "likel" as "like". Planned as P23: a Terms tab (in the tab order like the others), after P21 and P22 unless the user wants it sooner.
+
+## 5. CI of `b5f96c2`
+> pushed it, check the CI run / commit the CI log lines
+- Run 42636015090 green (Linux 193/193, Windows 194/194); both builds checked, then in `dist/`; `dist/TESTS.txt` has T-RUN-02 (starting twice) on top, then the PL2 and PL1 tests still open.
