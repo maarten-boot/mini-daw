@@ -34,6 +34,7 @@
 | — | **Milestone v2: VST3 instruments** | | |
 | P14 | Optional ASIO backend (`MINIDAW_WITH_ASIO`, off by default; was "P11b" until 2026-11-05, renamed when P11 got its own a–c) | TECH-02, LIC-03/04 | later |
 | P12 | Full Linux support (JACK/PipeWire, native Wayland) and macOS (CoreAudio); Linux already builds and runs in CI | TECH-05 | later |
+| P12a | Other plugin formats (user 2026-11-10: "should we (in the future) add other formats besides VST3?"). First a small instrument-format layer between the rack and the format, so a second format fits beside VST3. **AU** (Audio Units) together with the macOS port in P12: Mac users expect it and Apple's built-in instruments are AU only. **CLAP** only on request (open, MIT, simpler than VST3, but plugins that ship it nearly always ship VST3 too). Not planned: LV2 (Linux; its instruments are mostly VST3 too, editor hosting is fiddly), VST2 (Steinberg no longer licenses it to new hosts), AAX (Pro Tools only) | VST-01..07 (new items when started) | later |
 | P13 | Note and sound editing | — | later (not in v1) |
 | P15 | Main window reopens at its last size and place, maximised if it was; `[window]` in the config (user request 2026-11-06) | UI-09 | done (2026-11-06); Windows check by the user (T-UI-15) |
 | P15b | After the user's Windows test: start without an empty or half-sized window (hidden until the first frame, maximised in one step); fixed-height transport area so the table does not jump | UI-09, UI-10 | done (2026-11-06) |

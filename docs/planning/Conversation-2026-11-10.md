@@ -18,3 +18,7 @@ Claude: "Shall I fix Z1–Z9, starting with Z2?" User: "yes".
 ## 2. CI of `acb4271`
 
 User: "pushed it, check the CI run". Run 42881121369: windows, linux, licence green; Linux 209/209 under `xvfb-run` (T-VST-39 passed), Windows 206/206. Both builds checked (the new texts are in them), then `dist/` refilled; `dist/TESTS.txt` notes the crosscheck #18 fixes and the extra steps in T-VST-40 and T-UI-28.
+
+## 3. Other plugin formats
+
+User: "are different plugin formats common on Mac and Linux, should we (in the future) add other formats besides VST3?" Claude: AU is Apple's own (Logic / GarageBand load only AU; Apple's built-in instruments are AU only), CLAP is new and cross-platform but plugins ship it next to VST3, LV2 is Linux's open format (mostly effects; instruments also VST3 now), VST2 is no longer licensed, AAX is Pro Tools only. Advice: stay with VST3; AU with a Mac version; CLAP on request; a small format layer first. User: "yes add it to the plan" → Plan P12a (later).
