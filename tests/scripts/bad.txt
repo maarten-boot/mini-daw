@@ -1,0 +1,3 @@
+# T-RUN-04: a script with errors is not run (exit code 2).
+open
+plya

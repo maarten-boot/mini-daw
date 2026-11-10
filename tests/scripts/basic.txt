@@ -1,0 +1,30 @@
+# T-RUN-04: mini-daw driven by a script with the test synth (P25a).
+# Run by ctest through run_script.cmake; @WORK@ is its work folder.
+stop-on-failure off
+expect project ""
+open "@WORK@/project"
+expect tracks.1.name Keys
+expect tracks.1.kind midi
+scan
+expect instruments.0 "mini-daw Test Synth (mini-daw tests)"
+instrument 1 "mini-daw test synth"           # any case
+expect tracks.1.loaded true
+expect tracks.1.instrument "mini-daw Test Synth"
+expect tracks.2.soundOf 1                      # its linked sound track appeared
+expect trackCount 2
+arm 1 on
+expect tracks.1.armed true
+arm 1 off
+add-track midi
+expect tracks.3.kind midi
+instrument last "mini-daw Test Synth (mini-daw tests)"  # also as "name (vendor)"; last = track 3
+wait-for 5 tracks.3.loaded == true
+save
+output 3 none
+expect tracks.3.loaded false
+expect trackCount 3                            # its empty sound track went with it
+remove-track 3
+expect trackCount 2
+wait 0.2
+expect playing false
+expect busy null

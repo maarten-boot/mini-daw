@@ -81,3 +81,6 @@ Testing/
 
 # Image editor metadata (sidecar files)
 *.xmp
+
+# Plugins copied here for local tests (not part of mini-daw)
+/.vst3/

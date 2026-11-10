@@ -38,6 +38,7 @@
 #include "minidaw/recording_session.hpp"
 #include "minidaw/render.hpp"
 #include "minidaw/run_loop.hpp"
+#include "minidaw/script.hpp"
 #include "minidaw/terms.hpp"
 #include "minidaw/timeline.hpp"
 #include "minidaw/track.hpp"
@@ -79,7 +80,9 @@ extern char** environ;
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <memory>
 #include <map>
 #include <optional>
 #include <string>
@@ -92,6 +95,28 @@ using minidaw::ContrastPreset;
 using minidaw::ContrastSetting;
 
 // ---------------------------------------------------------------------------
+// A script being run (P25a, SPEC-RUN-02): `mini-daw --script <file>`.
+struct ScriptRun {
+    std::filesystem::path file;
+    std::filesystem::path reportPath;
+    std::ofstream report;  // written as it goes, so it is there up to a crash
+    std::vector<minidaw::ScriptLine> lines;
+    std::size_t next = 0;           // the next line to run
+    bool stopOnFailure = false;
+    bool stay = false;              // keep mini-daw open at the end
+    bool done = false;
+    int commands = 0;
+    int failures = 0;
+    // The line that is running over several frames: slow work, a scan, wait or wait-for.
+    enum class Pending { None, Busy, Scan, Wait, WaitFor } pending = Pending::None;
+    const minidaw::ScriptLine* current = nullptr;
+    std::chrono::steady_clock::time_point started{};   // of the current line
+    std::chrono::steady_clock::time_point deadline{};  // wait / wait-for
+    bool busyResult = false;        // set by the slow work (open)
+    int lastAdded = 0;              // the track the last add-track made ("last" as a track number)
+    std::uint64_t logSeen = 0;      // log lines already copied into the report
+};
+
 // Application state
 // ---------------------------------------------------------------------------
 struct AppState {
@@ -102,6 +127,8 @@ struct AppState {
         std::function<void()> work;
     };
     std::optional<BusyJob> busy;
+    std::unique_ptr<ScriptRun> script;  // --script (P25a)
+    int scriptExitCode = 0;
     // One window per config folder (P20, SPEC-RUN-01): held while the GUI runs.
     minidaw::InstanceLock instanceLock;
     std::string instanceLockNote;  // why there is no lock (logged once the log is open)
@@ -3815,6 +3842,112 @@ void drawSavePresetWindow(AppState& app)
     if (!open) app.savePresetTrack = 0;
 }
 
+// --- Track actions, for the buttons and for scripts (P25a) ---------------------
+
+// Adds an audio or MIDI track like the Add buttons. Returns its number, or 0 with `why`.
+int addTrack(AppState& app, minidaw::TrackKind kind, std::string& why)
+{
+    if (app.session.recording()) {
+        why = "not while recording";
+        return 0;
+    }
+    minidaw::Track t;
+    t.number = minidaw::nextTrackNumber(app.tracks);
+    if (kind == minidaw::TrackKind::Audio) {
+        if (app.audio.info().inputChannels == 0) {
+            why = "audio tracks need an audio input device";
+            return 0;
+        }
+        t.name = "Audio " + std::to_string(t.number);
+        t.channels = {0};
+    } else {
+        t.kind = minidaw::TrackKind::Midi;
+        t.name = "MIDI " + std::to_string(t.number);
+        if (!app.scan.midiInputs.empty()) t.midiPort = app.scan.midiInputs.front().name;
+    }
+    app.tracks.push_back(t);
+    return t.number;
+}
+
+// Why no track can be removed now (the X buttons are disabled), or empty.
+std::string whyNoTrackRemove(const AppState& app)
+{
+    if (app.session.recording()) return "not while recording";
+    if (app.audio.player().playing()) return "not while playing (its take would keep playing)";  // M4
+    return {};
+}
+
+bool removeTrackNow(AppState& app, int number, std::string& why)
+{
+    why = whyNoTrackRemove(app);
+    if (!why.empty()) return false;
+    const auto it = std::find_if(app.tracks.begin(), app.tracks.end(),
+                                 [number](const minidaw::Track& t) { return t.number == number; });
+    if (it == app.tracks.end()) {
+        why = "there is no track " + std::to_string(number);
+        return false;
+    }
+    if (it->kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
+    const auto index = static_cast<std::size_t>(it - app.tracks.begin());
+    unloadInstrument(app, number);
+    // Links stay consistent: a removed MIDI track's linked track becomes a normal
+    // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
+    minidaw::removeTrack(app.tracks, index);
+    return true;
+}
+
+// A MIDI track to a MIDI output (`port`; empty = none) instead of its
+// instrument. True if it had an instrument (then call dropEmptyLinkedTrack
+// once app.tracks may change).
+bool setMidiOutput(AppState& app, minidaw::Track& t, const std::string& port)
+{
+    const bool hadInstrument = !t.instrumentClass.empty();
+    unloadInstrument(app, t.number);
+    t.instrumentClass.clear();
+    t.instrumentPreset.clear();
+    t.midiOut = port;
+    return hadInstrument;
+}
+
+// An empty sound track goes with its instrument; one with a take stays (and is kept while a
+// recording or a render of this track may still fill it).
+void dropEmptyLinkedTrack(AppState& app, int number)
+{
+    if (!app.session.recording() && app.renderTrack != number && minidaw::removeUnusedLinkedTrack(app.tracks, number)) {
+        app.log.info("Track " + std::to_string(number) + ": its empty sound track was removed with the instrument");
+    }
+}
+
+// Chooses instrument `cls` for MIDI track `number`, as in its output list:
+// loading a plugin can take seconds, so the busy message comes first (PL1,
+// SPEC-UI-16). False if other slow work is still to do (logged).
+bool requestInstrument(AppState& app, int number, const minidaw::PluginClass& cls)
+{
+    if (app.busy) {
+        startBusy(app, "Loading instrument " + cls.name, [] {});  // logs that it was not started
+        return false;
+    }
+    startBusy(app, "Loading instrument " + cls.name, [&app, number, cls] {
+        minidaw::Track* track = findTrack(app, number);
+        if (track == nullptr) return;
+        // As the list it was chosen in: not while recording or rendering this track (W4).
+        if (app.session.recording() || app.renderTrack == number) {
+            app.log.warning("Instrument not changed: track " + std::to_string(number) + " is recording or rendering");
+            return;
+        }
+        chooseInstrument(app, *track, cls);
+        // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
+        if (app.instruments.count(number) != 0) ensureLinkedTrack(app, number);
+    });
+    return true;
+}
+
+void setArm(AppState& app, minidaw::Track& t, bool armed)
+{
+    t.armed = armed;
+    if (t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;  // its port opens when armed
+}
+
 void drawTracksPanel(AppState& app)
 {
     ImGui::SeparatorText("Tracks");
@@ -3822,23 +3955,11 @@ void drawTracksPanel(AppState& app)
     const unsigned int inputs = app.audio.info().inputChannels;
     minidaw::app::beginDisabled(rec);
     minidaw::app::beginDisabled(inputs == 0);
-    if (ImGui::Button("Add audio track")) {
-        minidaw::Track t;
-        t.number = minidaw::nextTrackNumber(app.tracks);
-        t.name = "Audio " + std::to_string(t.number);
-        t.channels = {0};
-        app.tracks.push_back(t);
-    }
+    std::string unused;
+    if (ImGui::Button("Add audio track")) addTrack(app, minidaw::TrackKind::Audio, unused);
     minidaw::app::endDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Add MIDI track")) {
-        minidaw::Track t;
-        t.number = minidaw::nextTrackNumber(app.tracks);
-        t.kind = minidaw::TrackKind::Midi;
-        t.name = "MIDI " + std::to_string(t.number);
-        if (!app.scan.midiInputs.empty()) t.midiPort = app.scan.midiInputs.front().name;
-        app.tracks.push_back(t);
-    }
+    if (ImGui::Button("Add MIDI track")) addTrack(app, minidaw::TrackKind::Midi, unused);
     minidaw::app::endDisabled();
     if (inputs == 0) {
         ImGui::SameLine();
@@ -3902,7 +4023,8 @@ void drawTracksPanel(AppState& app)
                 }
             } else {
                 minidaw::app::beginDisabled(rec);
-                if (ImGui::Checkbox("##arm", &t.armed) && t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
+                bool armed = t.armed;
+                if (ImGui::Checkbox("##arm", &armed)) setArm(app, t, armed);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("Armed tracks record when you press Record (Ctrl+R).\n"
                                       "Tracks that are not armed play their takes meanwhile, so you can record "
@@ -4065,19 +4187,11 @@ void drawTracksPanel(AppState& app)
                                                             : t.midiOut;
                 if (ImGui::BeginCombo("##out", out.c_str())) {
                     if (minidaw::app::choice("(no MIDI output)", !hasInst && t.midiOut.empty())) {
-                        if (hasInst) unlinkRequest = t.number;
-                        unloadInstrument(app, t.number);
-                        t.instrumentClass.clear();
-                        t.instrumentPreset.clear();
-                        t.midiOut.clear();
+                        if (setMidiOutput(app, t, std::string())) unlinkRequest = t.number;
                     }
                     for (const auto& name : app.midiPlayer.outputPorts()) {
                         if (minidaw::app::choice(name.c_str(), !hasInst && t.midiOut == name)) {
-                            if (hasInst) unlinkRequest = t.number;
-                            unloadInstrument(app, t.number);
-                            t.instrumentClass.clear();
-                            t.instrumentPreset.clear();
-                            t.midiOut = name;
+                            if (setMidiOutput(app, t, name)) unlinkRequest = t.number;
                         }
                     }
                     ImGui::SeparatorText("Instruments (VST3)");
@@ -4086,22 +4200,7 @@ void drawTracksPanel(AppState& app)
                     for (const auto& c : list) {
                         ImGui::PushID(c.classId.c_str());
                         if (minidaw::app::choice(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
-                            // Loading a plugin can take seconds: say so first (PL1, SPEC-UI-16).
-                            const int number = t.number;
-                            const minidaw::PluginClass cls = c;
-                            startBusy(app, "Loading instrument " + c.name, [&app, number, cls] {
-                                minidaw::Track* track = findTrack(app, number);
-                                if (track == nullptr) return;
-                                // As the list it was chosen in: not while recording or rendering this track (W4).
-                                if (app.session.recording() || app.renderTrack == number) {
-                                    app.log.warning("Instrument not changed: track " + std::to_string(number) +
-                                                    " is recording or rendering");
-                                    return;
-                                }
-                                chooseInstrument(app, *track, cls);
-                                // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
-                                if (app.instruments.count(number) != 0) ensureLinkedTrack(app, number);
-                            });
+                            requestInstrument(app, t.number, c);
                         }
                         ImGui::PopID();
                     }
@@ -4124,7 +4223,7 @@ void drawTracksPanel(AppState& app)
                 }
             }
             ImGui::TableNextColumn();
-            minidaw::app::beginDisabled(rec || app.audio.player().playing());  // its take would keep playing (M4)
+            minidaw::app::beginDisabled(!whyNoTrackRemove(app).empty());
             if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove this track");
             minidaw::app::endDisabled();
@@ -4154,18 +4253,10 @@ void drawTracksPanel(AppState& app)
     }
     if (renderRequest != 0) startRender(app, renderRequest);
     if (removeIndex >= 0) {
-        if (app.tracks[removeIndex].kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
-        unloadInstrument(app, app.tracks[removeIndex].number);
-        // Links stay consistent: a removed MIDI track's linked track becomes a normal
-        // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
-        minidaw::removeTrack(app.tracks, static_cast<std::size_t>(removeIndex));
+        std::string why;
+        removeTrackNow(app, app.tracks[static_cast<std::size_t>(removeIndex)].number, why);
     }
-    // An empty sound track goes with its instrument; one with a take stays (and is kept while a
-    // recording or a render of this track may still fill it).
-    if (unlinkRequest != 0 && !rec && app.renderTrack != unlinkRequest &&
-        minidaw::removeUnusedLinkedTrack(app.tracks, unlinkRequest)) {
-        app.log.info("Track " + std::to_string(unlinkRequest) + ": its empty sound track was removed with the instrument");
-    }
+    if (unlinkRequest != 0) dropEmptyLinkedTrack(app, unlinkRequest);
     for (const auto& w : app.midiWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     for (const auto& m : app.midi.takeMessages()) {
         app.log.warning(m);
@@ -4494,6 +4585,415 @@ void showMainWindow(GLFWwindow* window, bool maximized)
     if (maximized && !glfwGetWindowAttrib(window, GLFW_MAXIMIZED)) glfwMaximizeWindow(window);
 }
 
+// --- Script files (P25a, SPEC-RUN-02) -----------------------------------------
+
+// What a script can check: mini-daw's state as JSON (expect, wait-for, state).
+nlohmann::json scriptState(AppState& app)
+{
+    using nlohmann::json;
+    const auto& info = app.audio.info();
+    json tracks = json::object();
+    for (const minidaw::Track& t : app.tracks) {
+        json j;
+        j["name"] = t.name;
+        j["kind"] = t.kind == minidaw::TrackKind::Midi ? "midi" : "audio";
+        j["armed"] = t.armed;
+        j["mute"] = t.mute;
+        j["solo"] = t.solo;
+        j["volumeDb"] = t.volumeDb;
+        j["take"] = t.take.empty() ? std::string() : minidaw::pathToUtf8(t.take.filename());
+        if (t.kind == minidaw::TrackKind::Midi) {
+            j["midiInput"] = t.midiPort;
+            j["midiOutput"] = t.midiOut;
+            j["instrument"] = t.instrumentClass.empty() ? std::string() : t.instrumentName;
+            j["instrumentClass"] = t.instrumentClass;
+            j["loaded"] = app.instruments.count(t.number) != 0;
+            j["editorOpen"] = app.pluginWindows.isOpen(t.number);
+            j["preset"] = t.instrumentPreset;
+        } else {
+            j["soundOf"] = t.instrumentOf;  // 0: not a linked sound track
+            j["soundFrom"] = t.soundFromRecording ? "recording" : "instrument";
+        }
+        tracks[std::to_string(t.number)] = std::move(j);
+    }
+    json instruments = json::array();
+    for (const auto& c : app.pluginCache.instruments()) instruments.push_back(instrumentLabel(c));
+    const unsigned int rate = info.sampleRate ? info.sampleRate : 48000;
+    return json{
+        {"project", minidaw::pathToUtf8(app.projectFolder)},
+        {"busy", app.busy ? json(app.busy->message) : json(nullptr)},
+        {"scanning", app.scanning},
+        {"recording", app.session.recording()},
+        {"autoRecord", app.session.autoMode()},
+        {"playing", app.audio.player().playing()},
+        {"position", static_cast<double>(app.audio.player().position()) / rate},
+        {"rendering", app.renderTrack},
+        {"audio",
+         {{"running", info.running},
+          {"api", info.api},
+          {"input", info.inputName},
+          {"output", info.outputName},
+          {"sampleRate", info.sampleRate},
+          {"bufferFrames", info.bufferFrames}}},
+        {"midiOutputs", app.midiPlayer.outputPorts()},
+        {"instruments", instruments},
+        {"trackCount", app.tracks.size()},
+        {"tracks", tracks},
+        {"log", {{"warnings", app.log.warningCount()}, {"errors", app.log.errorCount()}}},
+    };
+}
+
+// The log lines written since the last call, into the report (indented).
+void scriptCopyLog(AppState& app)
+{
+    ScriptRun& sr = *app.script;
+    const std::uint64_t total = app.log.lineCount();
+    if (total == sr.logSeen) return;
+    const std::vector<minidaw::LogEntry> recent = app.log.recent();
+    const std::uint64_t fresh = std::min<std::uint64_t>(total - sr.logSeen, recent.size());
+    for (std::size_t i = recent.size() - static_cast<std::size_t>(fresh); i < recent.size(); ++i) {
+        const auto& e = recent[i];
+        sr.report << "        log " << e.time.substr(e.time.size() >= 12 ? e.time.size() - 12 : 0) << ' '
+                  << minidaw::logLevelName(e.level) << ' ' << e.text << '\n';
+    }
+    sr.logSeen = total;
+    sr.report.flush();
+}
+
+// The end of the current line: ok or FAIL, with how long it took and a note.
+void scriptFinish(AppState& app, bool ok, const std::string& note)
+{
+    ScriptRun& sr = *app.script;
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - sr.started).count();
+    char head[64];
+    std::snprintf(head, sizeof head, "line %3d  %-4s  ", sr.current ? sr.current->number : 0, ok ? "ok" : "FAIL");
+    sr.report << head << (sr.current ? sr.current->text : std::string()) << "  (" << std::fixed;
+    sr.report.precision(2);
+    sr.report << seconds << " s)";
+    if (!note.empty()) sr.report << "  " << note;
+    sr.report << '\n';
+    ++sr.commands;
+    if (!ok) {
+        ++sr.failures;
+        app.log.warning("Script line " + std::to_string(sr.current ? sr.current->number : 0) + " failed: " +
+                        (sr.current ? sr.current->text : std::string()) + (note.empty() ? "" : " - " + note));
+    }
+    scriptCopyLog(app);
+    sr.pending = ScriptRun::Pending::None;
+    sr.current = nullptr;
+    if (!ok && sr.stopOnFailure) sr.next = sr.lines.size();  // the rest is skipped
+}
+
+// The end of the script (also when mini-daw is closed before it ends).
+void scriptEnd(AppState& app, const std::string& why)
+{
+    ScriptRun& sr = *app.script;
+    if (sr.done) return;
+    sr.done = true;
+    if (!why.empty()) {
+        sr.report << "Stopped: " << why << '\n';
+        ++sr.failures;
+    }
+    scriptCopyLog(app);
+    sr.report << "Result: " << sr.commands << " command(s), " << sr.failures << " failed\n";
+    sr.report.flush();
+    app.scriptExitCode = sr.failures == 0 ? 0 : 1;
+    app.log.info("Script " + minidaw::pathToUtf8(sr.file) + " done: " + std::to_string(sr.commands) + " command(s), " +
+                 std::to_string(sr.failures) + " failed; report " + minidaw::pathToUtf8(sr.reportPath));
+    std::printf("script: %d command(s), %d failed; report: %s\n", sr.commands, sr.failures,
+                minidaw::pathToUtf8(sr.reportPath).c_str());
+    std::fflush(stdout);
+    if (!sr.stay && app.mainWindow) glfwSetWindowShouldClose(app.mainWindow, GLFW_TRUE);
+}
+
+// "3" (or "last": the track the last add-track made) -> the track, or nullptr with `why`.
+minidaw::Track* scriptTrack(AppState& app, const std::string& word, std::string& why)
+{
+    if (word == "last") {
+        minidaw::Track* t = app.script && app.script->lastAdded > 0 ? findTrack(app, app.script->lastAdded) : nullptr;
+        if (!t) why = "no track added by the script (last)";
+        return t;
+    }
+    char* end = nullptr;
+    const long n = std::strtol(word.c_str(), &end, 10);
+    if (word.empty() || *end != '\0' || n <= 0 || n > 100000) {
+        why = "\"" + word + "\" is not a track number";
+        return nullptr;
+    }
+    minidaw::Track* t = findTrack(app, static_cast<int>(n));
+    if (!t) why = "there is no track " + word;
+    return t;
+}
+
+std::string lowerWord(std::string s)
+{
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+// Starts the current line. It either finishes now (scriptFinish) or sets `pending`.
+void scriptStart(AppState& app, const minidaw::ScriptLine& line)
+{
+    ScriptRun& sr = *app.script;
+    sr.current = &line;
+    sr.started = std::chrono::steady_clock::now();
+    const auto& w = line.words;
+    const std::string& cmd = w[0];
+    std::string why;
+    auto fail = [&](const std::string& note) { scriptFinish(app, false, note); };
+    auto ok = [&](const std::string& note = {}) { scriptFinish(app, true, note); };
+
+    if (cmd == "echo") {
+        std::string text;
+        for (std::size_t i = 1; i < w.size(); ++i) text += (i > 1 ? " " : "") + w[i];
+        ok(text.empty() ? std::string() : "| " + text);
+    } else if (cmd == "wait") {
+        const double s = minidaw::parseScriptSeconds(w[1]).value_or(0.0);
+        sr.deadline = sr.started + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                       std::chrono::duration<double>(s));
+        sr.pending = ScriptRun::Pending::Wait;
+    } else if (cmd == "wait-for") {
+        const double s = minidaw::parseScriptSeconds(w[1]).value_or(0.0);
+        sr.deadline = sr.started + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                       std::chrono::duration<double>(s));
+        sr.pending = ScriptRun::Pending::WaitFor;
+    } else if (cmd == "expect") {
+        const std::string op = w.size() == 4 ? w[2] : "==";
+        std::string seen, err;
+        const bool holds = minidaw::compareStateValue(scriptState(app), w[1], op, w.back(), seen, err);
+        if (!err.empty()) {
+            fail(err);
+        } else if (holds) {
+            ok();
+        } else {
+            fail("is " + seen);
+        }
+    } else if (cmd == "state") {
+        ok();
+        sr.report << scriptState(app).dump(2) << '\n';
+        sr.report.flush();
+    } else if (cmd == "stop-on-failure") {
+        sr.stopOnFailure = w[1] == "on";
+        ok();
+    } else if (cmd == "stay") {
+        sr.stay = true;
+        ok();
+    } else if (cmd == "quit") {
+        ok();
+        sr.next = sr.lines.size();
+        sr.stay = false;
+    } else if (cmd == "scan") {
+        if (app.scanning) {
+            fail("a scan is already running");
+            return;
+        }
+        startScan(app);
+        sr.pending = ScriptRun::Pending::Scan;
+    } else if (cmd == "open") {
+        const std::string folder = minidaw::cleanPathText(w[1]);
+        sr.busyResult = false;
+        startBusy(app, "Opening project " + folder, [&app, folder] {
+            const bool opened = openProject(app, minidaw::pathFromUtf8(folder));
+            if (app.script) app.script->busyResult = opened;
+        });
+        sr.pending = ScriptRun::Pending::Busy;
+    } else if (cmd == "save") {
+        if (app.projectFolder.empty()) {
+            fail("no project is open");
+            return;
+        }
+        saveProjectNow(app);
+        ok();
+    } else if (cmd == "add-track") {
+        const int n = addTrack(app, w[1] == "midi" ? minidaw::TrackKind::Midi : minidaw::TrackKind::Audio, why);
+        if (n == 0) {
+            fail(why);
+        } else {
+            sr.lastAdded = n;
+            ok("track " + std::to_string(n));
+        }
+    } else if (cmd == "remove-track") {
+        minidaw::Track* t = scriptTrack(app, w[1], why);
+        if (t && removeTrackNow(app, t->number, why)) {
+            ok();
+        } else {
+            fail(why);
+        }
+    } else if (cmd == "instrument") {
+        minidaw::Track* t = scriptTrack(app, w[1], why);
+        if (!t) {
+            fail(why);
+            return;
+        }
+        if (t->kind != minidaw::TrackKind::Midi) {
+            fail("track " + w[1] + " is not a MIDI track");
+            return;
+        }
+        // By class ID, by name, or by "name (vendor)" as in the list; any case.
+        const std::string wanted = lowerWord(w[2]);
+        std::vector<minidaw::PluginClass> found;
+        for (const auto& c : app.pluginCache.instruments()) {
+            if (lowerWord(c.classId) == wanted || lowerWord(instrumentLabel(c)) == wanted) {
+                found = {c};
+                break;
+            }
+            if (lowerWord(c.name) == wanted) found.push_back(c);
+        }
+        if (found.empty()) {
+            fail("no instrument \"" + w[2] + "\" found (scan first?)");
+        } else if (found.size() > 1) {
+            fail("more than one instrument is called \"" + w[2] + "\": use \"name (vendor)\" or the class ID");
+        } else if (!requestInstrument(app, t->number, found.front())) {
+            fail("other slow work is still to do");
+        } else {
+            sr.pending = ScriptRun::Pending::Busy;
+        }
+    } else if (cmd == "output") {
+        minidaw::Track* t = scriptTrack(app, w[1], why);
+        if (!t) {
+            fail(why);
+            return;
+        }
+        if (t->kind != minidaw::TrackKind::Midi) {
+            fail("track " + w[1] + " is not a MIDI track");
+            return;
+        }
+        std::string port;
+        if (lowerWord(w[2]) != "none") {
+            for (const auto& name : app.midiPlayer.outputPorts()) {
+                if (name == w[2]) port = name;
+            }
+            if (port.empty()) {
+                fail("no MIDI output \"" + w[2] + "\"");
+                return;
+            }
+        }
+        const int number = t->number;
+        if (setMidiOutput(app, *t, port)) dropEmptyLinkedTrack(app, number);
+        ok();
+    } else if (cmd == "arm") {
+        minidaw::Track* t = scriptTrack(app, w[1], why);
+        if (!t) {
+            fail(why);
+        } else if (app.session.recording()) {
+            fail("not while recording");
+        } else if (t->instrumentOf > 0) {
+            fail("a linked sound track records with its MIDI track");
+        } else {
+            setArm(app, *t, w[2] == "on");
+            ok();
+        }
+    } else if (cmd == "edit" || cmd == "close-edit") {
+        minidaw::Track* t = scriptTrack(app, w[1], why);
+        if (!t) {
+            fail(why);
+        } else if (cmd == "close-edit") {
+            app.pluginWindows.close(t->number);
+            ok();
+        } else if (app.instruments.count(t->number) == 0) {
+            fail("track " + w[1] + " has no instrument loaded");
+        } else if (!minidaw::app::PluginWindows::supported()) {
+            fail("the instrument's own window is not available on this system");
+        } else {
+            openPluginWindow(app, *t);
+            if (app.pluginWindows.isOpen(t->number)) {
+                ok();
+            } else {
+                fail("not opened (see the log)");
+            }
+        }
+    } else if (cmd == "play" || cmd == "stop") {
+        const bool want = cmd == "play";
+        if (app.audio.player().playing() != want) togglePlay(app);
+        if (app.audio.player().playing() == want) {
+            ok();
+        } else {
+            fail(want ? "did not start (see the log)" : "did not stop (a recording is stopped with record)");
+        }
+    } else if (cmd == "home") {
+        returnToStart(app);
+        ok();
+    } else if (cmd == "record") {
+        const bool was = app.session.recording();
+        toggleRecording(app);
+        if (app.session.recording() != was) {
+            ok(app.session.recording() ? "recording" : "stopped");
+        } else {
+            fail("nothing changed (see the log)");
+        }
+    } else {
+        fail("not run: unknown command");  // parseScript lets none through
+    }
+}
+
+// Every frame, after the slow work: the current line goes on, or the next one starts.
+// One line per frame, so the window and the state follow each step.
+void stepScript(AppState& app)
+{
+    if (!app.script || app.script->done) return;
+    ScriptRun& sr = *app.script;
+    if (app.busy) return;  // its message is on screen; it runs next frame
+    const auto now = std::chrono::steady_clock::now();
+    switch (sr.pending) {
+    case ScriptRun::Pending::None:
+        break;
+    case ScriptRun::Pending::Busy: {
+        const auto& w = sr.current->words;
+        if (w[0] == "open") {
+            if (sr.busyResult) {
+                scriptFinish(app, true, "");
+            } else {
+                scriptFinish(app, false, "not opened (see the log)");
+            }
+        } else {  // instrument
+            std::string why;
+            const minidaw::Track* t = scriptTrack(app, w[1], why);
+            const bool loaded = t && app.instruments.count(t->number) != 0 && !t->instrumentClass.empty();
+            if (loaded) {
+                scriptFinish(app, true, "loaded " + t->instrumentName);
+            } else {
+                scriptFinish(app, false, "not loaded (see the log)");
+            }
+        }
+        return;
+    }
+    case ScriptRun::Pending::Scan:
+        if (app.scanning) return;
+        scriptFinish(app, true, std::to_string(app.pluginCache.instruments().size()) + " instrument(s)");
+        return;
+    case ScriptRun::Pending::Wait:
+        if (now < sr.deadline) return;
+        scriptFinish(app, true, "");
+        return;
+    case ScriptRun::Pending::WaitFor: {
+        const auto& w = sr.current->words;
+        const std::string op = w.size() == 5 ? w[3] : "==";
+        std::string seen, err;
+        const bool holds = minidaw::compareStateValue(scriptState(app), w[2], op, w.back(), seen, err);
+        if (!err.empty()) {
+            scriptFinish(app, false, err);
+        } else if (holds) {
+            scriptFinish(app, true, "");
+        } else if (now >= sr.deadline) {
+            scriptFinish(app, false, "still " + seen);
+        }
+        return;
+    }
+    }
+    if (sr.next == 0 && sr.commands == 0) {  // what happened at start (devices, project, instruments)
+        sr.report << "Start:\n";
+        scriptCopyLog(app);
+    }
+    if (sr.next >= sr.lines.size()) {
+        scriptEnd(app, "");
+        return;
+    }
+    scriptStart(app, sr.lines[sr.next++]);
+}
+
 int runGui(AppState& app)
 {
     glfwSetErrorCallback([](int code, const char* text) {
@@ -4664,6 +5164,7 @@ int runGui(AppState& app)
         }
         glfwPollEvents();
         runBusy(app);  // slow work asked for in the frame before, now that its message is on screen
+        stepScript(app);  // --script (P25a): after the slow work, so a line waiting for it sees the result
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         minidaw::editorRunLoop().poll();  // Linux plugin editors: their X11 events and timers (P24)
@@ -4862,8 +5363,15 @@ int parseSeconds(const char* text, int lo, int hi)
 void printUsage(const char* argv0)
 {
     std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> [--monitor] |\n"
-                "        --record-test <seconds> <folder> | --contrast-report | --version | --help]\n",
+                "        --record-test <seconds> <folder> | --contrast-report | --version | --help |\n"
+                "        --script <file> [--script-report <file>]]\n",
                 argv0);
+    std::printf("--script runs the window and does what the file says, then quits; exit code 0 if every\n"
+                "line worked, 1 if not, 2 for a script with errors (nothing is run), 3 if mini-daw is\n"
+                "already running with this config. The report goes to <file>.report.txt. Commands:\n");
+    for (const auto& c : minidaw::scriptCommands()) {
+        std::printf("  %-42s %s\n", std::string(c.usage).c_str(), std::string(c.text).c_str());
+    }
 #if defined(_WIN32)
     std::printf("In a terminal, run mini-daw.com (or just `mini-daw`): it prints and returns exit codes;\n"
                 "mini-daw.exe is the window program.\n");
@@ -4915,6 +5423,8 @@ int main(int argc, char** argv)
     int audioTestSeconds = 3;
     bool audioTestMonitor = false;
     std::filesystem::path recordFolder;
+    std::filesystem::path scriptFile;
+    std::filesystem::path scriptReport;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -4949,6 +5459,10 @@ int main(int argc, char** argv)
             audioTestMonitor = true;
         } else if (std::strcmp(arg, "--config") == 0 && i + 1 < argc) {
             app.configPath = argv[++i];
+        } else if (std::strcmp(arg, "--script") == 0 && i + 1 < argc) {
+            scriptFile = std::filesystem::path(argv[++i]);  // native encoding, as argv is
+        } else if (std::strcmp(arg, "--script-report") == 0 && i + 1 < argc) {
+            scriptReport = std::filesystem::path(argv[++i]);
         } else {
             std::fprintf(stderr, "unknown option: %s (try --help)\n", arg);
             return 2;
@@ -4958,6 +5472,52 @@ int main(int argc, char** argv)
     if (audioTestMonitor && action != Action::AudioTest) {
         std::fprintf(stderr, "--monitor only works with --audio-test\n");
         return 2;
+    }
+    // A script is read and checked as a whole before anything starts (P25a, SPEC-RUN-02).
+    if (!scriptReport.empty() && scriptFile.empty()) {
+        std::fprintf(stderr, "--script-report only works with --script\n");
+        return 2;
+    }
+    if (!scriptFile.empty()) {
+        if (action != Action::Gui) {
+            std::fprintf(stderr, "--script runs the window: not with --list-devices, --audio-test and the like\n");
+            return 2;
+        }
+        std::ifstream in(scriptFile, std::ios::binary);
+        if (!in) {
+            std::fprintf(stderr, "script %s could not be read\n", minidaw::pathToUtf8(scriptFile).c_str());
+            return 2;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        minidaw::ScriptParse parsed = minidaw::parseScript(text);
+        if (!parsed.errors.empty()) {
+            for (const auto& e : parsed.errors) {
+                std::fprintf(stderr, "%s: %s\n", minidaw::pathToUtf8(scriptFile).c_str(), e.c_str());
+            }
+            return 2;
+        }
+        auto run = std::make_unique<ScriptRun>();
+        run->file = scriptFile;
+        run->lines = std::move(parsed.lines);
+        if (scriptReport.empty()) {
+            scriptReport = scriptFile;
+            scriptReport.replace_extension();
+            scriptReport += ".report.txt";
+        }
+        run->reportPath = scriptReport;
+        run->report.open(scriptReport, std::ios::binary | std::ios::trunc);
+        if (!run->report) {
+            std::fprintf(stderr, "the report %s could not be written\n", minidaw::pathToUtf8(scriptReport).c_str());
+            return 2;
+        }
+        const std::time_t now = std::time(nullptr);
+        char when[32];
+        std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        run->report << minidaw::kProductName << ' ' << minidaw::kVersion << ", script "
+                    << minidaw::pathToUtf8(scriptFile) << ", " << when << ", config "
+                    << minidaw::pathToUtf8(app.configPath) << '\n';
+        run->report.flush();
+        app.script = std::move(run);
     }
 
     auto loaded = minidaw::loadConfigFile(app.configPath);
@@ -4998,6 +5558,13 @@ int main(int argc, char** argv)
             // The running mini-daw may take the foreground (this process may, it was just started).
             AllowSetForegroundWindow(static_cast<DWORD>(minidaw::InstanceLock::ownerProcess(folder)));
 #endif
+            if (app.script) {  // a script would act on a window it does not own
+                std::fprintf(stderr, "mini-daw is already running with config folder %s; the script is not run "
+                                     "(use --config with another folder)\n",
+                             minidaw::pathToUtf8(folder).c_str());
+                app.script->report << "Not run: mini-daw is already running with this config folder\n";
+                return 3;
+            }
             minidaw::InstanceLock::requestShow(folder);
             std::fprintf(stderr, "mini-daw is already running (config folder %s); its window is brought to the front.\n",
                          minidaw::pathToUtf8(folder).c_str());
@@ -5010,9 +5577,19 @@ int main(int argc, char** argv)
             break;
         }
     }
-    openLog(app, "GUI");
+    openLog(app, app.script ? "GUI, script" : "GUI");
     if (!app.instanceLockNote.empty()) app.log.warning(app.instanceLockNote);
+    if (app.script) {
+        app.log.info("Script " + minidaw::pathToUtf8(app.script->file) + ": " +
+                     std::to_string(app.script->lines.size()) + " command(s)");
+    }
     const int rc = runGui(app);
+    if (app.script) {
+        app.script->stay = true;  // the window is gone: nothing to close
+        scriptEnd(app, "mini-daw was closed before the end of the script");
+        app.log.info("mini-daw closed");
+        return rc != 0 ? rc : app.scriptExitCode;
+    }
     app.log.info("mini-daw closed");
     return rc;
 }

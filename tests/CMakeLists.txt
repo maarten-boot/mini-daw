@@ -25,6 +25,7 @@ add_executable(minidaw_tests
     test_instance_lock.cpp
     test_terms.cpp
     test_run_loop.cpp
+    test_script.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):
@@ -118,6 +119,28 @@ add_custom_command(TARGET minidaw_testsynth POST_BUILD
 add_dependencies(minidaw_tests minidaw_testsynth)
 target_compile_definitions(minidaw_tests PRIVATE MINIDAW_TEST_VST3="${testsynth_bundle}")
 catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)
+
+# mini-daw run by a script with the test synth (P25a, T-RUN-04). It opens a
+# window: Linux only for now (CI runs the tests under xvfb-run; without a
+# display they are skipped). Each case: script name, exit code, texts the
+# report (or the errors) must contain.
+if(UNIX AND NOT APPLE AND TARGET minidaw)
+    function(minidaw_script_test name code)
+        set(dir ${PROJECT_SOURCE_DIR}/tests/scripts)
+        string(REPLACE ";" "|" wanted "${ARGN}")  # passed as one value, split again in the script
+        add_test(NAME "T-RUN-04: script ${name}"
+            COMMAND ${CMAKE_COMMAND} -DMINIDAW=$<TARGET_FILE:minidaw> -DVST3DIR=${CMAKE_CURRENT_BINARY_DIR}/vst3
+                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/script-${name} -DSCRIPT=${dir}/${name}.txt
+                    -DEXPECT_EXIT=${code} "-DEXPECT_IN_REPORT=${wanted}" -P ${dir}/run_script.cmake)
+        set_tests_properties("T-RUN-04: script ${name}" PROPERTIES
+            LABELS "script" SKIP_REGULAR_EXPRESSION "SKIPPED: no display" TIMEOUT 150)
+    endfunction()
+    minidaw_script_test(basic 0 "Result: 28 command(s), 0 failed")
+    minidaw_script_test(failures 1
+        "no instrument \"no such synth\" found" "there is no track 7" "is \"Keys\"" "still false"
+        "echo still running" "Result: 7 command(s), 4 failed")
+    minidaw_script_test(bad 2 "line 2: use: open <project folder>" "line 3: unknown command \"plya\"")
+endif()
 
 # Licence checks (T-LIC-02, T-LIC-03). Needs Python 3; skipped if not found.
 find_package(Python3 COMPONENTS Interpreter)

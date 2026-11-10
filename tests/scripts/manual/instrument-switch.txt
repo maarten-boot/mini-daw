@@ -1,0 +1,31 @@
+# T-RUN-05 (Windows, by the user): the instrument switch problem of 2026-11-10.
+# Three Arturia instruments; one track to the Windows MIDI synth and back.
+#
+# Before running:
+#  1. Copy the project folder E:\test\projects\zz to E:\test\projects\zz-script
+#     (the script changes the project it opens).
+#  2. Put the names of two more Arturia instruments in place of SECOND and THIRD
+#     below (as in the Output list; "Name (Arturia)" or just "Name").
+#  3. In cmd, in the folder of mini-daw.com:
+#       mini-daw.com --config C:\minidaw-script\config.ini --script instrument-switch.txt
+#     (its own config folder, so it also runs while your normal mini-daw is open;
+#     the first run scans the instruments, which takes a while).
+#  4. Send me instrument-switch.report.txt (it is written next to this file).
+stop-on-failure off
+scan
+open "E:\test\projects\zz-script"
+state                                   # tracks, instruments found, MIDI outputs
+add-track midi
+instrument last "DX7 V"
+add-track midi
+instrument last "SECOND"
+add-track midi
+instrument last "THIRD"
+state
+output last "Microsoft GS Wavetable Synth 0"   # if it fails: the name is under "midiOutputs" above
+wait 1
+instrument last "DX7 V"                 # back to an instrument: this did nothing in the GUI
+wait 1
+state
+remove-track last                       # this was not possible in the GUI
+state

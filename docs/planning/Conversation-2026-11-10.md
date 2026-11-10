@@ -42,3 +42,13 @@ User: "testes some on windows, Large arturia instruments show the waiting messag
 
 User: "if we allow the mini-daw gui to be remotely controlled e.g. using 9p protocoll or zmq or https could we then do some of the tests automatically?" Claude's answer: see the reply; decision pending.
 - Claude: a command layer (the GUI's actions, run at the start of a frame), a script file first (`--script`), then local HTTP + JSON (cpp-httplib); off by default; ImGui Test Engine mentioned (licence not plain open source). User: "yes add it to the plan, script file first; during development it could be very handy to also allow 192.168.1.0/24 my home network as my windows and synth is in the basement on that net while development happens on linux elsewhere in the house, it could be stripped down later" → Plan P25, P25a (script), P25b (HTTP, allowed networks incl. 192.168.1.0/24 during development, token for non-local clients).
+
+## 7. P25a: script files
+
+User: "pushed it, yes start P25a".
+
+- Core `script` (`script.hpp/.cpp`): words with quotes and Windows paths, comments, the command list with usage texts, the whole file checked first, dotted state paths, `expect` comparisons. nlohmann_json is now a public dependency of the core.
+- `main.cpp`: the track actions as functions shared by the buttons and the script (`addTrack`, `removeTrackNow` / `whyNoTrackRemove`, `setMidiOutput` / `dropEmptyLinkedTrack`, `requestInstrument`, `setArm`); `ScriptRun`, `scriptState` (JSON), `stepScript` (one line per frame after the busy work), report with the start-up log and the log per line; `--script`, `--script-report`, exit codes 0 / 1 / 2 / 3, commands in `--help`. `last` = the track the last add-track made.
+- Tests: `test_script.cpp` (T-RUN-03); ctest runs mini-daw with scripts `basic`, `failures`, `bad` (T-RUN-04, Linux with a display; CI already runs under xvfb-run). Linux 215/215; MinGW under Wine 207/207, and `basic` with the Windows build under Wine (28 / 0 failed).
+- `tests/scripts/manual/instrument-switch.txt`: the user's problem as a script (T-RUN-05).
+- Spec v0.52 SPEC-RUN-02; Plan P25a done; README, CLAUDE.md.

@@ -24,6 +24,7 @@ add_library(minidaw_core STATIC
     core/src/recording_notes.cpp
     core/src/terms.cpp
     core/src/run_loop.cpp
+    core/src/script.cpp
     core/src/midi_input.cpp
     core/src/midi_player.cpp
     core/src/auto_record.cpp
@@ -39,7 +40,8 @@ target_include_directories(minidaw_core PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(minidaw_core
     PUBLIC  minidaw_rtaudio minidaw_rtmidi minidaw_vst3host
-    PRIVATE minidaw_warnings nlohmann_json::nlohmann_json)
+            nlohmann_json::nlohmann_json  # script.hpp uses it (P25a)
+    PRIVATE minidaw_warnings)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
 endif()

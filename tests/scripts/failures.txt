@@ -1,0 +1,8 @@
+# T-RUN-04: failures are reported, the script goes on, the exit code is 1.
+open "@WORK@/project"
+instrument 1 "no such synth"
+remove-track 7
+expect tracks.1.name Drums
+wait-for 0.3 tracks.1.loaded true
+echo still running
+expect tracks.1.name Keys
