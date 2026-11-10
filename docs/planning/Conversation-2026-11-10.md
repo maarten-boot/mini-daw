@@ -52,3 +52,9 @@ User: "pushed it, yes start P25a".
 - Tests: `test_script.cpp` (T-RUN-03); ctest runs mini-daw with scripts `basic`, `failures`, `bad` (T-RUN-04, Linux with a display; CI already runs under xvfb-run). Linux 215/215; MinGW under Wine 207/207, and `basic` with the Windows build under Wine (28 / 0 failed).
 - `tests/scripts/manual/instrument-switch.txt`: the user's problem as a script (T-RUN-05).
 - Spec v0.52 SPEC-RUN-02; Plan P25a done; README, CLAUDE.md.
+
+## 8. CI of `c7a0e7a`, crosscheck #19, fixes
+
+User: "pushed it, check the CI run" and "and do the crosscheck". Run 42914083387: Windows 209/209, licence green, Linux 213/215 — the script tests `basic` / `failures` failed because the test helper had no `cmake_minimum_required` (CI's older CMake replaced `@WORK@` in the helper itself). Crosscheck #19 (`Crosscheck-2026-11-10.md`): reviewer subagent on the code, Claude on Spec ↔ Plan ↔ Tests ↔ docs; AA1 (state text not UTF-8 throws), AA2 (`instrument` ok with the old instrument), AA3–AA10 low, AA11 docs.
+
+User: "yes fix AA1–AA11, AA1 first" → P25c, with the helper fix. Spec v0.53.

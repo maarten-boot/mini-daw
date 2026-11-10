@@ -12,8 +12,11 @@
 //
 // Syntax: one command per line; words split at spaces; "double quotes" keep
 // spaces in a word (inside them \" is a quote and \\ a backslash, any other
-// backslash stays, so "E:\test\songs" is fine); # at the start of a word
-// begins a comment up to the end of the line; empty lines are skipped.
+// backslash stays, so "E:\test\songs" is fine); a quote inside a word is
+// an error; # at the start of a word begins a comment up to the end of the
+// line; empty lines are skipped. The file is UTF-8 (a UTF-8 byte order mark is
+// skipped; a UTF-16 file is refused with a hint). Fixed words (add-track midi,
+// arm on, stop-on-failure off, output none, the track "last") take any case.
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +32,7 @@ struct ScriptLine {
     int number = 0;                  // line in the file, from 1
     std::string text;                // as written (without the line end)
     std::vector<std::string> words;  // words[0] = the command, in lower case
+    std::vector<bool> quoted;        // per word: written in quotes (then always text in expect)
 };
 
 struct ScriptParse {
@@ -48,8 +52,10 @@ struct ScriptCommand {
 const std::vector<ScriptCommand>& scriptCommands();
 const ScriptCommand* findScriptCommand(std::string_view name);
 
-// Splits one line into words (see above). False with `error` for an open quote.
-bool splitScriptWords(std::string_view line, std::vector<std::string>& words, std::string& error);
+// Splits one line into words (see above). False with `error` for an open
+// quote or a quote inside a word. `quoted` (if given) gets one flag per word.
+bool splitScriptWords(std::string_view line, std::vector<std::string>& words, std::string& error,
+                      std::vector<bool>* quoted = nullptr);
 // The whole file: every line checked; a script with errors is not run at all.
 ScriptParse parseScript(std::string_view text);
 
@@ -59,11 +65,15 @@ std::optional<nlohmann::json> stateValue(const nlohmann::json& state, std::strin
 
 // expect / wait-for: compares the state's value at `path` with `wanted` by
 // `op` (==, !=, <, <=, >, >=; the last four for numbers only). `wanted` is
-// read as true / false / null / a number when it looks like one, else text;
-// text compares exactly. Returns true if it holds; `seen` is the value found
-// (JSON text, or "(none)").
+// read as true / false / null / a number when it looks like one, else text
+// (`wantedIsText`: always text, for a word written in quotes); text compares
+// exactly. Returns true if it holds; `seen` is the value found (JSON text,
+// bytes that are not UTF-8 shown as U+FFFD, or "(none)").
 bool compareStateValue(const nlohmann::json& state, std::string_view path, std::string_view op,
-                       std::string_view wanted, std::string& seen, std::string& error);
+                       std::string_view wanted, std::string& seen, std::string& error, bool wantedIsText = false);
+// The state as JSON text that never throws: bytes that are not UTF-8 (an odd
+// device name) become U+FFFD (crosscheck #19, AA1). indent -1 = one line.
+std::string stateText(const nlohmann::json& state, int indent = -1);
 // The operator words compareStateValue knows.
 bool isCompareOperator(std::string_view op);
 

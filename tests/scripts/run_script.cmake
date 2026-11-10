@@ -1,9 +1,16 @@
 # Runs mini-daw with a script on its own config, project and home folder, and
 # checks the exit code and the report (P25a, T-RUN-04). Used by ctest:
 #   cmake -DMINIDAW=<exe> -DVST3DIR=<folder with the test synth> -DWORK=<folder>
-#         -DSCRIPT=<script.txt> -DEXPECT_EXIT=<code> [-DEXPECT_IN_REPORT=<a|b>] -P run_script.cmake
+#         -DSCRIPT=<script.txt> -DEXPECT_EXIT=<code> [-DEXPECT_IN_REPORT=<a|b>]
+#         [-DEXPECT_NOT_IN_REPORT=<a|b>] [-DHOLD_LOCK=ON] -P run_script.cmake
+# HOLD_LOCK: mini-daw's lock is held by `flock` meanwhile (as by a running mini-daw).
 # The script may use @WORK@ (the work folder). mini-daw opens a window: on
 # Linux it needs a display (CI runs the tests under xvfb-run).
+
+# Current policies: with the old CMP0053 rules "@WORK@" below is itself
+# replaced by the variable's value, so the placeholder was never found (CI run
+# 42914083387, CMake 3.x; CMake 4 has the new rules).
+cmake_minimum_required(VERSION 3.24)
 
 if(UNIX AND NOT APPLE AND "$ENV{DISPLAY}" STREQUAL "")
     message("SKIPPED: no display (DISPLAY is not set)")
@@ -33,9 +40,18 @@ string(REPLACE "@WORK@" "${WORK}" text "${text}")
 get_filename_component(name "${SCRIPT}" NAME_WE)
 file(WRITE "${WORK}/${name}.txt" "${text}")
 
+set(hold "")
+if(HOLD_LOCK)
+    find_program(FLOCK flock)
+    if(NOT FLOCK)
+        message("SKIPPED: no flock program to hold the lock")
+        return()
+    endif()
+    set(hold "${FLOCK}" "${WORK}/cfg/mini-daw.lock")
+endif()
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E env "HOME=${WORK}/home" "XDG_CONFIG_HOME="
-            "${MINIDAW}" --config "${WORK}/cfg/config.ini" --script "${WORK}/${name}.txt"
+            ${hold} "${MINIDAW}" --config "${WORK}/cfg/config.ini" --script "${WORK}/${name}.txt"
     RESULT_VARIABLE rc
     OUTPUT_VARIABLE out
     ERROR_VARIABLE err
@@ -51,8 +67,21 @@ if(NOT "${rc}" STREQUAL "${EXPECT_EXIT}")
 endif()
 string(REPLACE "|" ";" EXPECT_IN_REPORT "${EXPECT_IN_REPORT}")
 foreach(wanted IN LISTS EXPECT_IN_REPORT)
+    if(wanted STREQUAL "")
+        message(FATAL_ERROR "an empty text to look for (a \"|\" in it?)")
+    endif()
     string(FIND "${report}${err}" "${wanted}" at)
     if(at EQUAL -1)
         message(FATAL_ERROR "not in the report: ${wanted}")
+    endif()
+endforeach()
+string(REPLACE "|" ";" EXPECT_NOT_IN_REPORT "${EXPECT_NOT_IN_REPORT}")  # texts must not contain "|"
+foreach(unwanted IN LISTS EXPECT_NOT_IN_REPORT)
+    if(unwanted STREQUAL "")
+        message(FATAL_ERROR "an empty text to look for (a \"|\" in it?)")
+    endif()
+    string(FIND "${report}" "${unwanted}" at)
+    if(NOT at EQUAL -1)
+        message(FATAL_ERROR "in the report, but should not be: ${unwanted}")
     endif()
 endforeach()

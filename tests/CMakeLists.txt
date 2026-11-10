@@ -125,21 +125,30 @@ catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)
 # display they are skipped). Each case: script name, exit code, texts the
 # report (or the errors) must contain.
 if(UNIX AND NOT APPLE AND TARGET minidaw)
+    # minidaw_script_test(<name> <exit code> [IN <texts>...] [NOT_IN <texts>...] [HOLD_LOCK])
     function(minidaw_script_test name code)
+        cmake_parse_arguments(PARSE_ARGV 2 arg "HOLD_LOCK" "" "IN;NOT_IN")
         set(dir ${PROJECT_SOURCE_DIR}/tests/scripts)
-        string(REPLACE ";" "|" wanted "${ARGN}")  # passed as one value, split again in the script
+        string(REPLACE ";" "|" wanted "${arg_IN}")  # passed as one value, split again in the script
+        string(REPLACE ";" "|" unwanted "${arg_NOT_IN}")
         add_test(NAME "T-RUN-04: script ${name}"
             COMMAND ${CMAKE_COMMAND} -DMINIDAW=$<TARGET_FILE:minidaw> -DVST3DIR=${CMAKE_CURRENT_BINARY_DIR}/vst3
                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/script-${name} -DSCRIPT=${dir}/${name}.txt
-                    -DEXPECT_EXIT=${code} "-DEXPECT_IN_REPORT=${wanted}" -P ${dir}/run_script.cmake)
+                    -DEXPECT_EXIT=${code} "-DEXPECT_IN_REPORT=${wanted}" "-DEXPECT_NOT_IN_REPORT=${unwanted}"
+                    -DHOLD_LOCK=${arg_HOLD_LOCK} -P ${dir}/run_script.cmake)
         set_tests_properties("T-RUN-04: script ${name}" PROPERTIES
             LABELS "script" SKIP_REGULAR_EXPRESSION "SKIPPED: no display" TIMEOUT 150)
     endfunction()
-    minidaw_script_test(basic 0 "Result: 28 command(s), 0 failed")
-    minidaw_script_test(failures 1
+    minidaw_script_test(basic 0 IN "Result: 28 command(s), 0 failed")
+    minidaw_script_test(failures 1 IN
         "no instrument \"no such synth\" found" "there is no track 7" "is \"Keys\"" "still false"
-        "echo still running" "Result: 7 command(s), 4 failed")
-    minidaw_script_test(bad 2 "line 2: use: open <project folder>" "line 3: unknown command \"plya\"")
+        "echo still running" "no track added by the script (last)" "Result: 11 command(s), 5 failed")
+    minidaw_script_test(bad 2 IN "line 2: use: open <project folder>" "line 3: unknown command \"plya\""
+        "Not run: the script has 2 error(s)")
+    minidaw_script_test(stop 1 IN "is \"MIDI 1\"" "Skipped 1 line(s) after the failure"
+        "Result: 5 command(s), 1 failed" NOT_IN "echo never")
+    minidaw_script_test(quit 0 IN "Result: 2 command(s), 0 failed" NOT_IN "echo never")
+    minidaw_script_test(locked 3 IN "the script is not run" NOT_IN "Result:" HOLD_LOCK)
 endif()
 
 # Licence checks (T-LIC-02, T-LIC-03). Needs Python 3; skipped if not found.

@@ -1,0 +1,4 @@
+# T-RUN-04: quit ends the script; the lines after it do not run.
+add-track midi
+quit
+echo never

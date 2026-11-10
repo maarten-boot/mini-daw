@@ -68,9 +68,11 @@ const ScriptCommand* findScriptCommand(std::string_view name)
     return nullptr;
 }
 
-bool splitScriptWords(std::string_view line, std::vector<std::string>& words, std::string& error)
+bool splitScriptWords(std::string_view line, std::vector<std::string>& words, std::string& error,
+                      std::vector<bool>* quoted)
 {
     words.clear();
+    if (quoted) quoted->clear();
     std::size_t i = 0;
     while (i < line.size()) {
         const char c = line[i];
@@ -102,10 +104,21 @@ bool splitScriptWords(std::string_view line, std::vector<std::string>& words, st
                 error = "a quote is not closed";
                 return false;
             }
+            if (i < line.size() && line[i] != ' ' && line[i] != '\t' && line[i] != '\r') {
+                error = "text right after a closing quote (put a space between words)";
+                return false;
+            }
         } else {
-            while (i < line.size() && line[i] != ' ' && line[i] != '\t' && line[i] != '\r') word += line[i++];
+            while (i < line.size() && line[i] != ' ' && line[i] != '\t' && line[i] != '\r') {
+                if (line[i] == '"') {
+                    error = "a quote inside a word (put the whole word in quotes)";
+                    return false;
+                }
+                word += line[i++];
+            }
         }
         words.push_back(std::move(word));
+        if (quoted) quoted->push_back(c == '"');
     }
     return true;
 }
@@ -117,6 +130,10 @@ ScriptParse parseScript(std::string_view text)
     std::size_t start = 0;
     // A UTF-8 byte order mark (Notepad) is not part of the first command.
     if (text.substr(0, 3) == "\xEF\xBB\xBF") start = 3;
+    if (text.substr(0, 2) == "\xFF\xFE" || text.substr(0, 2) == "\xFE\xFF") {  // AA7
+        out.errors.push_back("line 1: the script is saved as UTF-16 (\"Unicode\"): save it as UTF-8");
+        return out;
+    }
     while (start <= text.size()) {
         std::size_t end = text.find('\n', start);
         if (end == std::string_view::npos) end = text.size();
@@ -129,7 +146,7 @@ ScriptParse parseScript(std::string_view text)
         line.text = std::string(raw);
         std::string error;
         const std::string where = "line " + std::to_string(number) + ": ";
-        if (!splitScriptWords(raw, line.words, error)) {
+        if (!splitScriptWords(raw, line.words, error, &line.quoted)) {
             out.errors.push_back(where + error);
             continue;
         }
@@ -145,8 +162,11 @@ ScriptParse parseScript(std::string_view text)
             out.errors.push_back(where + "use: " + std::string(cmd->usage));
             continue;
         }
+        // Fixed words in any case (AA5): add-track MIDI, arm 1 ON, stop-on-failure Off.
+        auto& w = line.words;
+        if (w[0] == "add-track" || w[0] == "stop-on-failure") w[1] = lowerAscii(w[1]);
+        if (w[0] == "arm") w[2] = lowerAscii(w[2]);
         // The values that can be checked before running.
-        const auto& w = line.words;
         if ((w[0] == "wait" || w[0] == "wait-for") && !parseScriptSeconds(w[1])) {
             out.errors.push_back(where + "\"" + w[1] + "\" is not a number of seconds from 0 to 3600");
             continue;
@@ -202,8 +222,13 @@ bool isCompareOperator(std::string_view op)
     return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=";
 }
 
+std::string stateText(const nlohmann::json& state, int indent)
+{
+    return state.dump(indent, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
 bool compareStateValue(const nlohmann::json& state, std::string_view path, std::string_view op,
-                       std::string_view wanted, std::string& seen, std::string& error)
+                       std::string_view wanted, std::string& seen, std::string& error, bool wantedIsText)
 {
     error.clear();
     if (!isCompareOperator(op)) {
@@ -211,7 +236,7 @@ bool compareStateValue(const nlohmann::json& state, std::string_view path, std::
         return false;
     }
     const auto value = stateValue(state, path);
-    seen = value ? value->dump() : std::string("(none)");
+    seen = value ? stateText(*value) : std::string("(none)");
     const bool ordered = op != "==" && op != "!=";
     if (ordered) {
         const auto want = parseNumber(wanted);
@@ -229,6 +254,8 @@ bool compareStateValue(const nlohmann::json& state, std::string_view path, std::
     bool equal = false;
     if (!value) {
         equal = false;
+    } else if (wantedIsText) {  // "true" in quotes is the text true (AA6)
+        equal = value->is_string() && value->get<std::string>() == wanted;
     } else if (wanted == "true" || wanted == "false") {
         equal = value->is_boolean() && value->get<bool>() == (wanted == "true");
     } else if (wanted == "null") {

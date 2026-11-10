@@ -6,3 +6,7 @@ expect tracks.1.name Drums
 wait-for 0.3 tracks.1.loaded true
 echo still running
 expect tracks.1.name Keys
+add-track midi
+remove-track last
+instrument last "anything"               # AA4: "last" was removed
+save                                     # the project is open: ok

@@ -1,0 +1,7 @@
+# T-RUN-04: stop-on-failure, words in any case.
+stop-on-failure ON
+add-track MIDI
+arm LAST On
+expect tracks.1.armed true
+expect tracks.1.name "true"              # quoted: the text "true", not the bool; fails
+echo never

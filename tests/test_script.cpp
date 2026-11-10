@@ -28,6 +28,15 @@ TEST_CASE("T-RUN-03: script words: spaces, quotes, backslashes, comments", "[run
     CHECK(w == std::vector<std::string>{"echo", ""});
     CHECK_FALSE(splitScriptWords("open \"E:\\no end", w, err));
     CHECK(err == "a quote is not closed");
+
+    // Which words were quoted (AA6); quotes inside a word are refused (AA7).
+    std::vector<bool> q;
+    REQUIRE(splitScriptWords("expect tracks.1.name \"true\"", w, err, &q));
+    CHECK(q == std::vector<bool>{false, false, true});
+    CHECK_FALSE(splitScriptWords("echo \"abc\"def", w, err));
+    CHECK(err == "text right after a closing quote (put a space between words)");
+    CHECK_FALSE(splitScriptWords("echo a\"b c\"", w, err));
+    CHECK(err == "a quote inside a word (put the whole word in quotes)");
 }
 
 TEST_CASE("T-RUN-03: a script is checked as a whole before it runs", "[run][script][T-RUN-03]")
@@ -49,7 +58,20 @@ TEST_CASE("T-RUN-03: a script is checked as a whole before it runs", "[run][scri
     CHECK(ok.lines[0].words[1] == "E:\\test\\zz");
     CHECK(ok.lines[1].number == 4);
     CHECK(ok.lines[1].text == "instrument 3 \"DX7 V\"");
-    CHECK(ok.lines[7].words[0] == "quit");
+    CHECK(ok.lines[7].words[0] == "quit");  // the last line had no line end
+    CHECK(ok.lines[7].number == 10);
+
+    // Fixed words in any case (AA5); a UTF-16 file (AA7).
+    const auto anyCase = parseScript("add-track MIDI\narm last On\nstop-on-failure OFF\n");
+    CHECK(anyCase.errors.empty());
+    REQUIRE(anyCase.lines.size() == 3);
+    CHECK(anyCase.lines[0].words[1] == "midi");
+    CHECK(anyCase.lines[1].words[2] == "on");
+    CHECK(anyCase.lines[1].words[1] == "last");
+    CHECK(anyCase.lines[2].words[1] == "off");
+    const auto utf16 = parseScript(std::string("\xFF\xFEo\0p\0e\0n\0", 10));
+    REQUIRE(utf16.errors.size() == 1);
+    CHECK(utf16.errors[0] == "line 1: the script is saved as UTF-16 (\"Unicode\"): save it as UTF-8");
 
     const auto bad = parseScript("plya\n"
                                  "instrument 3\n"
@@ -121,6 +143,21 @@ TEST_CASE("T-RUN-03: state values and expect", "[run][script][T-RUN-03]")
     CHECK(err.empty());
     CHECK_FALSE(holds("position", ">", "much"));
     CHECK(err == "> needs a number, not \"much\"");
+
+    // A word written in quotes is always text (AA6).
+    const json named = {{"preset", "true"}, {"count", "12"}, {"flag", true}};
+    CHECK(compareStateValue(named, "preset", "==", "true", seen, err, true));
+    CHECK_FALSE(compareStateValue(named, "preset", "==", "true", seen, err, false));
+    CHECK(compareStateValue(named, "count", "==", "12", seen, err, true));
+    CHECK_FALSE(compareStateValue(named, "flag", "==", "true", seen, err, true));
+    CHECK(compareStateValue(named, "flag", "==", "true", seen, err, false));
+
+    // Text that is not UTF-8 (an odd device name) does not throw (AA1).
+    const json odd = {{"output", std::string("Roland \xDCnit")}};
+    CHECK_NOTHROW(stateText(odd, 2));
+    CHECK(stateText(odd) == "{\"output\":\"Roland \xEF\xBF\xBDnit\"}");
+    CHECK_NOTHROW(compareStateValue(odd, "output", "==", "x", seen, err));
+    CHECK(seen == "\"Roland \xEF\xBF\xBDnit\"");
 
     CHECK(parseScriptSeconds("0") == 0.0);
     CHECK(parseScriptSeconds("2.5") == 2.5);

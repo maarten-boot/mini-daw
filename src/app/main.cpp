@@ -3936,8 +3936,10 @@ bool requestInstrument(AppState& app, int number, const minidaw::PluginClass& cl
             return;
         }
         chooseInstrument(app, *track, cls);
+        const bool loaded = app.instruments.count(number) != 0;
+        if (app.script) app.script->busyResult = loaded && track->instrumentClass == cls.classId;  // for a script (AA2)
         // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
-        if (app.instruments.count(number) != 0) ensureLinkedTrack(app, number);
+        if (loaded) ensureLinkedTrack(app, number);
     });
     return true;
 }
@@ -4587,6 +4589,16 @@ void showMainWindow(GLFWwindow* window, bool maximized)
 
 // --- Script files (P25a, SPEC-RUN-02) -----------------------------------------
 
+// The report's first line: version, script, time, config.
+std::string scriptReportHeader(const std::filesystem::path& script, const std::filesystem::path& config)
+{
+    const std::time_t now = std::time(nullptr);
+    char when[32];
+    std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    return std::string(minidaw::kProductName) + ' ' + minidaw::kVersion + ", script " + minidaw::pathToUtf8(script) +
+           ", " + when + ", config " + minidaw::pathToUtf8(config) + '\n';
+}
+
 // What a script can check: mini-daw's state as JSON (expect, wait-for, state).
 nlohmann::json scriptState(AppState& app)
 {
@@ -4674,6 +4686,9 @@ void scriptFinish(AppState& app, bool ok, const std::string& note)
     if (!note.empty()) sr.report << "  " << note;
     sr.report << '\n';
     ++sr.commands;
+    if (!ok && sr.stopOnFailure && sr.next < sr.lines.size()) {
+        sr.report << "Skipped " << (sr.lines.size() - sr.next) << " line(s) after the failure (stop-on-failure on)\n";
+    }
     if (!ok) {
         ++sr.failures;
         app.log.warning("Script line " + std::to_string(sr.current ? sr.current->number : 0) + " failed: " +
@@ -4707,10 +4722,18 @@ void scriptEnd(AppState& app, const std::string& why)
     if (!sr.stay && app.mainWindow) glfwSetWindowShouldClose(app.mainWindow, GLFW_TRUE);
 }
 
+std::string lowerWord(std::string s)
+{
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
 // "3" (or "last": the track the last add-track made) -> the track, or nullptr with `why`.
 minidaw::Track* scriptTrack(AppState& app, const std::string& word, std::string& why)
 {
-    if (word == "last") {
+    if (lowerWord(word) == "last") {
         minidaw::Track* t = app.script && app.script->lastAdded > 0 ? findTrack(app, app.script->lastAdded) : nullptr;
         if (!t) why = "no track added by the script (last)";
         return t;
@@ -4724,14 +4747,6 @@ minidaw::Track* scriptTrack(AppState& app, const std::string& word, std::string&
     minidaw::Track* t = findTrack(app, static_cast<int>(n));
     if (!t) why = "there is no track " + word;
     return t;
-}
-
-std::string lowerWord(std::string s)
-{
-    for (char& c : s) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    }
-    return s;
 }
 
 // Starts the current line. It either finishes now (scriptFinish) or sets `pending`.
@@ -4763,7 +4778,8 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
     } else if (cmd == "expect") {
         const std::string op = w.size() == 4 ? w[2] : "==";
         std::string seen, err;
-        const bool holds = minidaw::compareStateValue(scriptState(app), w[1], op, w.back(), seen, err);
+        const bool holds =
+            minidaw::compareStateValue(scriptState(app), w[1], op, w.back(), seen, err, line.quoted.back());
         if (!err.empty()) {
             fail(err);
         } else if (holds) {
@@ -4773,7 +4789,7 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         }
     } else if (cmd == "state") {
         ok();
-        sr.report << scriptState(app).dump(2) << '\n';
+        sr.report << minidaw::stateText(scriptState(app), 2) << '\n';  // never throws on odd names (AA1)
         sr.report.flush();
     } else if (cmd == "stop-on-failure") {
         sr.stopOnFailure = w[1] == "on";
@@ -4795,6 +4811,7 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
     } else if (cmd == "open") {
         const std::string folder = minidaw::cleanPathText(w[1]);
         sr.busyResult = false;
+        sr.lastAdded = 0;  // its tracks are another project's (AA4)
         startBusy(app, "Opening project " + folder, [&app, folder] {
             const bool opened = openProject(app, minidaw::pathFromUtf8(folder));
             if (app.script) app.script->busyResult = opened;
@@ -4806,7 +4823,11 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
             return;
         }
         saveProjectNow(app);
-        ok();
+        if (app.projectError.empty()) {
+            ok();
+        } else {
+            fail(app.projectError);  // AA3
+        }
     } else if (cmd == "add-track") {
         const int n = addTrack(app, w[1] == "midi" ? minidaw::TrackKind::Midi : minidaw::TrackKind::Audio, why);
         if (n == 0) {
@@ -4817,7 +4838,9 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         }
     } else if (cmd == "remove-track") {
         minidaw::Track* t = scriptTrack(app, w[1], why);
-        if (t && removeTrackNow(app, t->number, why)) {
+        const int number = t ? t->number : 0;
+        if (t && removeTrackNow(app, number, why)) {
+            if (number == sr.lastAdded) sr.lastAdded = 0;  // "last" is gone too (AA4)
             ok();
         } else {
             fail(why);
@@ -4846,10 +4869,13 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
             fail("no instrument \"" + w[2] + "\" found (scan first?)");
         } else if (found.size() > 1) {
             fail("more than one instrument is called \"" + w[2] + "\": use \"name (vendor)\" or the class ID");
-        } else if (!requestInstrument(app, t->number, found.front())) {
-            fail("other slow work is still to do");
         } else {
-            sr.pending = ScriptRun::Pending::Busy;
+            sr.busyResult = false;  // set by the work only if this instrument was loaded (AA2)
+            if (!requestInstrument(app, t->number, found.front())) {
+                fail("other slow work is still to do");
+            } else {
+                sr.pending = ScriptRun::Pending::Busy;
+            }
         }
     } else if (cmd == "output") {
         minidaw::Track* t = scriptTrack(app, w[1], why);
@@ -4914,6 +4940,10 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
             fail(want ? "did not start (see the log)" : "did not stop (a recording is stopped with record)");
         }
     } else if (cmd == "home") {
+        if (app.session.recording() && !app.session.autoMode()) {
+            fail("not while recording (as in the window)");  // AA3: returnToStart does nothing then
+            return;
+        }
         returnToStart(app);
         ok();
     } else if (cmd == "record") {
@@ -4948,11 +4978,10 @@ void stepScript(AppState& app)
             } else {
                 scriptFinish(app, false, "not opened (see the log)");
             }
-        } else {  // instrument
+        } else {  // instrument: the work says whether this one was loaded (AA2)
             std::string why;
             const minidaw::Track* t = scriptTrack(app, w[1], why);
-            const bool loaded = t && app.instruments.count(t->number) != 0 && !t->instrumentClass.empty();
-            if (loaded) {
+            if (sr.busyResult && t) {
                 scriptFinish(app, true, "loaded " + t->instrumentName);
             } else {
                 scriptFinish(app, false, "not loaded (see the log)");
@@ -4972,7 +5001,8 @@ void stepScript(AppState& app)
         const auto& w = sr.current->words;
         const std::string op = w.size() == 5 ? w[3] : "==";
         std::string seen, err;
-        const bool holds = minidaw::compareStateValue(scriptState(app), w[2], op, w.back(), seen, err);
+        const bool holds = minidaw::compareStateValue(scriptState(app), w[2], op, w.back(), seen, err,
+                                                      sr.current->quoted.back());
         if (!err.empty()) {
             scriptFinish(app, false, err);
         } else if (holds) {
@@ -5490,34 +5520,27 @@ int main(int argc, char** argv)
         }
         const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         minidaw::ScriptParse parsed = minidaw::parseScript(text);
-        if (!parsed.errors.empty()) {
-            for (const auto& e : parsed.errors) {
-                std::fprintf(stderr, "%s: %s\n", minidaw::pathToUtf8(scriptFile).c_str(), e.c_str());
-            }
-            return 2;
-        }
-        auto run = std::make_unique<ScriptRun>();
-        run->file = scriptFile;
-        run->lines = std::move(parsed.lines);
         if (scriptReport.empty()) {
             scriptReport = scriptFile;
             scriptReport.replace_extension();
             scriptReport += ".report.txt";
         }
-        run->reportPath = scriptReport;
-        run->report.open(scriptReport, std::ios::binary | std::ios::trunc);
-        if (!run->report) {
-            std::fprintf(stderr, "the report %s could not be written\n", minidaw::pathToUtf8(scriptReport).c_str());
+        if (!parsed.errors.empty()) {
+            // Also into the report: mini-daw.exe started without a terminal shows no stderr (AA9).
+            std::ofstream report(scriptReport, std::ios::binary | std::ios::trunc);
+            if (report) report << scriptReportHeader(scriptFile, app.configPath);
+            for (const auto& e : parsed.errors) {
+                std::fprintf(stderr, "%s: %s\n", minidaw::pathToUtf8(scriptFile).c_str(), e.c_str());
+                if (report) report << e << '\n';
+            }
+            if (report) report << "Not run: the script has " << parsed.errors.size() << " error(s)\n";
             return 2;
         }
-        const std::time_t now = std::time(nullptr);
-        char when[32];
-        std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-        run->report << minidaw::kProductName << ' ' << minidaw::kVersion << ", script "
-                    << minidaw::pathToUtf8(scriptFile) << ", " << when << ", config "
-                    << minidaw::pathToUtf8(app.configPath) << '\n';
-        run->report.flush();
-        app.script = std::move(run);
+        auto run = std::make_unique<ScriptRun>();
+        run->file = scriptFile;
+        run->lines = std::move(parsed.lines);
+        run->reportPath = scriptReport;
+        app.script = std::move(run);  // the report is opened once this mini-daw holds the lock (AA9)
     }
 
     auto loaded = minidaw::loadConfigFile(app.configPath);
@@ -5559,10 +5582,10 @@ int main(int argc, char** argv)
             AllowSetForegroundWindow(static_cast<DWORD>(minidaw::InstanceLock::ownerProcess(folder)));
 #endif
             if (app.script) {  // a script would act on a window it does not own
+                // The report is not touched: it may be the running script's own (AA9).
                 std::fprintf(stderr, "mini-daw is already running with config folder %s; the script is not run "
                                      "(use --config with another folder)\n",
                              minidaw::pathToUtf8(folder).c_str());
-                app.script->report << "Not run: mini-daw is already running with this config folder\n";
                 return 3;
             }
             minidaw::InstanceLock::requestShow(folder);
@@ -5576,6 +5599,16 @@ int main(int argc, char** argv)
         case minidaw::InstanceLock::Result::Acquired:
             break;
         }
+    }
+    if (app.script) {
+        ScriptRun& sr = *app.script;
+        sr.report.open(sr.reportPath, std::ios::binary | std::ios::trunc);
+        if (!sr.report) {
+            std::fprintf(stderr, "the report %s could not be written\n", minidaw::pathToUtf8(sr.reportPath).c_str());
+            return 2;
+        }
+        sr.report << scriptReportHeader(sr.file, app.configPath);
+        sr.report.flush();
     }
     openLog(app, app.script ? "GUI, script" : "GUI");
     if (!app.instanceLockNote.empty()) app.log.warning(app.instanceLockNote);
