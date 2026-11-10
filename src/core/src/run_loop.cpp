@@ -35,20 +35,32 @@ RunLoop::Id RunLoop::addTimer(std::chrono::milliseconds interval, std::function<
     return entries_.back().id;
 }
 
+// Removing a handler can destroy the last reference to a plugin object, whose
+// destructor may remove handlers too (Z2). So the entries are moved out and
+// the list is made consistent first; they are destroyed only after that, at
+// the end of these functions.
+
 bool RunLoop::remove(Id id)
 {
     const auto it = std::find_if(entries_.begin(), entries_.end(), [id](const Entry& e) { return e.id == id; });
     if (it == entries_.end()) return false;
+    const Entry gone = std::move(*it);
     entries_.erase(it);
-    return true;
+    return true;  // `gone` is destroyed here
 }
 
 std::size_t RunLoop::removeOwner(const void* owner)
 {
-    const auto before = entries_.size();
-    entries_.erase(std::remove_if(entries_.begin(), entries_.end(), [owner](const Entry& e) { return e.owner == owner; }),
-                   entries_.end());
-    return before - entries_.size();
+    std::vector<Entry> gone;
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (it->owner == owner) {
+            gone.push_back(std::move(*it));
+            it = entries_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return gone.size();  // `gone` is destroyed after the count is taken
 }
 
 std::size_t RunLoop::poll(Clock::time_point now)
@@ -70,6 +82,14 @@ std::size_t RunLoop::poll(Clock::time_point now)
             const auto it = std::find_if(entries_.begin(), entries_.end(),
                                          [&](const Entry& e) { return e.id == readers[i]; });
             if (it == entries_.end()) continue;  // removed by an earlier callback
+            if (fds[i].revents & POLLNVAL) {
+                // Not an open descriptor: its owner closed it without removing
+                // the handler (Z1). Calling it would repeat every poll, and once
+                // the number is reused it would be about someone else's file.
+                remove(readers[i]);
+                ++dropped_;
+                continue;
+            }
             const std::function<void()> callback = it->callback;
             callback();
             ++calls;

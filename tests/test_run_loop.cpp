@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <memory>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -62,6 +63,62 @@ TEST_CASE("T-VST-37: run loop timers: due times, no catching up, removed in thei
     CHECK(loop.poll(t0 + 1s) == 0);
 }
 
+namespace {
+// Like a plugin object held by a handler, whose destructor unregisters (Z2).
+struct RemovesOnDestroy {
+    RunLoop* loop = nullptr;
+    RunLoop::Id other = 0;
+    int* destroyed = nullptr;
+    ~RemovesOnDestroy()
+    {
+        ++*destroyed;
+        if (loop && other) loop->remove(other);
+        if (loop) loop->removeOwner(this);  // its own owner: already gone, nothing to do
+    }
+};
+} // namespace
+
+TEST_CASE("T-VST-37: a handler's destructor may remove handlers while the run loop removes it", "[vst][T-VST-37]")
+{
+    RunLoop loop;
+    const auto t0 = RunLoop::Clock::now();
+    int destroyed = 0;
+    int calls = 0;
+    const RunLoop::Id keep = loop.addTimer(5ms, [&] { ++calls; }, &calls, t0);
+
+    // remove(): the destructor removes another entry.
+    const RunLoop::Id other = loop.addTimer(5ms, [] {}, &destroyed, t0);
+    auto obj = std::make_shared<RemovesOnDestroy>();
+    obj->loop = &loop;
+    obj->other = other;
+    obj->destroyed = &destroyed;
+    const RunLoop::Id a = loop.addTimer(5ms, [obj] { (void)obj; }, &destroyed, t0);
+    obj.reset();  // the handler holds the last reference
+    CHECK(loop.timerCount() == 3);
+    CHECK(loop.remove(a));
+    CHECK(destroyed == 1);
+    CHECK(loop.timerCount() == 1);  // a, and the other one through the destructor
+    CHECK_FALSE(loop.remove(other));
+
+    // removeOwner(): two of one owner; the first's destructor removes the second.
+    auto first = std::make_shared<RemovesOnDestroy>();
+    first->loop = &loop;
+    first->destroyed = &destroyed;
+    const RunLoop::Id second = loop.addTimer(5ms, [] {}, &first, t0);
+    const RunLoop::Id unrelated = loop.addTimer(5ms, [] {}, &destroyed, t0);
+    first->other = unrelated;  // it removes an entry of another owner
+    loop.addTimer(5ms, [first] { (void)first; }, &first, t0);
+    first.reset();
+    CHECK(loop.removeOwner(&first) == 2);
+    CHECK(destroyed == 2);
+    CHECK_FALSE(loop.remove(second));
+    CHECK_FALSE(loop.remove(unrelated));
+    CHECK(loop.timerCount() == 1);
+    CHECK(loop.poll(t0 + 5ms) == 1);
+    CHECK(calls == 1);
+    CHECK(loop.remove(keep));
+}
+
 #if !defined(_WIN32)
 TEST_CASE("T-VST-37: run loop readers: called when their descriptor can be read", "[vst][T-VST-37]")
 {
@@ -105,5 +162,24 @@ TEST_CASE("T-VST-37: run loop readers: called when their descriptor can be read"
     ::close(p[0]);
     ::close(q[0]);
     ::close(q[1]);
+}
+
+TEST_CASE("T-VST-37: a reader whose descriptor was closed is dropped, not called", "[vst][T-VST-37]")
+{
+    RunLoop loop;
+    int p[2] = {-1, -1};
+    REQUIRE(::pipe(p) == 0);
+    int calls = 0;
+    const RunLoop::Id r = loop.addReader(p[0], [&] { ++calls; }, &calls);
+    const std::size_t before = loop.droppedCount();
+    ::close(p[0]);  // closed by its owner, still registered
+    ::close(p[1]);
+    CHECK(loop.poll() == 0);
+    CHECK(calls == 0);
+    CHECK(loop.readerCount() == 0);
+    CHECK(loop.droppedCount() == before + 1);
+    CHECK_FALSE(loop.remove(r));  // already gone; unregistering later is harmless
+    CHECK(loop.poll() == 0);
+    CHECK(loop.droppedCount() == before + 1);
 }
 #endif

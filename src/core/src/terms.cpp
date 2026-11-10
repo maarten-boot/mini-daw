@@ -282,6 +282,8 @@ std::vector<std::size_t> findTerms(std::string_view query)
     return byName;
 }
 
+std::string trimmedTermQuery(std::string_view query) { return std::string(trimmed(query)); }
+
 std::size_t termIndex(std::string_view name)
 {
     const auto& all = terms();

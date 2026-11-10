@@ -126,3 +126,19 @@ Scope: Spec v0.50, Plan, Tests, README, CLAUDE.md, code at `6301676` (changes si
 | Z7 | low | Terms tab: the "> " mark of a term jumped to stays for the rest of the session, also in later search results. | Clear it when the Find text changes. |
 | Z8 | low | Terms tab: a query that matches every term (e.g. "e") shows the topic view without the topics per term and "47 terms", while the Spec says found terms are shown name-first with their topic; the "no term has" text shows the untrimmed query. | Choose the view by "Find is empty (after trimming)"; show the trimmed query. |
 | Z9 | doc | Plan P10d still says "Linux later … Linux editor later (P12)"; CLAUDE.md line 3 "Windows 10 (Linux/macOS later)"; SPEC-VST-05b "ready descriptors (also on error or hang-up) are called" needs Z1's rule. | Update the texts. |
+
+## Actions taken (user, 2026-11-10: "Shall I fix Z1–Z9, starting with Z2: yes")
+
+| # | Action |
+|---|--------|
+| Z2 | `RunLoop::remove` / `removeOwner` move the entries out and release them after the list is consistent; the frame's `unregister` takes its records out of `handlers_` before removing them, `dropHandlers` empties `handlers_` first. Test with handler objects whose destructor removes other entries; the old code fails it. Test synth mode 3 (unregisters only in the view's destructor): close and unload clean, also under AddressSanitizer / UBSan. |
+| Z1 | A reader whose descriptor is not open (POLLNVAL) is removed without a call and counted (`droppedCount`); the app logs a warning once per drop. Tests: a closed pipe in T-VST-37; test synth mode 2 (closes its pipe without unregistering) in T-VST-38. |
+| Z3 | `PluginWindows::supported()` on Linux also needs `glfwGetPlatform() == GLFW_PLATFORM_X11`; `open()` reports "needs X11 (or XWayland)" for a missing display or window. |
+| Z4 | Test synth hidden parameter "Editor test mode" (7): 1 register in `setFrame()`, 2 close the pipe without unregistering, 3 unregister from the destructor; T-VST-38 sections for each. The app's X11 window stays a manual test (T-VST-40). |
+| Z5 | The frame's records keep the kind (reader / timer); `unregisterTimer` / `unregisterEventHandler` match it. (Not separately testable with the test synth: its two interfaces have different addresses.) |
+| Z6 | T-VST-40: type in a plugin's text field. No code change. |
+| Z7 | The "> " mark is cleared when Find is edited and by Show all. |
+| Z8 | The topic view only for an empty Find after trimming (`trimmedTermQuery`); any word gives the result list ("47 terms" when all match); "No term has …" shows the trimmed word. |
+| Z9 | Plan P10d, CLAUDE.md line 3 and SPEC-VST-05b (closed descriptors, release order, kinds, X11 only) updated; SPEC-UI-17 for Z7 / Z8. |
+
+Spec v0.51, Plan P24a. Linux 209/209 ctest under `xvfb-run`; MinGW build under Wine 204/204 Catch2 cases (3809 assertions). The Terms tab changes (Z7, Z8) not checked in the GUI here: part of T-UI-28 (M).

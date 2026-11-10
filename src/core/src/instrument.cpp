@@ -715,12 +715,12 @@ public:
         IPtr<Linux::IEventHandler> keep(handler);  // held while registered, and during each call
         const RunLoop::Id id = editorRunLoop().addReader(fd, [keep, fd] { keep->onFDIsSet(fd); }, this);
         if (id == 0) return kResultFalse;
-        handlers_.push_back({handler, id});
+        handlers_.push_back({handler, false, id});
         return kResultTrue;
     }
     tresult PLUGIN_API unregisterEventHandler(Linux::IEventHandler* handler) override
     {
-        return unregister(handler);
+        return unregister(handler, false);
     }
     tresult PLUGIN_API registerTimer(Linux::ITimerHandler* handler, Linux::TimerInterval milliseconds) override
     {
@@ -729,37 +729,47 @@ public:
         const auto ms = std::chrono::milliseconds(static_cast<std::int64_t>(std::min<Linux::TimerInterval>(milliseconds, 3600000)));
         const RunLoop::Id id = editorRunLoop().addTimer(ms, [keep] { keep->onTimer(); }, this);
         if (id == 0) return kResultFalse;
-        handlers_.push_back({handler, id});
+        handlers_.push_back({handler, true, id});
         return kResultTrue;
     }
-    tresult PLUGIN_API unregisterTimer(Linux::ITimerHandler* handler) override { return unregister(handler); }
+    tresult PLUGIN_API unregisterTimer(Linux::ITimerHandler* handler) override { return unregister(handler, true); }
 #endif
 
     // The editor closed: whatever the view left registered goes too.
+    // The list is emptied first: removing a handler can run a plugin
+    // destructor that unregisters again (Z2).
     void dropHandlers()
     {
+        std::vector<Handler> gone;
+        gone.swap(handlers_);
         editorRunLoop().removeOwner(this);
-        handlers_.clear();
     }
 
 private:
-    tresult unregister(const void* handler)
+    struct Handler {
+        const void* object = nullptr;
+        bool timer = false;  // reader or timer: unregisterTimer(p) leaves p's readers (Z5)
+        RunLoop::Id id = 0;
+    };
+
+    tresult unregister(const void* handler, bool timer)
     {
-        bool found = false;
+        // Take the records out first, then remove them from the run loop (Z2).
+        std::vector<RunLoop::Id> ids;
         for (auto it = handlers_.begin(); it != handlers_.end();) {
-            if (it->first == handler) {
-                editorRunLoop().remove(it->second);
+            if (it->object == handler && it->timer == timer) {
+                ids.push_back(it->id);
                 it = handlers_.erase(it);
-                found = true;
             } else {
                 ++it;
             }
         }
-        return found ? kResultTrue : kInvalidArgument;
+        for (const RunLoop::Id id : ids) editorRunLoop().remove(id);
+        return ids.empty() ? kInvalidArgument : kResultTrue;
     }
 
     InstrumentEditor* owner_;
-    std::vector<std::pair<const void*, RunLoop::Id>> handlers_;
+    std::vector<Handler> handlers_;
 };
 
 struct InstrumentEditor::Impl {

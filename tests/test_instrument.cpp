@@ -701,5 +701,60 @@ TEST_CASE("T-VST-38: the editor gets the host's run loop on Linux; its handlers 
         CHECK(loop.timerCount() == 0);
         CHECK(loop.readerCount() == 0);
     }
+
+    // Plugins that behave differently (the test synth's "Editor test mode", 7 = mode / 4).
+    REQUIRE(inst.load(MINIDAW_TEST_VST3, testSynthClass(), 48000, err));
+    const auto testMode = [&](int mode) { inst.controller()->setParamNormalized(7, mode / 4.0); };
+    SECTION("registering in setFrame(), before attached()")
+    {
+        testMode(1);
+        InstrumentEditor ed;
+        REQUIRE(ed.create(inst, "minidaw-test", err));
+        CHECK(loop.timerCount() == 1);
+        CHECK(loop.readerCount() == 1);
+        REQUIRE(ed.attach(nullptr, err));
+        CHECK(loop.timerCount() == 1);  // not twice
+        ed.close();
+        CHECK(loop.timerCount() == 0);
+        CHECK(loop.readerCount() == 0);
+    }
+    SECTION("closing its pipe without unregistering: the reader is dropped (Z1)")
+    {
+        testMode(2);
+        InstrumentEditor ed;
+        REQUIRE(ed.create(inst, "minidaw-test", err));
+        REQUIRE(ed.attach(nullptr, err));
+        const std::size_t dropped = loop.droppedCount();
+        const auto t = RunLoop::Clock::now();
+        CHECK(loop.poll(t + std::chrono::milliseconds(20)) == 1);  // the timer closes the pipe
+        CHECK(loop.readerCount() == 1);
+        CHECK(loop.poll(t + std::chrono::milliseconds(25)) == 0);  // not called: dropped
+        CHECK(loop.readerCount() == 0);
+        CHECK(loop.droppedCount() == dropped + 1);
+        CHECK(reads() == 0);
+        ed.close();  // unregistering the dropped reader is harmless
+        CHECK(loop.timerCount() == 0);
+    }
+    SECTION("unregistering from the view's destructor, while the host drops the handlers (Z2)")
+    {
+        testMode(3);
+        {
+            InstrumentEditor ed;
+            REQUIRE(ed.create(inst, "minidaw-test", err));
+            REQUIRE(ed.attach(nullptr, err));
+            CHECK(loop.timerCount() == 1);
+            ed.close();  // removed() leaves them; the frame drops them, the view's destructor unregisters
+            CHECK(loop.timerCount() == 0);
+            CHECK(loop.readerCount() == 0);
+        }
+        {
+            InstrumentEditor ed;
+            REQUIRE(ed.create(inst, "minidaw-test", err));
+            REQUIRE(ed.attach(nullptr, err));
+            inst.unload();  // the same on unload
+            CHECK(loop.timerCount() == 0);
+            CHECK(loop.readerCount() == 0);
+        }
+    }
 #endif
 }

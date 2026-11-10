@@ -5,7 +5,7 @@
 // separate taskbar button). Windows ("HWND") and, since P24, Linux
 // ("X11EmbedWindowID", transient for the main window; the editors' run loop,
 // minidaw::editorRunLoop(), is polled by the main loop every frame). On other
-// systems supported() is false. GUI thread only.
+// systems, and on Linux without X11, supported() is false. GUI thread only.
 
 #include "minidaw/instrument.hpp"
 

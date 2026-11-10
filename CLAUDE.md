@@ -1,6 +1,6 @@
 # mini-daw — notes for Claude Code sessions
 
-Small MIDI/audio recorder for Windows 10 (Linux/macOS later), C++20, MIT licence.
+Small MIDI/audio recorder for Windows 10 and Linux (X11; macOS later), C++20, MIT licence.
 Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.md` and the latest `Conversation-*.md` (its last section is the handover) before starting work.
 
 ## Working rules for this project

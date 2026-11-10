@@ -24,8 +24,10 @@ public:
     using Clock = std::chrono::steady_clock;
     using Id = std::uint64_t;  // 0 = none
 
-    // Called when `fd` can be read (or has an error or hung up). POSIX only:
-    // on Windows the handler is kept but never called.
+    // Called when `fd` can be read (or has an error or hung up). If `fd` is
+    // not an open descriptor any more, the handler is removed without a call
+    // (droppedCount() grows). POSIX only: on Windows the handler is kept but
+    // never called.
     Id addReader(int fd, std::function<void()> callback, const void* owner);
     // Called every `interval` (at least 1 ms), from the first poll() that is
     // `interval` or more after it was added. A poll that is late calls it once
@@ -34,7 +36,9 @@ public:
                 Clock::time_point now = Clock::now());
     // False if `id` is not (or no longer) registered.
     bool remove(Id id);
-    // Removes every handler of `owner`; returns how many.
+    // Removes every handler of `owner`; returns how many. Both destroy the
+    // callbacks only after the list is consistent again: a callback's
+    // destructor may add or remove handlers.
     std::size_t removeOwner(const void* owner);
 
     // Calls the readers whose descriptor is ready, then the timers that are due.
@@ -43,6 +47,8 @@ public:
 
     std::size_t readerCount() const;
     std::size_t timerCount() const;
+    // Readers removed because their descriptor was closed (to log it).
+    std::size_t droppedCount() const { return dropped_; }
 
 private:
     struct Entry {
@@ -56,6 +62,7 @@ private:
     };
     std::vector<Entry> entries_;
     Id next_ = 1;
+    std::size_t dropped_ = 0;
 };
 
 // The run loop of mini-daw's editors (one for the process).

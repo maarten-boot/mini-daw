@@ -34,6 +34,13 @@
 // Test hook: the hidden parameter "Restart request" (4), set by the host,
 // makes the controller call restartComponent: above 0.5 with kIoChanged |
 // kLatencyChanged, else with kParamValuesChanged.
+//
+// Test hook: the hidden parameter "Editor test mode" (7, normalized = mode / 4)
+// makes the editor behave like some real plugins (crosscheck #18, Z1 / Z2):
+//   1  register with the run loop in setFrame(), before attached();
+//   2  at its first timer call, close its pipe without unregistering it;
+//   3  removed() does not unregister; the view's destructor does (it runs
+//      when the host drops the handlers that hold the view).
 // Not shipped with mini-daw. Part of mini-daw, MIT licence.
 
 #include "public.sdk/source/main/pluginfactory.h"
@@ -80,6 +87,7 @@ constexpr ParamID kProgram = 3;         // program change (PL2)
 constexpr ParamID kRestartRequest = 4;  // hidden test hook (see above)
 constexpr ParamID kEditorTicks = 5;     // read-only, hidden: the editor's timer calls / 1000 (P24)
 constexpr ParamID kEditorReads = 6;     // read-only, hidden: the editor's pipe reads / 1000 (P24)
+constexpr ParamID kEditorTestMode = 7;  // hidden test hook (see above)
 constexpr ProgramListID kFactoryList = 1;
 constexpr double kProgramGain[] = {0.2, 0.5, 0.9};  // Soft, Medium, Loud
 constexpr int32 kProgramCount = 3;
@@ -212,6 +220,26 @@ public:
         ViewRect r(0, 0, size->width, size->height);
         setRect(r);
     }
+#if !defined(_WIN32)
+    ~TestSynthView() override
+    {
+        if (runLoop_) {  // test mode 3: unregistering from the destructor
+            runLoop_->unregisterTimer(this);
+            runLoop_->unregisterEventHandler(this);
+        }
+        for (int& fd : pipe_) {
+            if (fd >= 0) ::close(fd);
+            fd = -1;
+        }
+    }
+#endif
+
+    tresult PLUGIN_API setFrame(IPlugFrame* frame) override
+    {
+        const tresult r = CPluginView::setFrame(frame);
+        if (frame && testMode() == 1) startRunLoop();
+        return r;
+    }
 
     tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override
     {
@@ -227,7 +255,7 @@ public:
     {
         if (isPlatformTypeSupported(type) != kResultTrue) return kResultFalse;
         CPluginView::attached(parent, type);
-        startRunLoop();
+        if (testMode() != 1) startRunLoop();
         if (std::strcmp(type, kTestPlatform) == 0) {
             if (plugFrame) {
                 ViewRect wanted(0, 0, 320, 160);
@@ -253,7 +281,7 @@ public:
         if (hwnd_) DestroyWindow(hwnd_);
         hwnd_ = nullptr;
 #endif
-        stopRunLoop();
+        if (testMode() != 3) stopRunLoop();
 #if defined(__linux__)
         closeX11Window();
 #endif
@@ -281,6 +309,13 @@ public:
     {
         ++ticks_;
         controller_->setParamNormalized(kEditorTicks, std::min(1.0, ticks_ / 1000.0));
+        if (testMode() == 2 && pipe_[0] >= 0) {
+            // Closed without telling the host: its run loop must drop the reader.
+            for (int& fd : pipe_) {
+                ::close(fd);
+                fd = -1;
+            }
+        }
         if (pipe_[1] >= 0) {
             const char c = 1;
             const ssize_t n = ::write(pipe_[1], &c, 1);
@@ -335,11 +370,16 @@ public:
     REFCOUNT_METHODS(CPluginView)
 
 private:
+    int testMode() const
+    {
+        return static_cast<int>(std::lround(controller_->getParamNormalized(kEditorTestMode) * 4));
+    }
+
     // The host's run loop, if its frame offers one (Linux hosts do).
     void startRunLoop()
     {
 #if !defined(_WIN32)
-        if (!plugFrame) return;
+        if (!plugFrame || runLoop_) return;
         FUnknownPtr<Linux::IRunLoop> loop(plugFrame);
         if (!loop) return;
         runLoop_ = loop;
@@ -541,6 +581,7 @@ public:
                                 ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorTicks);
         parameters.addParameter(STR16("Editor reads"), nullptr, 0, 0.0,
                                 ParameterInfo::kIsReadOnly | ParameterInfo::kIsHidden, kEditorReads);
+        parameters.addParameter(STR16("Editor test mode"), nullptr, 0, 0.0, ParameterInfo::kIsHidden, kEditorTestMode);
         return kResultOk;
     }
     tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override

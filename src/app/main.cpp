@@ -229,6 +229,7 @@ struct AppState {
     std::string tabsFocus;      // Tabs window: the tab moved to the top / bottom, its other button gets the focus (U4)
     bool tabsFocusUp = false;
     // Terms tab (P23, SPEC-UI-17)
+    std::size_t runLoopDropped = 0;  // editorRunLoop().droppedCount() already logged (Z1)
     std::string termsFind;
     std::size_t termsJump = SIZE_MAX;   // a "See also" clicked: scroll to this term in the next frame
     std::size_t termsMarked = SIZE_MAX; // the term jumped to last (shown with "> ")
@@ -934,22 +935,30 @@ void drawTermsTab(AppState& app)
     ImGui::TextUnformatted("Find:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(std::min(24.0f * ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x * 0.6f));
-    ImGui::InputTextWithHint("##terms-find", "a word, e.g. take", &app.termsFind);
-    const std::vector<std::size_t> found = minidaw::findTerms(app.termsFind);
-    const bool all = found.size() == minidaw::terms().size();
+    if (ImGui::InputTextWithHint("##terms-find", "a word, e.g. take", &app.termsFind)) {
+        app.termsMarked = SIZE_MAX;  // a new search: the "> " of the last jump goes (Z7)
+    }
     ImGui::SameLine();
     minidaw::app::beginDisabled(app.termsFind.empty());
-    if (ImGui::Button("Show all")) app.termsFind.clear();
+    if (ImGui::Button("Show all")) {
+        app.termsFind.clear();
+        app.termsMarked = SIZE_MAX;
+    }
     minidaw::app::endDisabled();
+    // The topic view only for an empty Find; any word gives the result list,
+    // even one every term has (Z8).
+    const std::string query = minidaw::trimmedTermQuery(app.termsFind);
+    const std::vector<std::size_t> found = minidaw::findTerms(query);
+    const bool all = query.empty();
     ImGui::SameLine();
-    if (all) {
+    if (all || found.size() == minidaw::terms().size()) {
         ImGui::Text("%zu terms", found.size());
     } else {
         ImGui::Text("%zu of %zu terms", found.size(), minidaw::terms().size());
     }
     if (ImGui::BeginChild("terms-list", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
         if (found.empty()) {
-            ImGui::TextWrapped("No term has \"%s\". Try a shorter word, or Show all.", app.termsFind.c_str());
+            ImGui::TextWrapped("No term has \"%s\". Try a shorter word, or Show all.", query.c_str());
         } else if (all) {
             std::string group;
             for (std::size_t i : found) {
@@ -4658,6 +4667,11 @@ int runGui(AppState& app)
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         minidaw::editorRunLoop().poll();  // Linux plugin editors: their X11 events and timers (P24)
+        if (const std::size_t dropped = minidaw::editorRunLoop().droppedCount(); dropped != app.runLoopDropped) {
+            app.runLoopDropped = dropped;
+            app.log.warning("A plugin editor closed a file it had asked mini-daw to watch, without saying so; "
+                            "mini-daw stopped watching it.");
+        }
         // A second start asked for this window (P20): restore it and bring it to the front.
         static double lastShowCheck = 0.0;
         if (glfwGetTime() - lastShowCheck > 0.5) {

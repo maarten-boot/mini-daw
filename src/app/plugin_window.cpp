@@ -71,8 +71,12 @@ PluginWindows::~PluginWindows()
 
 bool PluginWindows::supported()
 {
-#if defined(MINIDAW_PLUGIN_WINDOWS)
+#if defined(_WIN32)
     return true;
+#elif defined(MINIDAW_PLUGIN_WINDOWS)
+    // VST3 editors on Linux need X11 (also XWayland); a GLFW built with
+    // Wayland could run without it (Z3).
+    return glfwGetPlatform() == GLFW_PLATFORM_X11;
 #else
     return false;
 #endif
@@ -127,6 +131,12 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     // above the main window and minimises it with it.
     Display* display = glfwGetX11Display();
     const ::Window xwindow = glfwGetX11Window(win.window);
+    if (!display || xwindow == 0) {
+        error = "The instrument's own window needs X11 (or XWayland).";
+        win.editor.close();
+        glfwDestroyWindow(win.window);
+        return false;
+    }
     if (owner) XSetTransientForHint(display, xwindow, glfwGetX11Window(owner));
     void* parent = reinterpret_cast<void*>(static_cast<std::uintptr_t>(xwindow));
 #endif

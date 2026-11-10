@@ -29,6 +29,9 @@ const std::vector<Term>& terms();
 // name contains it first, then the others, each in terms() order. All of them
 // for an empty query.
 std::vector<std::size_t> findTerms(std::string_view query);
+// `query` without spaces at the ends: what findTerms() looks for. The Terms
+// tab shows the topic view only when this is empty (Z8).
+std::string trimmedTermQuery(std::string_view query);
 // The index of the term called `name` (any case), or terms().size() if none.
 std::size_t termIndex(std::string_view name);
 
