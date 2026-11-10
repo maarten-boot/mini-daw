@@ -22,3 +22,10 @@ User: "pushed it, check the CI run". Run 42881121369: windows, linux, licence gr
 ## 3. Other plugin formats
 
 User: "are different plugin formats common on Mac and Linux, should we (in the future) add other formats besides VST3?" Claude: AU is Apple's own (Logic / GarageBand load only AU; Apple's built-in instruments are AU only), CLAP is new and cross-platform but plugins ship it next to VST3, LV2 is Linux's open format (mostly effects; instruments also VST3 now), VST2 is no longer licensed, AAX is Pro Tools only. Advice: stay with VST3; AU with a Mac version; CLAP on request; a small format layer first. User: "yes add it to the plan" → Plan P12a (later).
+
+## 4. T-UI-28 result; a real Linux plugin for tests
+
+User: "T-UI-28: read the text as intro for new users it is a good start. For linux we now have a custom made instrument on this machine using VST3. see the project at ../software-synth-LMW/ perhaps usefull for testing stuff."
+
+- T-UI-28 texts: pass (user).
+- LMW-Synth (JUCE 9, VST 3.8, AGPLv3; the user's own project) copied to a scratch `~/.vst3` and tried in mini-daw (`acb4271`) on Xvfb: Edit opens its full JUCE editor; drag, typing (Z6), drop-down menus, Close, Edit again, quit with it open, saved state and restart all work (Tests.md T-VST-40 row). Left for the user: stacking / minimising with a window manager, and sound.
