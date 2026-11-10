@@ -36,3 +36,8 @@ User: "testes some on windows, Large arturia instruments show the waiting messag
 
 - Claude's first reading of the code: changing the instruments waits (`InstrumentRack::configure`) until the audio thread has left the old list, without a time limit; if a plugin hangs in its processing, the GUI waits for ever. Not confirmed: the log of that run and whether the window froze were asked for.
 - User sent part of a later log: the T-VST-36 lines (DX7 V: 128 programs in 'ProgramList Ch1'; DCO-106 (Cherry Audio): none). It does not cover the run with the problem.
+- User: the window did not freeze (Task Manager: mini-daw at the top of the list, 300 MB, 4.5 % CPU); not recording; logs later, will retry a similar setup. So not the endless wait of `configure` (that freezes the window); the cause is still open.
+
+## 6. Idea: remote control for automatic tests
+
+User: "if we allow the mini-daw gui to be remotely controlled e.g. using 9p protocoll or zmq or https could we then do some of the tests automatically?" Claude's answer: see the reply; decision pending.
