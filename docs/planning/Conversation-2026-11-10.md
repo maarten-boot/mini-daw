@@ -14,3 +14,7 @@ Claude: "Shall I fix Z1–Z9, starting with Z2?" User: "yes".
 - Z7 / Z8: Terms mark cleared by a new search; the result list for any word.
 - Z9: Plan P10d, CLAUDE.md, Spec (v0.51) updated.
 - Linux 209/209 under xvfb-run; run-loop tests clean under AddressSanitizer; MinGW under Wine 204/204.
+
+## 2. CI of `acb4271`
+
+User: "pushed it, check the CI run". Run 42881121369: windows, linux, licence green; Linux 209/209 under `xvfb-run` (T-VST-39 passed), Windows 206/206. Both builds checked (the new texts are in them), then `dist/` refilled; `dist/TESTS.txt` notes the crosscheck #18 fixes and the extra steps in T-VST-40 and T-UI-28.
