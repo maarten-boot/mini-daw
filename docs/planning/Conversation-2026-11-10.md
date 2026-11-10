@@ -29,3 +29,10 @@ User: "T-UI-28: read the text as intro for new users it is a good start. For lin
 
 - T-UI-28 texts: pass (user).
 - LMW-Synth (JUCE 9, VST 3.8, AGPLv3; the user's own project) copied to a scratch `~/.vst3` and tried in mini-daw (`acb4271`) on Xvfb: Edit opens its full JUCE editor; drag, typing (Z6), drop-down menus, Close, Edit again, quit with it open, saved state and restart all work (Tests.md T-VST-40 row). Left for the user: stacking / minimising with a window manager, and sound.
+
+## 5. User's Windows test
+
+User: "testes some on windows, Large arturia instruments show the waiting message, making notes on the recording while recording give no interruptions on audio. but i loaded 3 instruments from arturia and then the instrument could switch to the built in windows midi instrument but no longer back to any other. i could not even clode the track ao in the end i had to close the program"
+
+- Claude's first reading of the code: changing the instruments waits (`InstrumentRack::configure`) until the audio thread has left the old list, without a time limit; if a plugin hangs in its processing, the GUI waits for ever. Not confirmed: the log of that run and whether the window froze were asked for.
+- User sent part of a later log: the T-VST-36 lines (DX7 V: 128 programs in 'ProgramList Ch1'; DCO-106 (Cherry Audio): none). It does not cover the run with the problem.
