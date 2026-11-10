@@ -41,3 +41,4 @@ User: "testes some on windows, Large arturia instruments show the waiting messag
 ## 6. Idea: remote control for automatic tests
 
 User: "if we allow the mini-daw gui to be remotely controlled e.g. using 9p protocoll or zmq or https could we then do some of the tests automatically?" Claude's answer: see the reply; decision pending.
+- Claude: a command layer (the GUI's actions, run at the start of a frame), a script file first (`--script`), then local HTTP + JSON (cpp-httplib); off by default; ImGui Test Engine mentioned (licence not plain open source). User: "yes add it to the plan, script file first; during development it could be very handy to also allow 192.168.1.0/24 my home network as my windows and synth is in the basement on that net while development happens on linux elsewhere in the house, it could be stripped down later" → Plan P25, P25a (script), P25b (HTTP, allowed networks incl. 192.168.1.0/24 during development, token for non-local clients).
