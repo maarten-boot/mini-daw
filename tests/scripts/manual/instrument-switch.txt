@@ -4,9 +4,9 @@
 # Before running:
 #  1. Copy the project folder E:\test\projects\zz to E:\test\projects\zz-script
 #     (the script changes the project it opens).
-#  2. Put the names of two more Arturia instruments in place of SECOND and THIRD
-#     below (as in the Output list; "Name (Arturia)" or just "Name").
-#  3. In cmd, in the folder of mini-daw.com:
+#  2. The three Arturia instruments below are DX7 V, CS-80 V3 and CS-80 V4 (from
+#     your logs); change them if you used others (as in the Output list).
+#  3. In cmd, in the folder of mini-daw.com (this file next to it):
 #       mini-daw.com --config C:\minidaw-script\config.ini --script instrument-switch.txt
 #     (its own config folder, so it also runs while your normal mini-daw is open;
 #     the first run scans the instruments, which takes a while).
@@ -18,9 +18,9 @@ state                                   # tracks, instruments found, MIDI output
 add-track midi
 instrument last "DX7 V"
 add-track midi
-instrument last "SECOND"
+instrument last "CS-80 V3"
 add-track midi
-instrument last "THIRD"
+instrument last "CS-80 V4"
 state
 output last "Microsoft GS Wavetable Synth 0"   # if it fails: the name is under "midiOutputs" above
 wait 1
