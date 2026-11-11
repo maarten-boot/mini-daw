@@ -3844,6 +3844,16 @@ void drawSavePresetWindow(AppState& app)
 
 // --- Track actions, for the buttons and for scripts (P25a) ---------------------
 
+// A click on a control that is disabled does nothing; the log says why, so a
+// "nothing happens" can be traced later (user's Windows test 2026-11-10).
+// Call right after the control.
+void logRefusedClick(AppState& app, bool disabled, const std::string& what, const std::string& why)
+{
+    if (!disabled || !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
+    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return;
+    app.log.info(what + ": " + why);
+}
+
 // Adds an audio or MIDI track like the Add buttons. Returns its number, or 0 with `why`.
 int addTrack(AppState& app, minidaw::TrackKind kind, std::string& why)
 {
@@ -3866,6 +3876,7 @@ int addTrack(AppState& app, minidaw::TrackKind kind, std::string& why)
         if (!app.scan.midiInputs.empty()) t.midiPort = app.scan.midiInputs.front().name;
     }
     app.tracks.push_back(t);
+    app.log.info("Track " + std::to_string(t.number) + " \"" + t.name + "\" added");
     return t.number;
 }
 
@@ -3889,6 +3900,7 @@ bool removeTrackNow(AppState& app, int number, std::string& why)
     }
     if (it->kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
     const auto index = static_cast<std::size_t>(it - app.tracks.begin());
+    app.log.info("Track " + std::to_string(number) + " \"" + it->name + "\" removed");
     unloadInstrument(app, number);
     // Links stay consistent: a removed MIDI track's linked track becomes a normal
     // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
@@ -3902,6 +3914,9 @@ bool removeTrackNow(AppState& app, int number, std::string& why)
 bool setMidiOutput(AppState& app, minidaw::Track& t, const std::string& port)
 {
     const bool hadInstrument = !t.instrumentClass.empty();
+    app.log.info("Track " + std::to_string(t.number) + ": output " +
+                 (port.empty() ? std::string("(no MIDI output)") : "MIDI output \"" + port + "\"") +
+                 (hadInstrument ? " instead of the instrument " + t.instrumentName : std::string()));
     unloadInstrument(app, t.number);
     t.instrumentClass.clear();
     t.instrumentPreset.clear();
@@ -3927,9 +3942,13 @@ bool requestInstrument(AppState& app, int number, const minidaw::PluginClass& cl
         startBusy(app, "Loading instrument " + cls.name, [] {});  // logs that it was not started
         return false;
     }
+    app.log.info("Track " + std::to_string(number) + ": instrument " + instrumentLabel(cls) + " chosen");
     startBusy(app, "Loading instrument " + cls.name, [&app, number, cls] {
         minidaw::Track* track = findTrack(app, number);
-        if (track == nullptr) return;
+        if (track == nullptr) {
+            app.log.warning("Instrument not loaded: track " + std::to_string(number) + " is gone");
+            return;
+        }
         // As the list it was chosen in: not while recording or rendering this track (W4).
         if (app.session.recording() || app.renderTrack == number) {
             app.log.warning("Instrument not changed: track " + std::to_string(number) + " is recording or rendering");
@@ -3946,6 +3965,7 @@ bool requestInstrument(AppState& app, int number, const minidaw::PluginClass& cl
 
 void setArm(AppState& app, minidaw::Track& t, bool armed)
 {
+    if (t.armed != armed) app.log.info("Track " + std::to_string(t.number) + (armed ? " armed" : " disarmed"));
     t.armed = armed;
     if (t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;  // its port opens when armed
 }
@@ -3959,9 +3979,12 @@ void drawTracksPanel(AppState& app)
     minidaw::app::beginDisabled(inputs == 0);
     std::string unused;
     if (ImGui::Button("Add audio track")) addTrack(app, minidaw::TrackKind::Audio, unused);
+    logRefusedClick(app, rec || inputs == 0, "Add audio track not done",
+                    rec ? "not while recording" : "audio tracks need an audio input device");
     minidaw::app::endDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Add MIDI track")) addTrack(app, minidaw::TrackKind::Midi, unused);
+    logRefusedClick(app, rec, "Add MIDI track not done", "not while recording");
     minidaw::app::endDisabled();
     if (inputs == 0) {
         ImGui::SameLine();
@@ -4027,6 +4050,8 @@ void drawTracksPanel(AppState& app)
                 minidaw::app::beginDisabled(rec);
                 bool armed = t.armed;
                 if (ImGui::Checkbox("##arm", &armed)) setArm(app, t, armed);
+                logRefusedClick(app, rec, "Track " + std::to_string(t.number) + ": Arm not changed",
+                                "not while recording");
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("Armed tracks record when you press Record (Ctrl+R).\n"
                                       "Tracks that are not armed play their takes meanwhile, so you can record "
@@ -4147,7 +4172,11 @@ void drawTracksPanel(AppState& app)
                 // The instrument's own window: sounds, presets (SPEC-VST-05a).
                 if (instLoaded) {
                     minidaw::app::beginDisabled(!minidaw::app::PluginWindows::supported());
-                    if (ImGui::SmallButton(editLabel)) {
+                    const bool editPressed = ImGui::SmallButton(editLabel);
+                    logRefusedClick(app, !minidaw::app::PluginWindows::supported(),
+                                    "Track " + std::to_string(t.number) + ": Edit not done",
+                                    "the instrument's own window is not available on this system");
+                    if (editPressed) {
                         if (editorOpen) {
                             app.pluginWindows.close(t.number);
                         } else {
@@ -4174,6 +4203,9 @@ void drawTracksPanel(AppState& app)
                     } else if (!t.take.empty()) {
                         minidaw::app::beginDisabled(app.renderTrack != 0 || rec);
                         if (ImGui::SmallButton("Render##render")) renderRequest = t.number;
+                        logRefusedClick(app, app.renderTrack != 0 || rec,
+                                        "Track " + std::to_string(t.number) + ": Render not started",
+                                        rec ? "not while recording" : "another render is running");
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                             ImGui::SetTooltip("Render this track's MIDI take through its instrument to a WAV file, "
                                               "faster than real time.\nThe sound goes on its linked track (\"Sound "
@@ -4225,9 +4257,14 @@ void drawTracksPanel(AppState& app)
                 }
             }
             ImGui::TableNextColumn();
-            minidaw::app::beginDisabled(!whyNoTrackRemove(app).empty());
+            const std::string noRemove = whyNoTrackRemove(app);
+            minidaw::app::beginDisabled(!noRemove.empty());
             if (ImGui::SmallButton("X")) removeIndex = static_cast<int>(i);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove this track");
+            logRefusedClick(app, !noRemove.empty(), "Track " + std::to_string(t.number) + " not removed", noRemove);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", noRemove.empty() ? "Remove this track"
+                                                         : ("Remove this track: " + noRemove).c_str());
+            }
             minidaw::app::endDisabled();
             ImGui::PopID();
         }
