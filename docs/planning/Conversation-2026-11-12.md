@@ -21,3 +21,7 @@ User: "pushed it, yes add the log lines".
 
 User: "pushed it, check the CI run" and "and do the crosscheck". Crosscheck #20 (appended to `Crosscheck-2026-11-10.md`): reviewer subagent on P25d and the instrument-switch script, Claude on the docs. No high or medium findings: BB1 the output line also when nothing changes, BB2 / BB3 two silent track changes (render that cannot start, a MIDI track's sound track left as a normal track), BB4 docs.
 - CI run 43120319952 (`2504b04`): windows, linux, licence green; Linux 218/218, Windows 209/209. Builds in `dist/`; `dist/TESTS.txt` has T-LOG-06 at the top.
+
+## 4. Crosscheck #20 fixes (P25e)
+
+User: "pushed it, yes fix BB1–BB4, BB1 first". BB1 no output line when nothing changes; BB2 / BB3 lines for the two silent track changes; BB4 README, Terms "Log". New script test `loglines`. Spec v0.55, Plan P25e.

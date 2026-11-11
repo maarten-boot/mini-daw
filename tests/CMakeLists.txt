@@ -149,6 +149,9 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "Result: 5 command(s), 1 failed" NOT_IN "echo never")
     minidaw_script_test(quit 0 IN "Result: 2 command(s), 0 failed" NOT_IN "echo never")
     minidaw_script_test(locked 3 IN "the script is not run" NOT_IN "Result:" HOLD_LOCK)
+    minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"
+        "Track 2 \"MIDI 1 sound\" is now a normal audio track" "Result: 7 command(s), 0 failed"
+        NOT_IN "output (no MIDI output)")
 endif()
 
 # Licence checks (T-LIC-02, T-LIC-03). Needs Python 3; skipped if not found.

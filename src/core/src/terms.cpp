@@ -175,7 +175,8 @@ std::vector<Term> makeTerms()
          "folder. Move it back to get it again.",
          "Timeline tab: right-click a recording > Delete...", {"Takes folder", "Timeline"}},
         {"Log", kProjects,
-         "A list of what mini-daw did and what went wrong, with times. Useful when something does not work.",
+         "A list of what mini-daw did and what went wrong, with times. It also says why a click on a greyed-out "
+         "button did nothing. Useful when something does not work.",
          "View > Log (Ctrl+L)", {}},
 
         // --- Sound and audio setup ------------------------------------------

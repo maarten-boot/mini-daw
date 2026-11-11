@@ -65,3 +65,16 @@ Scope: Spec v0.54, Plan, Tests, README, CLAUDE.md, code at `2504b04` (changes si
 | BB2 | low | A render that cannot start removes the empty linked sound track it had just made; the log has "holds the sound of track N's instrument" and the render warning, but not that the track went. | "Track N "<name>" removed (rendering could not start)". |
 | BB3 | low | Removing a MIDI track whose sound track has a take keeps that track as a normal audio track, without a line. | "Track N "<name>" is now a normal audio track". |
 | BB4 | doc | README status "P2–P25a"; Plan PX row; the Terms entry "Log" could say that it also tells why a click did nothing. | Update the texts. |
+
+CI run 43120319952 (`2504b04`): windows, linux, licence green; Linux 218/218, Windows 209/209.
+
+## Actions taken (user: "yes fix BB1–BB4, BB1 first")
+
+| # | Action |
+|---|--------|
+| BB1 | `setMidiOutput` returns at once (no line, nothing unloaded) when the track has no instrument and already that output; tested by the script case `loglines`. |
+| BB2 | "Track N "<name>" removed (rendering could not start)" before the empty linked track is removed (checked by reading; a render that cannot start is not set up in the tests). |
+| BB3 | "Track N "<name>" is now a normal audio track" when a removed MIDI track leaves its sound track; tested by `loglines`. |
+| BB4 | README status P2–P25d; the Terms text of "Log" says it also tells why a click on a greyed-out button did nothing; Plan PX row (done with the crosscheck). |
+
+Spec v0.55, Plan P25e.

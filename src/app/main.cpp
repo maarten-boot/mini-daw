@@ -1767,6 +1767,8 @@ void startRender(AppState& app, int number)
         if (!hadLinked) {  // no empty linked track left behind
             for (std::size_t i = 0; i < app.tracks.size(); ++i) {
                 if (app.tracks[i].number == linkedNumber) {
+                    app.log.info("Track " + std::to_string(linkedNumber) + " \"" + app.tracks[i].name +
+                                 "\" removed (rendering could not start)");  // BB2
                     minidaw::removeTrack(app.tracks, i);
                     break;
                 }
@@ -3901,6 +3903,9 @@ bool removeTrackNow(AppState& app, int number, std::string& why)
     if (it->kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;
     const auto index = static_cast<std::size_t>(it - app.tracks.begin());
     app.log.info("Track " + std::to_string(number) + " \"" + it->name + "\" removed");
+    if (const minidaw::Track* l = minidaw::linkedSoundTrack(app.tracks, number)) {  // BB3
+        app.log.info("Track " + std::to_string(l->number) + " \"" + l->name + "\" is now a normal audio track");
+    }
     unloadInstrument(app, number);
     // Links stay consistent: a removed MIDI track's linked track becomes a normal
     // audio track; removing a linked track sets "Sound from" back to the instrument (R2).
@@ -3914,6 +3919,7 @@ bool removeTrackNow(AppState& app, int number, std::string& why)
 bool setMidiOutput(AppState& app, minidaw::Track& t, const std::string& port)
 {
     const bool hadInstrument = !t.instrumentClass.empty();
+    if (!hadInstrument && t.midiOut == port) return false;  // already so: no line, nothing to do (BB1)
     app.log.info("Track " + std::to_string(t.number) + ": output " +
                  (port.empty() ? std::string("(no MIDI output)") : "MIDI output \"" + port + "\"") +
                  (hadInstrument ? " instead of the instrument " + t.instrumentName : std::string()));

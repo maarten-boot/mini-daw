@@ -1,0 +1,8 @@
+# T-LOG-06: log lines of track changes (crosscheck #20, BB1 / BB3).
+add-track midi                            # track 1
+output 1 none                             # already none: no "output" line (BB1)
+scan
+instrument 1 "mini-daw Test Synth"        # its sound track 2 appears
+expect tracks.2.soundOf 1
+remove-track 1                            # track 2 stays, as a normal audio track (BB3)
+expect tracks.2.soundOf 0
