@@ -16,3 +16,8 @@ User: "pushed it, yes add the log lines".
 - `logRefusedClick` (a click on a disabled control logs why): X (remove; its tooltip also names the reason), Add audio / MIDI track, Arm, Edit, Render.
 - Logged: track added / removed, armed / disarmed, instrument chosen (before loading; also when its track is gone), MIDI output chosen (and the instrument it replaced).
 - Spec v0.54 (SPEC-LOG-01); T-LOG-06; Plan P25d. Checked: script reports and a click on the disabled Add audio track on Xvfb.
+
+## 3. Crosscheck #20
+
+User: "pushed it, check the CI run" and "and do the crosscheck". Crosscheck #20 (appended to `Crosscheck-2026-11-10.md`): reviewer subagent on P25d and the instrument-switch script, Claude on the docs. No high or medium findings: BB1 the output line also when nothing changes, BB2 / BB3 two silent track changes (render that cannot start, a MIDI track's sound track left as a normal track), BB4 docs.
+- CI run 43120319952 (`2504b04`): windows, linux, licence green; Linux 218/218, Windows 209/209. Builds in `dist/`; `dist/TESTS.txt` has T-LOG-06 at the top.

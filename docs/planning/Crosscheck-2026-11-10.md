@@ -44,3 +44,24 @@ CI run 42914083387 (`c7a0e7a`): windows and licence green, Windows 209/209; **Li
 | AA9 | The report is opened only after the lock is taken (exit 3 writes nothing); script errors are also written into the report with "Not run: the script has N error(s)". Narrow `argv` paths: unchanged (as `--config`). |
 | AA10 | T-RUN-03 extended; new ctest cases `stop`, `quit`, `locked` (the lock held by `flock`, skipped if there is none); `run_script.cmake` gets `cmake_minimum_required`, NOT_IN texts and refuses empty texts. Closing the window early stays a manual check. |
 | AA11 | SPEC-RUN-01 names `--script` (exit 3); SPEC-RUN-02 (comments, quotes, any case, UTF-16, the new rules); Plan P25c and the PX row. |
+
+# Crosscheck #20 — 2026-11-12 (after P25d: log lines for track actions and disabled clicks)
+
+Scope: Spec v0.54, Plan, Tests, README, CLAUDE.md, code at `2504b04` (changes since `a6c9316`: P25d, and `tests/scripts/manual/instrument-switch.txt`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code and the Spec, not Claude's conclusions). Claude checked at the code: BB1 (`setMidiOutput` logs before any comparison), BB2 (`main.cpp:1767-1770`: a render that cannot start removes the linked track it just made, without a line), BB3 (`removeTrack` in `track.cpp:137` sets the linked track's `instrumentOf` to 0, without a line).
+
+| Area | Verdict |
+|------|---------|
+| Log lines (SPEC-LOG-01, T-LOG-06) | ✅ added / removed / armed / disarmed / chosen / output lines as specified, each once per click or script line, only after the checks; every path that changes a track goes through the shared functions (direct `armed` / `midiOut` writes only at start-up and inside `chooseInstrument` after its line); ⚠️ the output line also when nothing changes **BB1**; two silent track changes **BB2**, **BB3** |
+| Disabled clicks | ✅ `logRefusedClick` fires on the press frame only, not behind a popup or modal; each call's condition is the same as its control's `beginDisabled`; the X tooltip's text lives long enough |
+| instrument-switch script | ✅ parses under SPEC-RUN-02 (word counts, quotes, the comment with quotes in it) and does what its comments say |
+| Tests | ✅ T-LOG-06 A part via the script reports; X while playing and Arm while recording need an audio device: manual (user's Windows test) |
+| Spec ↔ Plan ↔ docs | ⚠️ README status "P2–P25a"; Plan PX row without #20; the Terms text of "Log" does not say it also tells why a click did nothing **BB4** |
+
+## Findings
+
+| # | Sev | Finding | Proposed fix |
+|---|-----|---------|--------------|
+| BB1 | low | `setMidiOutput` logs "output …" also when nothing changes (the selected "(no MIDI output)" clicked again, `output last none` on a track without output); it then still unloads nothing and clears the preset. Not a flood (once per click). | Log only when the output or the instrument really changes. |
+| BB2 | low | A render that cannot start removes the empty linked sound track it had just made; the log has "holds the sound of track N's instrument" and the render warning, but not that the track went. | "Track N "<name>" removed (rendering could not start)". |
+| BB3 | low | Removing a MIDI track whose sound track has a take keeps that track as a normal audio track, without a line. | "Track N "<name>" is now a normal audio track". |
+| BB4 | doc | README status "P2–P25a"; Plan PX row; the Terms entry "Log" could say that it also tells why a click did nothing. | Update the texts. |
