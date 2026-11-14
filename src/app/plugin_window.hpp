@@ -10,6 +10,8 @@
 #include "minidaw/instrument.hpp"
 
 #include <map>
+#include <optional>
+#include <utility>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,14 +30,19 @@ public:
     static bool supported();
     // Opens the editor of `instrument` for `track` (or brings its window to
     // the front). False, with a reason, if the plugin has no usable editor.
+    // `place`: the window's top-left corner (screen pixels) if it should go
+    // there (P26: where it was at the last close); used only if most of the
+    // window would be on a screen, else it goes next to `owner` as usual.
     bool open(int track, Vst3Instrument& instrument, const std::string& title, GLFWwindow* owner,
-              std::string& error);
+              std::string& error, std::optional<std::pair<int, int>> place = std::nullopt);
     bool isOpen(int track) const;
     void close(int track);
     void closeAll();
     // Once per frame: closes the windows the user closed.
     void update();
     std::vector<int> openTracks() const;
+    // The top-left corner of `track`'s window (to remember it, P26); nothing if not open.
+    std::optional<std::pair<int, int>> position(int track) const;
 
     struct Window;  // internal
 

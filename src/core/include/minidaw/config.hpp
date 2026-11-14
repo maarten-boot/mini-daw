@@ -35,6 +35,13 @@
 //   last = "D:\Music\mini-daw\projects\Jam"   ; reopened at start; empty = none
 //   recent1 = "..." ... recent8                 ; File > Recent projects
 //
+//   [state]                   ; written by mini-daw (P26, SPEC-UI-09a)
+//   project = "D:\Music\mini-daw\projects\Jam"  ; what the lines below belong to
+//   auto_record = true        ; saved at once when switched, so also after a crash
+//   position = 12.5           ; song position in seconds
+//   editors = 3:120:80, 4     ; instrument windows open: track[:x:y]
+//   windows = log, recording_settings   ; mini-daw's own windows that were open
+//
 // Default location:
 //   Windows: %APPDATA%\mini-daw\config.ini
 //   macOS:   ~/Library/Application Support/mini-daw/config.ini
@@ -151,6 +158,29 @@ struct TabSettings {
     std::string last = "recording";  // shown at start: the tab used last
 };
 
+// What was going on when mini-daw closed, restored at the next start
+// (P26, SPEC-UI-09a). Auto record, the song position and the instrument
+// windows belong to `project` and come back only with that project (also
+// "" = no project); the other windows always come back.
+struct EditorPlace {
+    int track = 0;
+    bool hasPlace = false;  // x and y were saved
+    int x = 0;
+    int y = 0;
+    friend bool operator==(const EditorPlace&, const EditorPlace&) = default;
+};
+struct SessionState {
+    std::string project;               // folder (UTF-8) the next three belong to
+    bool autoRecord = false;
+    double position = 0.0;             // seconds, 0 .. 1e7
+    std::vector<EditorPlace> editors;  // at most 16
+    std::vector<std::string> windows;  // ids from stateWindowIds(), each once
+    friend bool operator==(const SessionState&, const SessionState&) = default;
+};
+// The ids of mini-daw's own windows that can be restored, in a fixed order.
+const std::vector<std::string>& stateWindowIds();
+bool isStateWindowId(std::string_view id);
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;
@@ -160,6 +190,7 @@ struct AppConfig {
     RecordingSettings recording;
     ProjectSettings project;
     InstrumentSettings instruments;
+    SessionState state;
 };
 
 struct ConfigLoadResult {

@@ -1,4 +1,5 @@
 #include "plugin_window.hpp"
+#include "minidaw/config.hpp"  // ScreenRect, restoredWindowRect (before the X11 headers)
 
 #include <cstdint>
 
@@ -83,7 +84,7 @@ bool PluginWindows::supported()
 }
 
 bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::string& title, GLFWwindow* owner,
-                         std::string& error)
+                         std::string& error, std::optional<std::pair<int, int>> place)
 {
     if (const auto it = windows_.find(track); it != windows_.end()) {
         glfwShowWindow(it->second->window);
@@ -140,7 +141,28 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     if (owner) XSetTransientForHint(display, xwindow, glfwGetX11Window(owner));
     void* parent = reinterpret_cast<void*>(static_cast<std::uintptr_t>(xwindow));
 #endif
-    if (owner) {
+    bool placed = false;
+    if (place) {  // where it was last time, if that is still (mostly) on a screen (P26)
+        std::vector<ScreenRect> areas;
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        for (int i = 0; i < count; ++i) {
+            ScreenRect a;
+            glfwGetMonitorWorkarea(monitors[i], &a.x, &a.y, &a.width, &a.height);
+            areas.push_back(a);
+        }
+        WindowSettings saved;
+        saved.hasGeometry = true;
+        saved.x = place->first;
+        saved.y = place->second;
+        saved.width = size.width;
+        saved.height = size.height;
+        if (const auto r = restoredWindowRect(saved, areas)) {
+            glfwSetWindowPos(win.window, r->x, r->y);
+            placed = true;
+        }
+    }
+    if (owner && !placed) {
         int ox = 0, oy = 0;
         glfwGetWindowPos(owner, &ox, &oy);
         glfwSetWindowPos(win.window, ox + 60, oy + 80);
@@ -215,6 +237,15 @@ std::vector<int> PluginWindows::openTracks() const
     std::vector<int> out;
     for (const auto& [track, win] : windows_) out.push_back(track);
     return out;
+}
+
+std::optional<std::pair<int, int>> PluginWindows::position(int track) const
+{
+    const auto it = windows_.find(track);
+    if (it == windows_.end() || !it->second->window) return std::nullopt;
+    int x = 0, y = 0;
+    glfwGetWindowPos(it->second->window, &x, &y);
+    return std::make_pair(x, y);
 }
 
 } // namespace minidaw::app

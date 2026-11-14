@@ -128,6 +128,8 @@ struct AppState {
     };
     std::optional<BusyJob> busy;
     std::unique_ptr<ScriptRun> script;  // --script (P25a)
+    bool stateRestored = false;         // [state] applied in the first frame (P26)
+    bool autoRestoreFailed = false;     // auto record was on but did not start again: kept on until switched
     int scriptExitCode = 0;
     // One window per config folder (P20, SPEC-RUN-01): held while the GUI runs.
     minidaw::InstanceLock instanceLock;
@@ -1663,7 +1665,8 @@ void restoreInstruments(AppState& app)
 }
 
 // After the sample rate changed: load again at the new rate, with the state.
-void openPluginWindow(AppState& app, const minidaw::Track& t);  // further down
+void openPluginWindow(AppState& app, const minidaw::Track& t,
+                      std::optional<std::pair<int, int>> place = std::nullopt);  // further down
 
 void reloadInstruments(AppState& app)
 {
@@ -1709,13 +1712,13 @@ int ensureLinkedTrack(AppState& app, int midiNumber)
 }
 
 // Opens the plugin's own editor window for a track (SPEC-VST-05a).
-void openPluginWindow(AppState& app, const minidaw::Track& t)
+void openPluginWindow(AppState& app, const minidaw::Track& t, std::optional<std::pair<int, int>> place)
 {
     const auto it = app.instruments.find(t.number);
     if (it == app.instruments.end()) return;
     const std::string title = it->second->name() + " - " + t.name + " - " + minidaw::kProductName;
     std::string err;
-    if (app.pluginWindows.open(t.number, *it->second, title, app.mainWindow, err)) {
+    if (app.pluginWindows.open(t.number, *it->second, title, app.mainWindow, err, place)) {
         app.log.info("Track " + std::to_string(t.number) + ": editor of " + it->second->name() + " opened");
     } else {
         const std::string note = "Track " + std::to_string(t.number) + ": the editor of " + it->second->name() +
@@ -2604,6 +2607,22 @@ void toggleRecording(AppState& app)
     for (auto& m : app.outputMeters) m.clearClip();
 }
 
+// Auto record on / off is saved at once (P26, SPEC-UI-09a), so it also comes
+// back after a crash or a power loss. Not by a script run (its state is not
+// the user's).
+void rememberAutoRecord(AppState& app, bool on)
+{
+    if (app.script) return;
+    app.autoRestoreFailed = false;  // the user decided now
+    minidaw::SessionState& st = app.config.state;
+    const std::string project = minidaw::pathToUtf8(app.projectFolder);
+    if (st.autoRecord == on && st.project == project) return;
+    if (st.project != project) st = minidaw::SessionState{};  // the rest was another project's
+    st.project = project;
+    st.autoRecord = on;
+    saveConfig(app);
+}
+
 // Auto record (P16, SPEC-REC-08): on until switched off; every time someone
 // plays on an armed track, a part is recorded into <takes>/auto/<date time>.
 void toggleAuto(AppState& app)
@@ -2632,6 +2651,7 @@ void toggleAuto(AppState& app)
         app.lastTake = {"Auto record: " + std::to_string(parts) + " part(s) in " + minidaw::pathToUtf8(res.folder) +
                         " (File > Open take folder)"};
         if (!losses.empty()) app.lastTake.push_back(losses);
+        rememberAutoRecord(app, false);
         return;
     }
     if (app.session.recording()) return;
@@ -2667,6 +2687,7 @@ void toggleAuto(AppState& app)
         startPlayback(app, false);
     }
     app.log.info("Auto record on: parts go to " + minidaw::pathToUtf8(app.session.folder()));
+    rememberAutoRecord(app, true);
 }
 
 // Every frame while auto record is on: parts begin and end.
@@ -5067,6 +5088,129 @@ void stepScript(AppState& app)
     scriptStart(app, sr.lines[sr.next++]);
 }
 
+// --- What was going on, kept for the next start (P26, SPEC-UI-09a) -------------
+
+bool* stateWindowFlag(AppState& app, const std::string& id)
+{
+    if (id == "log") return &app.showLog;
+    if (id == "audio_settings") return &app.showAudioSettings;
+    if (id == "recording_settings") return &app.showRecordingSettings;
+    if (id == "instruments") return &app.showInstruments;
+    if (id == "tabs") return &app.showTabsWindow;
+    if (id == "project_note") return &app.showProjectNote;
+    if (id == "take_browser") return &app.showTakeBrowser;
+    if (id == "custom_contrast") return &app.showCustomContrast;
+    return nullptr;
+}
+
+// Opens one of mini-daw's own windows the way its menu does.
+void openStateWindow(AppState& app, const std::string& id)
+{
+    if (id == "audio_settings") {
+        openAudioSettings(app);
+    } else if (id == "recording_settings") {
+        app.pendingRecording = app.config.recording;
+        app.showRecordingSettings = true;
+    } else if (id == "project_note") {
+        if (app.projectFolder.empty()) return;  // only with a project
+        app.projectNoteEdit = app.projectNote;
+        app.showProjectNote = true;
+    } else if (id == "take_browser") {
+        if (app.session.recording()) return;
+        app.takeFolders = minidaw::listTakeFolders(activeTakesFolder(app));
+        app.takeBrowserError.clear();
+        app.showTakeBrowser = true;
+    } else if (id == "custom_contrast") {
+        app.customInput = app.config.contrast.minimum();
+        app.customError.clear();
+        app.showCustomContrast = true;
+    } else if (bool* flag = stateWindowFlag(app, id)) {
+        *flag = true;
+    }
+}
+
+// At a normal close, before anything is stopped: the project, auto record,
+// the song position, the instrument windows and mini-daw's open windows.
+void captureSessionState(AppState& app)
+{
+    if (app.script) return;  // a script run leaves the user's state alone
+    minidaw::SessionState st;
+    st.project = minidaw::pathToUtf8(app.projectFolder);
+    // Also when it could not start again at this start and was not switched since.
+    st.autoRecord = app.session.autoMode() || (app.autoRestoreFailed && st.project == app.config.state.project);
+    const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : 48000;
+    // While a recording from the timeline plays, the song's own position is kept apart (T1).
+    const std::uint64_t frames = app.previewFolder.empty() ? app.audio.player().position() : app.songPosition;
+    st.position = static_cast<double>(frames) / rate;
+    for (const int track : app.pluginWindows.openTracks()) {
+        minidaw::EditorPlace e;
+        e.track = track;
+        if (const auto p = app.pluginWindows.position(track)) {
+            e.hasPlace = true;
+            e.x = p->first;
+            e.y = p->second;
+        }
+        if (st.editors.size() < 16) st.editors.push_back(e);
+    }
+    for (const std::string& id : minidaw::stateWindowIds()) {
+        const bool* flag = stateWindowFlag(app, id);
+        if (flag && *flag) st.windows.push_back(id);
+    }
+    app.config.state = st;
+}
+
+// Once, in the first frame (the audio stream, the project and its instruments are
+// there by then): what was going on at the last close comes back.
+void restoreSessionState(AppState& app)
+{
+    if (app.stateRestored) return;
+    app.stateRestored = true;
+    if (app.script) return;
+    const minidaw::SessionState st = app.config.state;
+    for (const std::string& id : st.windows) openStateWindow(app, id);
+    if (st.project != minidaw::pathToUtf8(app.projectFolder)) {
+        if (st.autoRecord || st.position > 0.0 || !st.editors.empty()) {
+            app.log.info("Not restored: the song position, instrument windows and auto record were of another "
+                         "project (" + (st.project.empty() ? std::string("none") : st.project) + ")");
+        }
+        return;
+    }
+    std::vector<std::string> done;
+    if (st.position > 0.0) {
+        const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : 48000;
+        const auto frames = static_cast<std::uint64_t>(st.position * rate + 0.5);
+        app.audio.player().locate(frames);
+        app.songPosition = frames;
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "song position %.1f s", st.position);
+        done.push_back(buf);
+    }
+    for (const minidaw::EditorPlace& e : st.editors) {
+        const minidaw::Track* t = findTrack(app, e.track);
+        if (!t || app.instruments.count(e.track) == 0 || !minidaw::app::PluginWindows::supported()) continue;
+        openPluginWindow(app, *t, e.hasPlace ? std::optional<std::pair<int, int>>({e.x, e.y}) : std::nullopt);
+        if (app.pluginWindows.isOpen(e.track)) done.push_back("track " + std::to_string(e.track) + "'s instrument window");
+    }
+    if (st.autoRecord) {
+        toggleAuto(app);
+        if (app.session.autoMode()) {
+            done.push_back("auto record");
+        } else {
+            // Kept on in the config: the next start tries again (e.g. the audio device is back).
+            app.autoRestoreFailed = true;
+            const std::string note = "Auto record was on when mini-daw closed but could not start again: " +
+                                     (app.recordError.empty() ? std::string("see the log") : app.recordError);
+            app.recordError = note;  // shown by the transport ("Not recording: ...")
+            app.log.warning(note);
+        }
+    }
+    if (!done.empty()) {
+        std::string list;
+        for (const auto& d : done) list += (list.empty() ? "" : ", ") + d;
+        app.log.info("Restored from the last time: " + list);
+    }
+}
+
 int runGui(AppState& app)
 {
     glfwSetErrorCallback([](int code, const char* text) {
@@ -5291,6 +5435,7 @@ int runGui(AppState& app)
         }
         ensureDefaultTracks(app);
         syncMidiPorts(app);
+        restoreSessionState(app);  // once, in the first frame (P26)
         updateMeters(app);
         updateTransport(app);
         updateAuto(app);
@@ -5400,6 +5545,11 @@ int runGui(AppState& app)
         minidaw::app::rendererRender(window, clear);
     }
 
+    // What was going on, for the next start (P26), before anything is stopped.
+    if (!app.script) {
+        captureSessionState(app);
+        saveConfig(app);
+    }
     // Remember the window for the next start (SPEC-UI-09).
     if (app.config.window.remember && normalPlace.width >= 100 && normalPlace.height >= 100) {
         app.config.window.hasGeometry = true;

@@ -71,7 +71,8 @@ std::vector<Term> makeTerms()
         {"Auto record", kRecording,
          "Records by itself when you play: while it is on, mini-daw waits, and a part starts at the first note or "
          "control from an armed MIDI track, or when an armed audio track gets louder than the threshold. The part ends "
-         "after a pause (5 s by default). Nothing is written while you do not play.",
+         "after a pause (5 s by default). Nothing is written while you do not play. If it is on when mini-daw closes "
+         "(or crashes), it is on again at the next start.",
          "The transport: Auto record; Settings > Recording...", {"Auto record part", "Threshold", "Arm"}},
         {"Auto record part", kRecording,
          "What auto record made from one stretch of playing: a folder in \"auto\" in the takes folder, named by date and "

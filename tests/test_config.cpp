@@ -434,3 +434,61 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     REQUIRE(saveConfigFile(dir.path / "old.ini", cfg).empty());
     CHECK(loadConfigFile(dir.path / "old.ini").config.tabs.order == cfg.tabs.order);
 }
+
+TEST_CASE("T-UI-29: what was going on, kept in the config ([state])", "[config][T-UI-29]")
+{
+    // Defaults: nothing to restore.
+    const auto empty = parseConfig("");
+    CHECK(empty.config.state == SessionState{});
+
+    const auto r = parseConfig("[state]\n"
+                               "project = \"D:\\\\Music\\\\Jam\"\n"
+                               "auto_record = on\n"
+                               "position = 12.5\n"
+                               "editors = 3:120:-80, 4, 3, x:1:2, 5:1\n"
+                               "windows = Log, recording_settings, log, nope\n");
+    const SessionState& s = r.config.state;
+    CHECK(s.project == "D:\\Music\\Jam");
+    CHECK(s.autoRecord);
+    CHECK(s.position == 12.5);
+    REQUIRE(s.editors.size() == 2);  // 3 once; x:1:2 and 5:1 malformed
+    CHECK(s.editors[0] == EditorPlace{3, true, 120, -80});
+    CHECK(s.editors[1] == EditorPlace{4, false, 0, 0});
+    CHECK(s.windows == std::vector<std::string>{"log", "recording_settings"});
+    CHECK(r.warnings.size() == 3);  // x:1:2, 5:1, nope
+
+    const auto bad = parseConfig("[state]\nauto_record = maybe\nposition = -3\n");
+    CHECK_FALSE(bad.config.state.autoRecord);
+    CHECK(bad.config.state.position == 0.0);
+    CHECK(bad.warnings.size() == 2);
+
+    // Saved and read back; the rest of the file is kept.
+    TempDir dir;
+    const auto file = dir.path / "config.ini";
+    {
+        std::ofstream out(file);
+        out << "; my notes\n[state]\nauto_record = false\n";
+    }
+    AppConfig cfg;
+    cfg.state = s;
+    cfg.state.position = 1.25;
+    REQUIRE(saveConfigFile(file, cfg).empty());
+    const auto back = loadConfigFile(file);
+    CHECK(back.warnings.empty());
+    CHECK(back.config.state == cfg.state);
+    std::ifstream in(file);
+    std::stringstream text;
+    text << in.rdbuf();
+    CHECK(text.str().find("; my notes") != std::string::npos);
+    CHECK(text.str().find("editors = 3:120:-80, 4") != std::string::npos);
+    CHECK(text.str().find("windows = log, recording_settings") != std::string::npos);
+    CHECK_FALSE(fs::exists(dir.path / "config.ini.tmp"));  // written beside it and renamed
+
+    // The default text has the section, and reads back as the defaults.
+    CHECK(defaultConfigText().find("[state]") != std::string::npos);
+    const auto def = parseConfig(defaultConfigText());
+    CHECK(def.warnings.empty());
+    CHECK(def.config.state == SessionState{});
+    for (const auto& id : stateWindowIds()) CHECK(isStateWindowId(id));
+    CHECK_FALSE(isStateWindowId("terms"));
+}

@@ -1,8 +1,10 @@
 #include "minidaw/config.hpp"
 #include "minidaw/path_util.hpp"
+#include "minidaw/presets.hpp"  // writeFileReplacing
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -145,6 +147,63 @@ std::string getEnv(const char* name)
 #endif
 }
 
+} // namespace
+
+const std::vector<std::string>& stateWindowIds()
+{
+    static const std::vector<std::string> ids = {"log",  "audio_settings", "recording_settings", "instruments",
+                                                 "tabs", "project_note",   "take_browser",       "custom_contrast"};
+    return ids;
+}
+
+bool isStateWindowId(std::string_view id)
+{
+    const auto& ids = stateWindowIds();
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+namespace {
+// "3:120:80" or "3" -> a place; false if malformed.
+bool parseEditorPlace(std::string_view item, EditorPlace& out)
+{
+    std::vector<long> parts;
+    std::size_t start = 0;
+    while (start <= item.size()) {
+        std::size_t colon = item.find(':', start);
+        if (colon == std::string_view::npos) colon = item.size();
+        const std::string part(item.substr(start, colon - start));
+        char* end = nullptr;
+        const long v = std::strtol(part.c_str(), &end, 10);
+        if (part.empty() || *end != '\0' || v < -100000 || v > 100000) return false;
+        parts.push_back(v);
+        if (colon == item.size()) break;
+        start = colon + 1;
+    }
+    if ((parts.size() != 1 && parts.size() != 3) || parts[0] <= 0) return false;
+    out.track = static_cast<int>(parts[0]);
+    out.hasPlace = parts.size() == 3;
+    out.x = out.hasPlace ? static_cast<int>(parts[1]) : 0;
+    out.y = out.hasPlace ? static_cast<int>(parts[2]) : 0;
+    return true;
+}
+
+// "a, b ,c" -> {"a","b","c"} (empty items left out).
+std::vector<std::string> splitCommaList(std::string_view text)
+{
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t comma = text.find(',', start);
+        if (comma == std::string_view::npos) comma = text.size();
+        std::string_view item = text.substr(start, comma - start);
+        while (!item.empty() && (item.front() == ' ' || item.front() == '\t')) item.remove_prefix(1);
+        while (!item.empty() && (item.back() == ' ' || item.back() == '\t')) item.remove_suffix(1);
+        if (!item.empty()) out.emplace_back(item);
+        if (comma == text.size()) break;
+        start = comma + 1;
+    }
+    return out;
+}
 } // namespace
 
 std::vector<std::string> defaultTabOrder() { return {"recording", "timeline", "audio", "terms"}; }
@@ -319,6 +378,40 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
         } else if (section == "instruments" && key.size() >= 7 && key.compare(0, 6, "folder") == 0 &&
                    key.find_first_not_of("0123456789", 6) == std::string::npos) {
             if (!value.empty() && cfg.instruments.folders.size() < 8) cfg.instruments.folders.push_back(value);
+        } else if (section == "state" && key == "project") {
+            cfg.state.project = value;
+        } else if (section == "state" && key == "auto_record") {
+            if (!parseBool(value, cfg.state.autoRecord)) warn("auto_record must be true or false. Using false.");
+        } else if (section == "state" && key == "position") {
+            char* end = nullptr;
+            const double v = std::strtod(value.c_str(), &end);
+            if (value.empty() || *end != '\0' || !(v >= 0.0) || v > 1e7) {
+                warn("position '" + value + "' must be a number of seconds from 0. Using 0.");
+            } else {
+                cfg.state.position = v;
+            }
+        } else if (section == "state" && key == "editors") {
+            cfg.state.editors.clear();
+            for (const std::string& item : splitCommaList(value)) {
+                EditorPlace p;
+                if (!parseEditorPlace(item, p)) {
+                    warn("editors: '" + item + "' is not track or track:x:y; left out.");
+                } else if (cfg.state.editors.size() < 16 &&
+                           std::none_of(cfg.state.editors.begin(), cfg.state.editors.end(),
+                                        [&](const EditorPlace& e) { return e.track == p.track; })) {
+                    cfg.state.editors.push_back(p);
+                }
+            }
+        } else if (section == "state" && key == "windows") {
+            cfg.state.windows.clear();
+            for (const std::string& id : splitCommaList(value)) {
+                const std::string l = lower(id);
+                if (!isStateWindowId(l)) {
+                    warn("windows: unknown window '" + id + "'; left out.");
+                } else if (std::find(cfg.state.windows.begin(), cfg.state.windows.end(), l) == cfg.state.windows.end()) {
+                    cfg.state.windows.push_back(l);
+                }
+            }
         } else if (section == "project" && key == "last") {
             cfg.project.last = value;
         } else if (section == "project" && key.size() >= 7 && key.compare(0, 6, "recent") == 0 &&
@@ -462,7 +555,18 @@ std::string defaultConfigText()
            "[project]\n"
            "; The project open when mini-daw closed; it is opened again at the next start.\n"
            "; recent1 .. recent8 (written by mini-daw) are the File > Recent projects list.\n"
-           "last = \"\"\n";
+           "last = \"\"\n"
+           "\n"
+           "[state]\n"
+           "; Written by mini-daw: what was going on when it closed, restored at the next\n"
+           "; start. auto_record (saved at once when switched, so also after a crash), the\n"
+           "; song position in seconds and the instrument windows (track:x:y) come back\n"
+           "; only with the same project; windows lists mini-daw's own open windows.\n"
+           "project = \"\"\n"
+           "auto_record = false\n"
+           "position = 0\n"
+           "editors =\n"
+           "windows =\n";
 }
 
 void rememberProject(ProjectSettings& settings, const std::string& folder)
@@ -581,15 +685,34 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
         text = setConfigValue(text, "project", "recent" + std::to_string(i + 1), quoteConfigString(v));
     }
 
+    {
+        const SessionState& st = config.state;
+        text = setConfigValue(text, "state", "project", quoteConfigString(st.project));
+        text = setConfigValue(text, "state", "auto_record", st.autoRecord ? "true" : "false");
+        char pos[32];
+        std::snprintf(pos, sizeof pos, "%.3f", st.position);
+        text = setConfigValue(text, "state", "position", pos);
+        std::string editors;
+        for (const EditorPlace& e : st.editors) {
+            editors += (editors.empty() ? "" : ", ") + std::to_string(e.track);
+            if (e.hasPlace) editors += ":" + std::to_string(e.x) + ":" + std::to_string(e.y);
+        }
+        text = setConfigValue(text, "state", "editors", editors);
+        std::string windows;
+        for (const std::string& w : st.windows) windows += (windows.empty() ? "" : ", ") + w;
+        text = setConfigValue(text, "state", "windows", windows);
+    }
+
     std::error_code ec;
     if (path.has_parent_path()) {
         std::filesystem::create_directories(path.parent_path(), ec);
         if (ec) return "cannot create folder " + pathToUtf8(path.parent_path()) + ": " + ec.message();
     }
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return "cannot write " + pathToUtf8(path);
-    out << text;
-    if (!out) return "error while writing " + pathToUtf8(path);
+    // Written beside it and renamed over it: the config is now saved while
+    // recording (auto record on / off, P26), so a crash or power loss leaves
+    // the old or the new file, never half of one.
+    std::string err;
+    if (!writeFileReplacing(path, text, err, true)) return err;  // forced to the disk: also after a power loss
     return {};
 }
 
