@@ -57,3 +57,7 @@ User: "pushed it, check the CI run".
 User: "there is a initiative for a open daw file format: have a look at: https://github.com/bitwig/dawproject to see what we can do in the future to use that for daw exchange."
 
 - Claude read the README and Project.xsd: ZIP with project.xml (+ metadata.xml), MIT, v1.0; Bitwig, Studio One, Cubase, Cubasis, VST Live, n-Track; tracks / channels (volume, pan, mute, solo), arrangement lanes with clips, audio (file references), notes, markers, VST2 / VST3 / CLAP devices with their state as files, automation; time in beats or seconds. Proposed: export first (P27), import of a subset later (P28); not added to the plan yet (waiting for the user).
+
+User: "pushed it, yes add it to the plan".
+
+- Spec v0.59: SPEC-PRJ-04 (export), SPEC-PRJ-05 (import), both planned; Plan P27 (export first), P28 (import); Tests T-PRJ-10, T-PRJ-11 (planned).
