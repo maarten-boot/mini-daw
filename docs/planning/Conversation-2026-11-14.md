@@ -32,3 +32,9 @@ User: "pushed it, yes fix both, Tabs window first".
 User: "pushed it, check the CI run".
 
 - windows, linux, licence green; Linux 222/222, Windows 212/212. Builds in `dist/`, `dist/TESTS.txt` with T-UI-31.
+
+## 5. Crosscheck #21 (after P26 / P26a)
+
+User: "pushed it, do the crosscheck".
+
+- Independent reviewer on the code, Claude on Spec / Plan / Tests / docs and the reviewer's claims at the code. `Crosscheck-2026-11-14.md`: CC1 (medium: a script run with the normal config changes `[project] last`, so the next start loses the state), CC2–CC6 (low: windows list dropped on a project change, synced write on the UI thread, symlinked config replaced, minimised editor place on Windows, position without a stream), CC7 test gaps, CC8 docs. One reviewer point refuted (Open take folder closes all editor windows).
