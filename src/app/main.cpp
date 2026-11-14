@@ -2397,24 +2397,35 @@ void showDawExport(AppState& app)
     app.showDawExport = true;
 }
 
+// The file the export window writes; empty while the folder or the name is
+// empty (crosscheck #22 CC6: not into the program's current folder).
 std::filesystem::path dawExportTarget(const AppState& app)
 {
-    return minidaw::pathFromUtf8(minidaw::cleanPathText(app.dawExportFolder)) /
-           minidaw::pathFromUtf8(minidaw::safeFileName(app.dawExportName) + ".dawproject");
+    const std::string folder = minidaw::cleanPathText(app.dawExportFolder);
+    const std::string file = minidaw::dawExportFileName(app.dawExportName);
+    if (folder.empty() || file.empty()) return {};
+    return minidaw::pathFromUtf8(folder) / minidaw::pathFromUtf8(file);
 }
 
 void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
 {
     refreshInstrumentStates(app);  // the instruments' sound as it is now
     const minidaw::ProjectData d = currentProject(app);
-    const std::string title = minidaw::cleanPathText(app.dawExportName);
+    const std::string title = minidaw::dawExportName(app.dawExportName);  // as typed (the file name is made safe)
+    // The folders made for the file, removed again when nothing was written (CC7).
+    std::vector<std::filesystem::path> made;
     std::error_code ec;
+    for (auto f = target.parent_path(); !f.empty() && !std::filesystem::exists(f, ec); f = f.parent_path()) {
+        made.push_back(f);
+        if (f == f.parent_path()) break;
+    }
     std::filesystem::create_directories(target.parent_path(), ec);
     const minidaw::DawExportResult r =
         minidaw::exportDawProject(d, app.audio.info().sampleRate, title, minidaw::kVersion, target);
     auto& rep = app.dawExportReport;
     rep.clear();
     if (!r.ok) {
+        for (const auto& f : made) std::filesystem::remove(f, ec);  // innermost first; only empty ones go
         rep.push_back("Not written: " + r.error);
         app.log.error("Export DAWproject " + minidaw::pathToUtf8(target) + ": " + r.error);
         return;
@@ -2457,14 +2468,19 @@ void drawDawExportWindow(AppState& app)
         browseButton(app, AppState::BrowseFor::ExportFolder, app.dawExportFolder, projectsBase(app),
                      "Choose the folder for the .dawproject file");
         const std::filesystem::path target = dawExportTarget(app);
-        ImGui::TextWrapped("File: %s", minidaw::pathToUtf8(target).c_str());
+        if (target.empty()) {
+            ImGui::TextWrapped("%s", minidaw::cleanPathText(app.dawExportFolder).empty() ? "Choose a folder for the file."
+                                                                                       : "Type a name for the file.");
+        } else {
+            ImGui::TextWrapped("File: %s", minidaw::pathToUtf8(target).c_str());
+        }
         std::error_code ec;
-        const bool exists = std::filesystem::exists(target, ec);
+        const bool exists = !target.empty() && std::filesystem::exists(target, ec);
         if (exists) ImGui::TextWrapped("A file with this name is there: Export replaces it.");
         const bool rec = app.session.recording();
         if (rec) ImGui::TextUnformatted("Recording: stop it first.");
         if (app.tracks.empty()) ImGui::TextUnformatted("There are no tracks to export.");
-        minidaw::app::beginDisabled(rec || app.dawExportName.empty() || app.tracks.empty());
+        minidaw::app::beginDisabled(rec || target.empty() || app.tracks.empty());
         if (ImGui::Button(exists ? "Replace" : "Export")) {
             startBusy(app, "Exporting " + minidaw::pathToUtf8(target), [&app, target] { exportDawProjectNow(app, target); });
         }

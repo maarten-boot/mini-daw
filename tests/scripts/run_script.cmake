@@ -91,3 +91,8 @@ foreach(unwanted IN LISTS EXPECT_NOT_IN_REPORT)
         message(FATAL_ERROR "in the report, but should not be: ${unwanted}")
     endif()
 endforeach()
+# A case's own extra checks (<name>.check.cmake beside the script), if any.
+get_filename_component(scriptDir "${SCRIPT}" DIRECTORY)
+if(EXISTS "${scriptDir}/${name}.check.cmake")
+    include("${scriptDir}/${name}.check.cmake")
+endif()

@@ -1,5 +1,6 @@
 # T-PRJ-10 / T-RUN-04: File > Export DAWproject through a script (P27), with the
-# test synth loaded, so its real state goes into the file.
+# test synth loaded, so its real state goes into the file (export.check.cmake
+# unpacks it and looks for the .vstpreset).
 stop-on-failure on
 open "@WORK@/project"
 scan

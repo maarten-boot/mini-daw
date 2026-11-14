@@ -12,6 +12,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -220,8 +221,9 @@ struct NoteOut {
 };
 
 // Notes from a MIDI take: note-ons paired with their note-offs (first in, first
-// out per channel and key); a note still held at the end ends there. Other
-// messages are counted.
+// out per channel and key); a note still held at the end ends there; a note
+// whose off comes in the same frame lasts one frame (some programs drop notes
+// of length 0). Other messages are counted.
 struct TakeNotes {
     std::vector<NoteOut> notes;
     double seconds = 0.0;    // the take's length
@@ -250,7 +252,7 @@ TakeNotes notesFromSmf(const SmfData& smf, unsigned int rate)
             it->second.pop_front();
             NoteOut n;
             n.time = static_cast<double>(start) / rate;
-            n.duration = static_cast<double>(e.frame - start) / rate;
+            n.duration = static_cast<double>(std::max<std::uint64_t>(e.frame - start, 1)) / rate;  // at least a frame
             n.channel = ch;
             n.key = e.data[1];
             n.vel = vel / 127.0;
@@ -264,7 +266,7 @@ TakeNotes notesFromSmf(const SmfData& smf, unsigned int rate)
         for (const auto& [start, vel] : queue) {
             NoteOut n;
             n.time = static_cast<double>(start) / rate;
-            n.duration = static_cast<double>(last - start) / rate;
+            n.duration = static_cast<double>(std::max<std::uint64_t>(last - start, 1)) / rate;
             n.channel = chKey.first;
             n.key = chKey.second;
             n.vel = vel / 127.0;
@@ -277,6 +279,49 @@ TakeNotes notesFromSmf(const SmfData& smf, unsigned int rate)
     out.seconds = static_cast<double>(last) / rate;
     return out;
 }
+
+bool isHex(char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }
+
+} // namespace
+
+std::string vst3DeviceId(const std::string& classId)
+{
+    if (classId.size() != 32 || !std::all_of(classId.begin(), classId.end(), isHex)) return classId;
+    std::string out;
+    for (std::size_t i = 0; i < 32; ++i) {
+        if (i == 8 || i == 12 || i == 16 || i == 20) out += '-';
+        out += static_cast<char>(std::toupper(static_cast<unsigned char>(classId[i])));
+    }
+    return out;
+}
+
+std::string dawExportName(std::string_view typed)
+{
+    auto blank = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    auto trim = [&](std::string_view v) {
+        while (!v.empty() && blank(v.front())) v.remove_prefix(1);
+        while (!v.empty() && blank(v.back())) v.remove_suffix(1);
+        return v;
+    };
+    std::string_view v = trim(typed);
+    constexpr std::string_view ext = ".dawproject";
+    if (v.size() >= ext.size()) {
+        const std::string_view tail = v.substr(v.size() - ext.size());
+        if (std::equal(tail.begin(), tail.end(), ext.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == b;
+            }))
+            v = trim(v.substr(0, v.size() - ext.size()));
+    }
+    return std::string(v);
+}
+
+std::string dawExportFileName(std::string_view typed)
+{
+    const std::string name = dawExportName(typed);
+    return name.empty() ? std::string() : safePresetName(name) + ".dawproject";
+}
+
+namespace {
 
 std::string trackLabel(const Track& t)
 {
@@ -341,13 +386,29 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
     };
     std::map<fs::path, bool> marksDone;  // recording folders whose marks are written
     std::vector<std::pair<double, std::string>> markers;
+    // A recording's marks count from its earliest take on the timeline, whatever
+    // the track order (its tracks can differ by their latency correction).
+    std::map<fs::path, std::int64_t> recordingStart;
+    for (const Track& t : project.tracks) {
+        std::error_code ec;
+        if (t.take.empty() || !fs::is_regular_file(t.take, ec)) continue;
+        const fs::path folder = t.take.parent_path();
+        auto [it, added] = recordingStart.emplace(folder, t.takeStart);
+        if (!added) it->second = std::min(it->second, t.takeStart);
+    }
 
     for (const Track& t : project.tracks) {
         const bool isMidi = t.kind == TrackKind::Midi;
         const Track* owner = isMidi ? nullptr : soundOwner(project.tracks, t);
-        // Mute so the DAW plays what mini-daw plays (SPEC-VST-03a): the instrument or its recording.
+        // Mute and solo so the DAW plays what mini-daw plays (SPEC-VST-03a, as
+        // playbackGain): the instrument or its recording; a linked track is also
+        // silenced by its MIDI track's mute and sounds with its MIDI track's solo.
         bool mute = t.mute;
-        if (owner && !owner->soundFromRecording) mute = true;
+        bool solo = t.solo;
+        if (owner) {
+            mute = t.mute || owner->mute || !owner->soundFromRecording;
+            solo = t.solo || owner->solo;
+        }
         if (isMidi && !t.instrumentClass.empty() && t.soundFromRecording && linkedSoundTrack(project.tracks, t.number))
             mute = true;
 
@@ -358,12 +419,13 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         attr(track, "id", trackId);
         attr(track, "name", t.name.empty() ? "Track " + std::to_string(t.number) : t.name);
         if (owner) attr(track, "comment", "The sound of track " + std::to_string(owner->number) + "'s instrument");
-        const int audioChannels = isMidi ? 2 : (t.channels.size() == 1 ? 1 : 2);
-        pugi::xml_node ch = channel(track, ids, "regular", audioChannels, masterId, t.solo);
+        // An instrument's sound is stereo; an audio track as its input (the take's WAV decides below).
+        const int audioChannels = (isMidi || owner) ? 2 : (t.channels.size() == 1 ? 1 : 2);
+        pugi::xml_node ch = channel(track, ids, "regular", audioChannels, masterId, solo);
         if (isMidi && !t.instrumentClass.empty()) {
             pugi::xml_node devices = ch.append_child("Devices");
             pugi::xml_node plugin = devices.append_child("Vst3Plugin");
-            attr(plugin, "deviceID", t.instrumentClass);
+            attr(plugin, "deviceID", vst3DeviceId(t.instrumentClass));
             attr(plugin, "deviceName", t.instrumentName.empty() ? std::string("Instrument") : t.instrumentName);
             attr(plugin, "deviceRole", std::string("instrument"));
             attrBool(plugin, "loaded", true);
@@ -433,6 +495,7 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
                 continue;
             }
             const double seconds = static_cast<double>(wav.frames()) / wav.sampleRate();
+            ch.attribute("audioChannels").set_value(wav.channels() == 1 ? 1 : 2);  // as the take is
             auto it = audioFiles.find(t.take);
             if (it == audioFiles.end()) {
                 const std::string name =
@@ -484,8 +547,9 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         // Marks made while recording, once per recording, at their place on the timeline.
         if (!marksDone[folder]) {
             marksDone[folder] = true;
+            const double from = static_cast<double>(recordingStart[folder]) / rate;
             for (const RecordingMark& m : notes.marks) {
-                const double at = start + m.seconds;
+                const double at = from + m.seconds;
                 if (at >= 0.0) markers.emplace_back(at, m.text);
             }
         }

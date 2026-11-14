@@ -161,6 +161,7 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
     minidaw_script_test(export 0 IN "Export DAWproject: Written: " "out/Song.dawproject"
         "2 track(s), 0 audio clip(s), 0 MIDI clip(s) with 0 note(s), 1 instrument(s), 0 marker(s)."
         "Result: 5 command(s), 0 failed")
+    minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"
         "Track 2 \"MIDI 1 sound\" is now a normal audio track" "Result: 7 command(s), 0 failed"
         NOT_IN "output (no MIDI output)")

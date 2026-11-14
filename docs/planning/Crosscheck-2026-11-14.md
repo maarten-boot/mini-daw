@@ -73,3 +73,19 @@ Scope: Spec v0.60, Plan, Tests, README, CLAUDE.md, THIRD_PARTY.md, code at `f8cb
 | CC9 | doc | Spec SPEC-PRJ-04: "a MIDI file's tempo map beyond what mini-daw plays" listed as left out — it is followed, nothing is left out; Plan PX row #22. | Fix the text. |
 
 CI run 43627670881 (`9d000c2`): windows, linux, licence green; Linux 231/231, Windows 219/219.
+
+## Actions taken (user: "yes fix CC1–CC9, CC1 first")
+
+| # | Action |
+|---|--------|
+| CC1 | A linked track: mute = own ∨ MIDI track's ∨ sound from the instrument; solo = own ∨ MIDI track's (as `playbackGain`). New test case with the four combinations (the old rule gives the wrong answer for the "muted" and "soloed" ones). |
+| CC2 | `vst3DeviceId`: 32 hex digits → `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`, upper case. Byte order settled from the SDK: `UID::toString` writes the COM GUID fields on Windows and the bytes in order elsewhere, which are the same UUID fields, so dashes are all that is needed. Whether Bitwig / Cubase write upper or lower case is still to be seen in a real file (T-PRJ-10 M). The `.vstpreset` keeps 32 hex digits. |
+| CC3 | A linked track's channel is stereo; an audio track's channel count is its WAV's. The main test now uses `channels = {0}` as `addLinkedSoundTrack` makes it; also a linked track without a take. |
+| CC4 | Marks counted from the recording's earliest take that exists (map built before the tracks are written). Test: track 1 at 1 s, track 4 of the same recording at 0.95 s → mark at 1.45 s. While testing: the main test's shifted take sat in the same recording folder; it now has its own (another recording, as in real use). |
+| CC5 | A note whose end falls in the same frame (also one held to the end) lasts one frame. |
+| CC6 | `dawExportName` (trim, a typed ".dawproject" dropped, any case) and `dawExportFileName` (`safePresetName`: also CON / NUL …); the window says "Choose a folder for the file." / "Type a name for the file." and Export is off. Tested in core and by hand on Xvfb. |
+| CC7 | Folders made for the file are removed when nothing was written (only empty ones); script case `exportfail` (a 300-character file name) checks it. Running on the UI thread: accepted (busy message shown, one-off action, audio keeps playing). |
+| CC8 | New cases: a hand-made MIDI file (format 1, tempo change, overlapping notes of one key, a note-off without its note, a 0-length note, a second track), same-name takes and one take on two tracks. "T-PRJ-10: XSD" now runs all `[dawproject]` cases, unpacks each of the 5 exports with CMake's `file(ARCHIVE_EXTRACT)` (libarchive) and checks both XML files and that every `File` / `State` path is there and not empty. Script case `export`: `export.check.cmake` unpacks the file and checks the `.vstpreset` ("VST3" header); `run_script.cmake` includes a `<case>.check.cmake` when there is one. |
+| CC9 | Spec: the tempo map is followed (no left-out line); notes, deviceID, channels, marks and window rules written down (v0.61). Plan PX row #22, P27a. |
+
+Linux 236/236 (the XSD check with the lxml stand-in for xmllint); MinGW under Wine 220/220 Catch2 cases.

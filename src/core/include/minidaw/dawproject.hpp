@@ -17,15 +17,18 @@
 // WAV as Audio, a MIDI file as Notes); a VST3 instrument as Vst3Plugin. A
 // linked "… sound" track becomes an ordinary audio track, muted when the
 // instrument plays the take (so the sound is not doubled); when the sound
-// comes from the recording, the MIDI track is muted instead. Recording names
+// comes from the recording, the MIDI track is muted instead; the MIDI track's
+// mute also mutes it and its solo solos it (as mini-daw plays them). Its
+// channel count is the WAV's. Recording names
 // and notes become the clip's name and comment, marks made while recording
-// become Markers. MIDI messages other than notes, MIDI outputs and recordings
+// become Markers (counted from the recording's earliest take). MIDI messages other than notes, MIDI outputs and recordings
 // that are not on a track are left out (listed in the result).
 
 #include "minidaw/project.hpp"
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace minidaw {
@@ -55,5 +58,18 @@ std::string xmlSafeText(const std::string& text);
 
 // A number as XML text: the shortest form that reads back as the same double.
 std::string xmlNumber(double value);
+
+// A VST3 class ID (32 hex digits, as the SDK's UID::toString writes it: the
+// UUID's fields in order on every platform) in the form the format asks for:
+// "the canonical textual representation of the UUID (8-4-4-4-12 with no
+// braces)", upper case. Anything else is returned as it is.
+std::string vst3DeviceId(const std::string& classId);
+
+// The export window's name field (crosscheck #22 CC6): spaces around it and a
+// ".dawproject" typed at the end (any case) removed; "" when nothing is left.
+std::string dawExportName(std::string_view typed);
+// The file name for it: made safe on every system (safePresetName, so also
+// Windows device names such as CON) plus ".dawproject"; "" for an empty name.
+std::string dawExportFileName(std::string_view typed);
 
 } // namespace minidaw
