@@ -71,3 +71,9 @@ User: "pushed it, yes start P27".
 - Core `exportDawProject` (seconds, a master, tracks, clips, notes, instruments with `.vstpreset`, linked tracks muted as mini-daw plays them, markers, metadata); File → Export DAWproject… window; script command `export`; Terms "DAWproject" (48 terms).
 - Tests: T-PRJ-10 (Catch2, read back with miniz / pugixml), "T-PRJ-10: XSD" with xmllint (CI installs libxml2-utils; here an lxml stand-in), script case `export` with the test synth; GUI on Xvfb; Wine with a non-ASCII folder. Also fixed: Browse… cut off in New project / Save as.
 - Linux 231/231; MinGW under Wine 216/216. Spec v0.60, Plan P27 done. Left for the user: open the file in Bitwig / Cubase; what to do with auto record parts not on a track.
+
+## 10. CI run 43627670881 (P27)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 231/231, Windows 219/219; the XSD check passed on both runners. Builds in `dist/`; `dist/TESTS.txt` with T-PRJ-10 (open the file in Cubase / Bitwig).
