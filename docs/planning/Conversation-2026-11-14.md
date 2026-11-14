@@ -77,3 +77,9 @@ User: "pushed it, yes start P27".
 User: "pushed it, check the CI run".
 
 - windows, linux, licence green; Linux 231/231, Windows 219/219; the XSD check passed on both runners. Builds in `dist/`; `dist/TESTS.txt` with T-PRJ-10 (open the file in Cubase / Bitwig).
+
+## 11. Crosscheck #22 (after P27)
+
+User: "pushed it, do the crosscheck".
+
+- Spec ↔ Plan ↔ Tests ↔ docs by Claude, the code by an independent reviewer; findings checked at the code. `Crosscheck-2026-11-14.md` #22: CC1 linked sound track mute / solo not as mini-daw plays it (medium), CC2 VST3 `deviceID` not in UUID form (medium, byte order to confirm with a real export), CC3 linked track exported mono, CC4 marker reference, CC5 zero-length notes, CC6 export window name / folder edge cases, CC7 export on the UI thread, CC8 test gaps, CC9 Spec text (tempo map). Proposed: fix CC1–CC9, CC1 first.

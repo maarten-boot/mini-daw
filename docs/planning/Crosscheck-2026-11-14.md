@@ -41,3 +41,35 @@ CI run 43599860783 (`b6eec8c`): windows, linux, licence green; Linux 222/222, Wi
 | CC8 | "Project warning" looked at on Xvfb (result row); Plan P26a "Windows by the user (T-UI-31)"; Plan PX row (done with the crosscheck). |
 
 Spec v0.58, Plan P26b.
+
+---
+
+# Crosscheck #22 — 2026-11-14 (after P27: DAWproject export)
+
+Scope: Spec v0.60, Plan, Tests, README, CLAUDE.md, THIRD_PARTY.md, code at `f8cbe9f` (P27 `9d000c2`). Spec ↔ Plan ↔ Tests ↔ docs by Claude; the code also read by an independent reviewer (a subagent given the code, the Spec and the format's reference repository, not Claude's conclusions). Claude checked at the code: CC1 (`dawproject.cpp:349-362` against `playbackGain`, `track.cpp:195`), CC2 (`Device.java:39-43`), CC3 (`addLinkedSoundTrack` sets `channels = {0}`, `track.cpp:157`; `render.cpp:57` writes 2 channels), CC4 (`dawproject.cpp:485`).
+
+| Area | Verdict |
+|------|---------|
+| Structure, schema (T-PRJ-10) | ✅ element order valid, Arrangement / Lanes(timeUnit) / Lanes(track) / Clips / Clip as in the reference, `destination` → master channel, ids unique; ⚠️ VST3 `deviceID` not in the UUID form the format asks for **CC2** |
+| Times | ✅ `time` / `duration` in seconds, `playStart` in the content's units, a take shifted before 0 cut correctly, another sample rate in `Audio`; markers per recording ⚠️ **CC4** |
+| Notes | ✅ FIFO pairing per channel and key, velocity-0 note-off, running status, notes held to the end, the SMF's tempo map followed (as in playback); ⚠️ zero-length notes **CC5** |
+| Mixer | ✅ linear gain 0..2, silent at −60 dB; ⚠️ linked sound track's mute / solo do not follow its MIDI track **CC1**; a rendered linked track exported as mono **CC3** |
+| ZIP / files | ✅ UTF-8 entry names (miniz flag), zip64 for large files, unique entry names, `.tmp` + rename, nothing left on failure, `_wfopen` on Windows |
+| GUI / script | ✅ not while recording, not without tracks, report and log lines, script `ok` only on "Written:"; ⚠️ empty folder, ".dawproject" typed in the name, blank name **CC6**; export blocks the window for large takes **CC7** |
+| Spec ↔ Plan ↔ Tests ↔ docs | ✅ SPEC-PRJ-04 ↔ P27 ↔ T-PRJ-10, RUN-02 `export`, README, CLAUDE.md, THIRD_PARTY.md, Terms "DAWproject"; ⚠️ Spec says a MIDI file's tempo map is left out "with a line", but it is followed and no line exists; Plan PX row **CC9** |
+
+## Findings
+
+| # | Sev | Finding | Proposed fix |
+|---|-----|---------|--------------|
+| CC1 | medium | A linked "… sound" track's mute and solo are exported from the linked track alone. mini-daw (`playbackGain`) also silences it when the MIDI track is muted, and solos it when the MIDI track is soloed. With "Sound from: recording": a muted MIDI track → the other DAW still plays the sound; a soloed MIDI track → exported muted + soloed, the linked track not soloed → the other DAW plays nothing. | Linked track: mute = own mute ∨ owner mute ∨ sound from instrument; solo = own solo ∨ owner solo. A MIDI track muted for "Sound from: recording" exported without solo. Test cases for both. |
+| CC2 | medium | `Vst3Plugin deviceID` is written as 32 hex digits; the format (`Device.java`) asks VST3 for "the canonical textual representation of the UUID (8-4-4-4-12 with no braces)". A strict importer may not find the plugin. Uncertain: the byte order (VST3 class IDs are COM-ordered on Windows). | Write 8-4-4-4-12 from the class ID's bytes in order; confirm with a file exported by Bitwig or Cubase (T-PRJ-10 M: user's help needed). The `.vstpreset` keeps its 32-hex form (that format's own). |
+| CC3 | low | A track's `audioChannels` comes from its input channels; a linked track has `channels = {0}` but its WAV (recorded or rendered) is stereo → `Channel audioChannels="1"` with a 2-channel clip; a DAW may make it a mono track. Test hides it (`channels = {}`). | Take the count from the WAV (read before the channel is written); linked track test with `{0}`. |
+| CC4 | low | Marks of a recording are placed using the `takeStart` of the first track in the list that plays it; tracks of one recording can differ by their latency correction (tens of ms), so the markers can be off that much against the other tracks; on mini-daw's own Timeline marks are placed by the recording's start. | Use the same reference as the Timeline does (the recording's start), i.e. the smallest `takeStart` of its tracks; a test with two tracks at different starts. |
+| CC5 | low | A note whose on and off fall on the same frame is written with `duration="0"`; some programs drop such notes. | Give it one frame of length (as a player hears it); test. |
+| CC6 | low | Export window: an empty "In folder" writes into the program's current folder; a name typed with ".dawproject" gives "x.dawproject.dawproject"; a name of spaces passes (file "track", empty title). | Export disabled with an empty folder (with a line saying so); a trailing ".dawproject" dropped; name trimmed. |
+| CC7 | low | The export copies all takes on the UI thread (busy message shown): with GBs of takes the window stops responding for a while; a failed export leaves the folder it made. Audio keeps playing (own thread). | Accept for now (one-off action, busy message), or move the write to a worker thread later; remove a folder the export made when nothing was written. |
+| CC8 | low | Test gaps: the ZIP read back only with miniz (no second reader); same-name takes (`uniqueZipName`) and one take on two tracks; overlapping same-key notes, a note-off without a note, a tempo change in the file, several SMF tracks; the script case does not check that the `.vstpreset` is in the file; XSD check of one scenario only. | Add those cases; check the ZIP also with CMake's `file(ARCHIVE_EXTRACT)` in the script case and look for the preset there. |
+| CC9 | doc | Spec SPEC-PRJ-04: "a MIDI file's tempo map beyond what mini-daw plays" listed as left out — it is followed, nothing is left out; Plan PX row #22. | Fix the text. |
+
+CI run 43627670881 (`9d000c2`): windows, linux, licence green; Linux 231/231, Windows 219/219.
