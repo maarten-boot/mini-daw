@@ -26,3 +26,9 @@ User: "pushed it, yes fix both, Tabs window first".
 - Not only Tabs: every own window opened at ImGui's one default place, so any two opened together covered each other. New `src/app/window_place.cpp`: `placeNewWindow(title)` before each own window's / dialog's Begin (13 places); the first time in a run a window opens at the first free place of a cascade (`cascadePlace`); later ImGui keeps where it was left. ImGui's hidden "Debug" fallback window is not counted; windows hidden in their first frame (fitted height) are (the first try missed them; seen on Xvfb, test made to catch it).
 - Status line: "Project warning: …" (field `projectWarnings`).
 - T-UI-31; Linux 222/222, MinGW under Wine 210/210. Spec v0.57, Plan P26a.
+
+## 4. CI run 43599860783 (P26a)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 222/222, Windows 212/212. Builds in `dist/`, `dist/TESTS.txt` with T-UI-31.
