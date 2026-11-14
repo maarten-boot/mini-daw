@@ -90,3 +90,9 @@ User: "pushed it, yes fix CC1–CC9, CC1 first".
 
 - CC1 linked sound track mute / solo as mini-daw plays it; CC2 VST3 deviceID as 8-4-4-4-12 (the SDK's text is already in UUID field order, so only dashes); CC3 linked track stereo, channels from the WAV; CC4 marks from the recording's earliest take; CC5 no 0-length notes; CC6 export window name / folder checks; CC7 folders of a failed export removed (UI thread accepted); CC8 tests (MIDI file by hand, same-name takes, XSD check over 5 exports unpacked by CMake, script cases `export` check and `exportfail`); CC9 Spec v0.61.
 - Linux 236/236, MinGW under Wine 220/220; the window checked on Xvfb. Open for the user: a `.dawproject` written by Bitwig or the Cubase-family DAW with a VST3 instrument, to see the deviceID form they use.
+
+## 13. CI run 43647076274 (P27a)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 236/236, Windows 223/223; the XSD check (5 exports, unpacked with CMake) passed on both runners; `exportfail` passed. Builds in `dist/`; `dist/TESTS.txt` asks for a `.dawproject` saved by Cubase / Bitwig (deviceID form).
