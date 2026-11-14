@@ -18,3 +18,11 @@ User: "pushed it, check the CI run".
 
 - windows, linux, licence green; Linux 220/220, Windows 210/210. Builds in `dist/`, `dist/TESTS.txt` with T-UI-30.
 - Corrected T-UI-30's "another project" step: a normal close saves the open project's state, so "Not restored" needs another project and an end without a normal close (Task Manager).
+
+## 3. P26a: windows on top of each other, "Project note:" label
+
+User: "pushed it, yes fix both, Tabs window first".
+
+- Not only Tabs: every own window opened at ImGui's one default place, so any two opened together covered each other. New `src/app/window_place.cpp`: `placeNewWindow(title)` before each own window's / dialog's Begin (13 places); the first time in a run a window opens at the first free place of a cascade (`cascadePlace`); later ImGui keeps where it was left. ImGui's hidden "Debug" fallback window is not counted; windows hidden in their first frame (fitted height) are (the first try missed them; seen on Xvfb, test made to catch it).
+- Status line: "Project warning: …" (field `projectWarnings`).
+- T-UI-31; Linux 222/222, MinGW under Wine 210/210. Spec v0.57, Plan P26a.

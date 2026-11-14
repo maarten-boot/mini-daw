@@ -46,7 +46,8 @@ target_sources(minidaw_tests PRIVATE ${minidaw_sdk_preset_sources})
 set_source_files_properties(${minidaw_sdk_preset_sources} PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
 # The GUI's state cues (PL1, crosscheck #15 W9): a headless Dear ImGui context, no window.
 if(TARGET minidaw_imgui)
-    target_sources(minidaw_tests PRIVATE test_state_cues.cpp ${PROJECT_SOURCE_DIR}/src/app/state_cues.cpp)
+    target_sources(minidaw_tests PRIVATE test_state_cues.cpp ${PROJECT_SOURCE_DIR}/src/app/state_cues.cpp
+                   test_window_place.cpp ${PROJECT_SOURCE_DIR}/src/app/window_place.cpp)
     target_include_directories(minidaw_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
     target_link_libraries(minidaw_tests PRIVATE minidaw_imgui)
 endif()

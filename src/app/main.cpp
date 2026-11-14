@@ -19,6 +19,7 @@
 #include "plugin_window.hpp"
 #include "renderer.hpp"
 #include "state_cues.hpp"
+#include "window_place.hpp"
 
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
@@ -270,7 +271,7 @@ struct AppState {
     std::string projectSavedText;          // the JSON last written (autosave writes only changes)
     double projectCheckAt = 0.0;
     std::string projectError;              // last save error (shown, logged once)
-    std::vector<std::string> projectNotes; // warnings from opening / copying takes
+    std::vector<std::string> projectWarnings; // warnings from opening / copying takes
     enum class ProjectDialog { None, New, Open, SaveAs } projectDialog = ProjectDialog::None;
     std::string projectNameInput;
     std::string projectFolderInput;
@@ -1029,6 +1030,7 @@ void drawTabsWindow(AppState& app)
 {
     if (!app.showTabsWindow) return;
     ImGui::SetNextWindowSize(ImVec2(28 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Tabs");
     if (ImGui::Begin("Tabs", &app.showTabsWindow, ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextWrapped("The order of the tabs, left to right. You can also drag a tab to another place. "
                            "At start the tab used last is shown.");
@@ -1095,6 +1097,7 @@ void drawCustomContrastWindow(AppState& app)
 {
     if (!app.showCustomContrast) return;
     ImGui::SetNextWindowSize(ImVec2(30 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Custom contrast");
     if (ImGui::Begin("Custom contrast", &app.showCustomContrast, ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextWrapped("Minimum contrast ratio for every colour pair, from 4.5 (WCAG AA) to 21 "
                            "(pure black on white).");
@@ -1120,6 +1123,7 @@ void drawContrastReportWindow(AppState& app)
 {
     if (!app.showContrastReport) return;
     ImGui::SetNextWindowSize(ImVec2(60 * ImGui::GetFontSize(), 30 * ImGui::GetFontSize()), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Contrast report");
     if (ImGui::Begin("Contrast report", &app.showContrastReport)) {
         const auto lowest = minidaw::lowestContrast(app.palette);
         ImGui::Text("Setting: %s", describeContrast(app.config.contrast).c_str());
@@ -1196,6 +1200,7 @@ void drawAudioSettingsWindow(AppState& app)
     if (!app.showAudioSettings) return;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(40 * em, 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Audio devices");
     if (ImGui::Begin("Audio devices", &app.showAudioSettings, ImGuiWindowFlags_NoCollapse)) {
         ImGui::Text("Audio API: %s", app.scan.audioApi.c_str());
         ImGui::SetNextItemWidth(26 * em);
@@ -1973,6 +1978,7 @@ void drawInstrumentsWindow(AppState& app)
     if (!app.showInstruments) return;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(56 * em, 32 * em), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Instruments (VST\xc2\xae" "3)###instruments");
     if (ImGui::Begin("Instruments (VST\xc2\xae" "3)###instruments", &app.showInstruments)) {
         ImGui::TextWrapped("VST is a registered trademark of Steinberg Media Technologies GmbH.");  // SPEC-LIC-05
         ImGui::SeparatorText("Folders");
@@ -2115,11 +2121,11 @@ bool importIntoProject(AppState& app, const std::filesystem::path& folder, std::
     for (const auto& c : r.copied) app.log.info("Copied into the project: " + c);
     for (const auto& m : r.missing) {
         app.log.warning(m);
-        app.projectNotes.push_back(m);
+        app.projectWarnings.push_back(m);
     }
     for (const auto& f : r.failed) {
         app.log.error(f);
-        app.projectNotes.push_back(f);
+        app.projectWarnings.push_back(f);
     }
     return r.failed.empty();
 }
@@ -2165,7 +2171,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
     if (!minidaw::loadProject(folder, d, warnings, err)) {
         app.projectDialogError = err;
         // Also in the status line: Recent and the start have no dialog open (N5).
-        app.projectNotes.push_back("Could not open the project: " + err);
+        app.projectWarnings.push_back("Could not open the project: " + err);
         app.log.error("Open project: " + err);
         return false;
     }
@@ -2180,7 +2186,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
     app.tracksCreated = true;
     app.midiPortsDirty = true;
     app.audio.player().locate(0);
-    app.projectNotes = warnings;
+    app.projectWarnings = warnings;
     app.projectError.clear();
     for (const auto& w : warnings) app.log.warning("Project: " + w);
     importIntoProject(app);  // a project saved with outside takes (should not happen, but repairable)
@@ -2196,7 +2202,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
                                    std::filesystem::copy_options::overwrite_existing, ec);
         const std::string note = ec ? "The project file needed repairs; the original could not be kept (" + ec.message() + ")."
                                     : "The project file needed repairs (see above); the original is kept as project.json.bak.";
-        app.projectNotes.push_back(note);
+        app.projectWarnings.push_back(note);
         app.log.warning(note);
         app.projectSavedText.clear();  // the repaired state is written by the next autosave
     }
@@ -2204,7 +2210,7 @@ bool openProject(AppState& app, const std::filesystem::path& typedFolder)
     if (d.sampleRate && rate && d.sampleRate != rate) {
         const std::string note = "The project was saved at " + std::to_string(d.sampleRate) + " Hz; the stream runs at " +
                                  std::to_string(rate) + " Hz, so takes at the other rate are not played.";
-        app.projectNotes.push_back(note);
+        app.projectWarnings.push_back(note);
         app.log.warning(note);
     }
     rememberProjectInConfig(app);
@@ -2248,7 +2254,7 @@ bool createProject(AppState& app, const std::filesystem::path& typedFolder, bool
         app.tracks = std::move(tracks);
     } else {
         unloadAllInstruments(app);
-        app.projectNotes.clear();
+        app.projectWarnings.clear();
         app.projectNote.clear();  // a new project starts without a note (Save as keeps it)
         app.tracks.clear();
         app.tracksCreated = false;  // the default track comes back
@@ -2271,7 +2277,7 @@ void closeProject(AppState& app)
     app.log.info("Closed project " + minidaw::pathToUtf8(app.projectFolder));
     app.projectFolder.clear();
     app.projectSavedText.clear();
-    app.projectNotes.clear();
+    app.projectWarnings.clear();
     app.projectNote.clear();
     app.showProjectNote = false;
     app.projectError.clear();
@@ -2304,6 +2310,7 @@ void drawProjectDialog(AppState& app)
     bool open = true;
     // Grows with its content (the folder line, an error), so the buttons stay visible.
     ImGui::SetNextWindowSizeConstraints(ImVec2(46 * em, 0), ImVec2(46 * em, FLT_MAX));
+    minidaw::app::placeNewWindow(title);
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         if (app.session.recording()) ImGui::TextUnformatted("Recording: stop it first.");
         minidaw::app::beginDisabled(app.session.recording());
@@ -3193,6 +3200,7 @@ void drawRecordingWindows(AppState& app)
         bool open = true;
         ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(60 * em, FLT_MAX));
         const std::string title = "Project note - " + minidaw::pathToUtf8(app.projectFolder.filename()) + "###projectnote";
+        minidaw::app::placeNewWindow(title.c_str());
         if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted("A note for the whole project (all its recordings):");
             ImGui::InputTextMultiline("##projectnote", &app.projectNoteEdit, ImVec2(40 * em, 10 * ImGui::GetTextLineHeight()));
@@ -3212,6 +3220,7 @@ void drawRecordingWindows(AppState& app)
         bool open = true;
         ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(60 * em, FLT_MAX));
         const std::string title = "Recording " + minidaw::pathToUtf8(app.recordingEdit.filename()) + "###recordingedit";
+        minidaw::app::placeNewWindow(title.c_str());
         if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
             if (app.recordingEditFocus && !app.recordingEditFocusNote) ImGui::SetKeyboardFocusHere();
             ImGui::SetNextItemWidth(30 * em);
@@ -3297,6 +3306,7 @@ void drawRecordingWindows(AppState& app)
         const minidaw::RecordingInfo rec = *it;
         bool open = true;
         ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(50 * em, FLT_MAX));
+        minidaw::app::placeNewWindow("Delete recording###recordingdelete");
         if (ImGui::Begin("Delete recording###recordingdelete", &open,
                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextWrapped("%s%s%s %s, %s long, %zu file(s).", rec.notes.name.c_str(), rec.notes.name.empty() ? "" : ": ",
@@ -3824,6 +3834,7 @@ void drawSavePresetWindow(AppState& app)
     bool open = true;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSizeConstraints(ImVec2(36 * em, 0), ImVec2(36 * em, FLT_MAX));
+    minidaw::app::placeNewWindow("Save preset###savepreset");
     if (ImGui::Begin("Save preset###savepreset", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Track %d: %s", t->number, inst->name().c_str());
         ImGui::SetNextItemWidth(24 * em);
@@ -4336,6 +4347,7 @@ void drawRecordingSettingsWindow(AppState& app)
     if (!app.showRecordingSettings) return;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(44 * em, 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Recording settings");
     if (ImGui::Begin("Recording settings", &app.showRecordingSettings, ImGuiWindowFlags_NoCollapse)) {
         auto& p = app.pendingRecording;
         ImGui::SetNextItemWidth(30 * em);
@@ -4470,6 +4482,7 @@ void drawLogWindow(AppState& app)
     if (!app.showLog) return;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(60 * em, 24 * em), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Log");
     if (ImGui::Begin("Log", &app.showLog)) {
         const std::filesystem::path file = app.log.file();
         if (file.empty()) {
@@ -4543,6 +4556,7 @@ void drawTakeBrowser(AppState& app)
     if (!app.showTakeBrowser) return;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(44 * em, 26 * em), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Open take folder");
     if (ImGui::Begin("Open take folder", &app.showTakeBrowser)) {
         ImGui::TextWrapped("Takes in %s (newest first). Opening a take replaces the track list.",
                            minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
@@ -4613,7 +4627,7 @@ void drawStatusLine(const AppState& app)
         ImGui::Text("Project: %s (%s)", minidaw::pathToUtf8(app.projectFolder).c_str(),
                     app.projectError.empty() ? "saved automatically" : "NOT SAVED - see the log");
     }
-    for (const auto& n : app.projectNotes) ImGui::TextWrapped("Project note: %s", n.c_str());
+    for (const auto& n : app.projectWarnings) ImGui::TextWrapped("Project warning: %s", n.c_str());
     ImGui::Text("Config: %s", minidaw::pathToUtf8(app.configPath).c_str());
     ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (Ctrl+L)", app.rendererName.c_str(),
                 static_cast<unsigned long long>(app.log.warningCount()),
@@ -5353,7 +5367,7 @@ int runGui(AppState& app)
             openProject(app, last);
         } else {
             const std::string note = "The last project " + app.config.project.last + " was not found.";
-            app.projectNotes.push_back(note);
+            app.projectWarnings.push_back(note);
             app.log.warning(note);
         }
     }
