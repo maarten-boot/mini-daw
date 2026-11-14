@@ -26,3 +26,18 @@ Scope: Spec v0.57, Plan, Tests, README, CLAUDE.md, code at `b6eec8c` (changes si
 | CC8 | doc | T-UI-31 result row (label not looked at by hand); Plan P26a "Windows by the user (T-UI-30, T-UI-31)"; Plan PX row #21. | Update the texts. |
 
 CI run 43599860783 (`b6eec8c`): windows, linux, licence green; Linux 222/222, Windows 212/212.
+
+## Actions taken (user: "yes fix CC1–CC8, CC1 first")
+
+| # | Action |
+|---|--------|
+| CC1 | `rememberProjectInConfig` does nothing in a script run (no `last`, no Recent). `run_script.cmake` checks for every script case that `config.ini` does not name the script's project; without the fix `basic` and `failures` fail. |
+| CC2 | `switchAutoRecordState` (core): another project drops position and editors, keeps `windows`; tested. |
+| CC3 | No change: a synced write of the config takes 3–6 ms here, and auto record only cuts a part's start when the program is late by more than the audio it keeps in memory (seconds, T-REC-34); this write cannot cause that. |
+| CC4 | `writeFileReplacing` follows symbolic links (the target is replaced, the link stays) and gives the new file the old one's permissions; tested on Linux with a relative link. |
+| CC5 | `PluginWindows` keeps each editor's last place while not minimised (`GLFW_ICONIFIED`, or Win32's -32000) and gives that at close. By reading only (a minimised window is not reachable on Xvfb). |
+| CC6 | Position saved only with a running stream (else the last one of the same project is kept), restored only with one ("Not restored: the song position (no audio stream)"); the 48000 Hz fallback is gone. |
+| CC7 | The decisions moved to core (`switchAutoRecordState`, `sessionStateAtClose`, `planRestore`) and tested; T-UI-29 edge cases (editor cap and forms, positions, a second section, a project path with quotes / backslashes / a non-UTF-8 byte); T-UI-31: popup and main window, a `###` window under another title, 30 windows. |
+| CC8 | "Project warning" looked at on Xvfb (result row); Plan P26a "Windows by the user (T-UI-31)"; Plan PX row (done with the crosscheck). |
+
+Spec v0.58, Plan P26b.

@@ -41,7 +41,8 @@ public:
     // Once per frame: closes the windows the user closed.
     void update();
     std::vector<int> openTracks() const;
-    // The top-left corner of `track`'s window (to remember it, P26); nothing if not open.
+    // The top-left corner of `track`'s window (to remember it, P26); while it is
+    // minimised the last place before that (CC5); nothing if not open.
     std::optional<std::pair<int, int>> position(int track) const;
 
     struct Window;  // internal

@@ -162,6 +162,63 @@ bool isStateWindowId(std::string_view id)
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 
+bool switchAutoRecordState(SessionState& state, const std::string& project, bool on)
+{
+    if (state.project == project && state.autoRecord == on) return false;
+    if (state.project != project) {
+        state.position = 0.0;
+        state.editors.clear();
+        state.project = project;
+    }
+    state.autoRecord = on;
+    return true;
+}
+
+SessionState sessionStateAtClose(const SessionState& saved, const SessionNow& now)
+{
+    const bool same = saved.project == now.project;
+    SessionState st;
+    st.project = now.project;
+    st.autoRecord = now.autoMode || (now.autoRestoreFailed && same);
+    if (now.position) {
+        st.position = std::clamp(*now.position, 0.0, 1e7);
+    } else if (same) {
+        st.position = saved.position;  // no stream now: the last real one
+    }
+    for (const EditorPlace& e : now.editors) {
+        if (st.editors.size() >= 16) break;
+        if (std::none_of(st.editors.begin(), st.editors.end(), [&](const EditorPlace& o) { return o.track == e.track; }))
+            st.editors.push_back(e);
+    }
+    for (const std::string& id : stateWindowIds()) {  // known ids, each once, in the fixed order
+        if (std::find(now.windows.begin(), now.windows.end(), id) != now.windows.end()) st.windows.push_back(id);
+    }
+    return st;
+}
+
+RestorePlan planRestore(const SessionState& state, const std::string& project, bool streamRunning)
+{
+    RestorePlan plan;
+    plan.windows = state.windows;
+    if (state.project != project) {
+        if (state.autoRecord || state.position > 0.0 || !state.editors.empty()) {
+            plan.notRestored = "Not restored: the song position, instrument windows and auto record were of another "
+                               "project (" + (state.project.empty() ? std::string("none") : state.project) + ")";
+        }
+        return plan;
+    }
+    if (state.position > 0.0) {
+        if (streamRunning) {
+            plan.position = state.position;
+        } else {
+            plan.notRestored = "Not restored: the song position (no audio stream)";
+        }
+    }
+    plan.editors = state.editors;
+    plan.autoRecord = state.autoRecord;
+    return plan;
+}
+
 namespace {
 // "3:120:80" or "3" -> a place; false if malformed.
 bool parseEditorPlace(std::string_view item, EditorPlace& out)

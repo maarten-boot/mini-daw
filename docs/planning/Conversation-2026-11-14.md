@@ -38,3 +38,10 @@ User: "pushed it, check the CI run".
 User: "pushed it, do the crosscheck".
 
 - Independent reviewer on the code, Claude on Spec / Plan / Tests / docs and the reviewer's claims at the code. `Crosscheck-2026-11-14.md`: CC1 (medium: a script run with the normal config changes `[project] last`, so the next start loses the state), CC2–CC6 (low: windows list dropped on a project change, synced write on the UI thread, symlinked config replaced, minimised editor place on Windows, position without a stream), CC7 test gaps, CC8 docs. One reviewer point refuted (Open take folder closes all editor windows).
+
+## 6. Crosscheck #21 fixes (P26b)
+
+User: "pushed it, yes fix CC1–CC8, CC1 first".
+
+- CC1: script runs leave `[project] last` / Recent alone; checked for every script case. CC2/CC6/CC7: restore decisions moved to core with tests; own windows kept; no position without a stream. CC4: a linked config stays a link, permissions kept. CC5: an editor's place kept while minimised. CC3: measured (3–6 ms), no change. CC8: "Project warning" seen on Xvfb; Plan texts.
+- Linux 226/226; MinGW under Wine 213/213. Spec v0.58, Plan P26b.

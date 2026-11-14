@@ -1,4 +1,5 @@
 #include "minidaw/config.hpp"
+#include "minidaw/presets.hpp"  // writeFileReplacing
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -492,3 +493,149 @@ TEST_CASE("T-UI-29: what was going on, kept in the config ([state])", "[config][
     for (const auto& id : stateWindowIds()) CHECK(isStateWindowId(id));
     CHECK_FALSE(isStateWindowId("terms"));
 }
+
+TEST_CASE("T-UI-29: [state] edge cases (crosscheck #21 CC7)", "[config][T-UI-29]")
+{
+    // At most 16 instrument windows; number forms strtol takes.
+    std::string many = "[state]\neditors = ";
+    for (int i = 1; i <= 20; ++i) many += std::to_string(i) + (i < 20 ? ", " : "\n");
+    const auto m = parseConfig(many);
+    CHECK(m.config.state.editors.size() == 16);
+    CHECK(m.warnings.empty());
+    const auto forms = parseConfig("[state]\neditors = +3, 4:+5:-6, 0, -2, 7:1, 8:1:2:3, 9:100001:0\n");
+    REQUIRE(forms.config.state.editors.size() == 2);
+    CHECK(forms.config.state.editors[0] == EditorPlace{3, false, 0, 0});
+    CHECK(forms.config.state.editors[1] == EditorPlace{4, true, 5, -6});
+    CHECK(forms.warnings.size() == 5);
+
+    // Positions out of range or not numbers.
+    for (const char* v : {"nan", "inf", "1e400", "10000001", "-0.5", "3s", ""}) {
+        INFO(v);
+        const auto r = parseConfig(std::string("[state]\nposition = ") + v + "\n");
+        CHECK(r.config.state.position == 0.0);
+        CHECK(r.warnings.size() == 1);
+    }
+    CHECK(parseConfig("[state]\nposition = 10000000\n").config.state.position == 1e7);
+
+    // A second [state] section or key: the last value wins, no crash.
+    const auto twice = parseConfig("[state]\nposition = 1\n[state]\nposition = 2\nwindows = log\nwindows = tabs\n");
+    CHECK(twice.config.state.position == 2.0);
+    CHECK(twice.config.state.windows == std::vector<std::string>{"tabs"});
+
+    // A project folder with quotes, backslashes and bytes that are not UTF-8 reads back the same.
+    TempDir dir;
+    const auto file = dir.path / "config.ini";
+    AppConfig cfg;
+    cfg.state.project = std::string("C:\\Music\\\"Jam\" \\\\ caf\xE9");
+    cfg.state.autoRecord = true;
+    REQUIRE(saveConfigFile(file, cfg).empty());
+    const auto back = loadConfigFile(file);
+    CHECK(back.warnings.empty());
+    CHECK(back.config.state.project == cfg.state.project);
+}
+
+TEST_CASE("T-UI-29: what comes back, decided apart from the GUI (CC2, CC6, CC7)", "[config][T-UI-29]")
+{
+    SessionState saved;
+    saved.project = "A";
+    saved.position = 12.0;
+    saved.editors = {EditorPlace{3, true, 10, 20}};
+    saved.windows = {"log", "tabs"};
+
+    // Auto record switched in the same project: only that changes; again: nothing to save.
+    SessionState st = saved;
+    CHECK(switchAutoRecordState(st, "A", true));
+    CHECK(st.autoRecord);
+    CHECK(st.position == 12.0);
+    CHECK(st.editors.size() == 1);
+    CHECK_FALSE(switchAutoRecordState(st, "A", true));
+    // In another project: its position and editors go, the own windows stay (CC2).
+    st = saved;
+    CHECK(switchAutoRecordState(st, "B", true));
+    CHECK(st.project == "B");
+    CHECK(st.autoRecord);
+    CHECK(st.position == 0.0);
+    CHECK(st.editors.empty());
+    CHECK(st.windows == saved.windows);
+    st = saved;
+    CHECK(switchAutoRecordState(st, "B", false));  // off in another project still names that project
+    CHECK(st.project == "B");
+
+    // At a normal close.
+    SessionNow now;
+    now.project = "A";
+    now.position = 2.5;
+    now.editors = {EditorPlace{1, false, 0, 0}, EditorPlace{1, true, 5, 5}};
+    now.windows = {"tabs", "nope", "log", "tabs"};
+    SessionState closed = sessionStateAtClose(saved, now);
+    CHECK(closed.project == "A");
+    CHECK_FALSE(closed.autoRecord);
+    CHECK(closed.position == 2.5);
+    CHECK(closed.editors.size() == 1);  // a track once
+    CHECK(closed.windows == std::vector<std::string>{"log", "tabs"});  // known ids, fixed order
+    now.position.reset();  // no audio stream: the last real position of the same project (CC6)
+    CHECK(sessionStateAtClose(saved, now).position == 12.0);
+    now.project = "B";
+    CHECK(sessionStateAtClose(saved, now).position == 0.0);
+    // Auto record that could not start again stays on, but only for the same project.
+    now.autoRestoreFailed = true;
+    SessionState wasOn = saved;
+    wasOn.autoRecord = true;
+    CHECK_FALSE(sessionStateAtClose(wasOn, now).autoRecord);
+    now.project = "A";
+    CHECK(sessionStateAtClose(wasOn, now).autoRecord);
+    now.autoRestoreFailed = false;
+    now.autoMode = true;
+    now.project = "B";
+    CHECK(sessionStateAtClose(saved, now).autoRecord);
+
+    // At start.
+    wasOn.position = 12.0;
+    RestorePlan plan = planRestore(wasOn, "A", true);
+    CHECK(plan.windows == saved.windows);
+    CHECK(plan.position == 12.0);
+    CHECK(plan.editors.size() == 1);
+    CHECK(plan.autoRecord);
+    CHECK(plan.notRestored.empty());
+    plan = planRestore(wasOn, "A", false);  // no stream: no position, said why
+    CHECK_FALSE(plan.position);
+    CHECK(plan.autoRecord);
+    CHECK(plan.notRestored == "Not restored: the song position (no audio stream)");
+    plan = planRestore(wasOn, "B", true);  // another project: only the own windows
+    CHECK(plan.windows == saved.windows);
+    CHECK_FALSE(plan.position);
+    CHECK(plan.editors.empty());
+    CHECK_FALSE(plan.autoRecord);
+    CHECK(plan.notRestored.find("of another project (A)") != std::string::npos);
+    plan = planRestore(SessionState{}, "B", true);  // nothing saved: nothing to say
+    CHECK(plan.notRestored.empty());
+}
+
+#if !defined(_WIN32)
+TEST_CASE("T-UI-29: a symlinked config stays a link, its permissions kept (CC4)", "[config][T-UI-29]")
+{
+    TempDir dir;
+    fs::create_directories(dir.path / "dotfiles");
+    const auto target = dir.path / "dotfiles" / "mini-daw.ini";
+    {
+        std::ofstream out(target);
+        out << "[state]\n";
+    }
+    fs::permissions(target, fs::perms::owner_read | fs::perms::owner_write);
+    const auto link = dir.path / "config.ini";
+    fs::create_symlink(fs::path("dotfiles") / "mini-daw.ini", link);  // relative, as dotfile tools make them
+    AppConfig cfg;
+    cfg.state.position = 4.0;
+    REQUIRE(saveConfigFile(link, cfg).empty());
+    CHECK(fs::is_symlink(fs::symlink_status(link)));
+    CHECK(loadConfigFile(target).config.state.position == 4.0);
+    CHECK((fs::status(target).permissions() & fs::perms::all) == (fs::perms::owner_read | fs::perms::owner_write));
+    CHECK_FALSE(fs::exists(dir.path / "dotfiles" / "mini-daw.ini.tmp"));
+    // A plain file keeps its permissions too.
+    std::string err;
+    fs::permissions(target, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read);
+    REQUIRE(writeFileReplacing(target, "x", err, false));
+    CHECK((fs::status(target).permissions() & fs::perms::all) ==
+          (fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read));
+}
+#endif

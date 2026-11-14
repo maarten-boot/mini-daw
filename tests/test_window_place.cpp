@@ -8,6 +8,7 @@
 #include <imgui_internal.h>
 
 #include <functional>
+#include <string>
 #include <vector>
 
 using minidaw::app::cascadePlace;
@@ -99,4 +100,49 @@ TEST_CASE("T-UI-31: windows opened in the same frame get their own place", "[ui]
     });
     CHECK(again.x == 400.0f);
     CHECK(again.y == 300.0f);
+}
+
+TEST_CASE("T-UI-31: other kinds of windows, ### titles, many windows (crosscheck #21 CC7)", "[ui][T-UI-31]")
+{
+    Headless h;
+    ImVec2 first, again, popupOwner;
+    h.frame([&] {
+        // The main window (no title bar) and a popup at ImGui's default place do not count.
+        ImGui::SetNextWindowPos(ImVec2(60, 60));
+        ImGui::SetNextWindowSize(ImVec2(500, 400));
+        ImGui::Begin("main", nullptr, ImGuiWindowFlags_NoTitleBar);
+        ImGui::OpenPopup("menu");
+        ImGui::SetNextWindowPos(ImVec2(60, 60));
+        if (ImGui::BeginPopup("menu")) {
+            ImGui::TextUnformatted("item");
+            ImGui::EndPopup();
+        }
+        ImGui::End();
+        popupOwner = window("Note - song A###note");
+    });
+    CHECK(popupOwner.x == 60.0f);
+    CHECK(popupOwner.y == 60.0f);
+    // The same ### window under another visible title is the same window: not placed again.
+    h.frame([&] {
+        ImGui::SetNextWindowPos(ImVec2(300, 200));
+        first = window("Note - song A###note");
+    });
+    h.frame([] {});  // closed
+    h.frame([&] { again = window("Note - song B###note"); });
+    CHECK(first.x == 300.0f);
+    CHECK(again.x == 300.0f);
+    CHECK(again.y == 200.0f);
+
+    // Many windows at once: every one gets a place of its own, inside the screen (1000 x 700).
+    std::vector<ImVec2> places;
+    h.frame([&] {
+        for (int i = 0; i < 30; ++i) places.push_back(window(("W" + std::to_string(i)).c_str()));
+    });
+    int same = 0;
+    for (std::size_t i = 0; i < places.size(); ++i) {
+        CHECK(places[i].x < 1000.0f);
+        CHECK(places[i].y < 700.0f);
+        for (std::size_t j = 0; j < i; ++j) same += (places[i].x == places[j].x && places[i].y == places[j].y) ? 1 : 0;
+    }
+    CHECK(same == 0);
 }

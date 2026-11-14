@@ -99,7 +99,9 @@ std::size_t reachablePrograms(int steps, std::size_t listSize);
 bool isClassIdText(std::string_view text);
 
 // Whole files, UTF-8 safe paths. writeFileReplacing writes a temporary file
-// next to it and renames it over the old one (a crash leaves old or new).
+// next to it and renames it over the old one (a crash leaves old or new); a
+// symbolic link is followed (the file it points to is replaced, the link stays)
+// and the old file's permissions are kept.
 bool readWholeFile(const std::filesystem::path& path, std::string& bytes, std::string& error);
 // `sync`: force the file to the disk before the rename (off for small notes
 // written while recording, crosscheck #17 Y8; the rename still keeps it whole).

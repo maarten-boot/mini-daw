@@ -2148,6 +2148,9 @@ std::filesystem::path cleanFolder(const std::filesystem::path& typed)
 
 void rememberProjectInConfig(AppState& app)
 {
+    // A script's project is not the user's choice: the next normal start opens the
+    // user's last project, with its [state] (crosscheck #21 CC1).
+    if (app.script) return;
     const std::string folder = minidaw::pathToUtf8(app.projectFolder);
     app.config.project.last = folder;
     if (!folder.empty()) minidaw::rememberProject(app.config.project, folder);
@@ -2621,13 +2624,7 @@ void rememberAutoRecord(AppState& app, bool on)
 {
     if (app.script) return;
     app.autoRestoreFailed = false;  // the user decided now
-    minidaw::SessionState& st = app.config.state;
-    const std::string project = minidaw::pathToUtf8(app.projectFolder);
-    if (st.autoRecord == on && st.project == project) return;
-    if (st.project != project) st = minidaw::SessionState{};  // the rest was another project's
-    st.project = project;
-    st.autoRecord = on;
-    saveConfig(app);
+    if (minidaw::switchAutoRecordState(app.config.state, minidaw::pathToUtf8(app.projectFolder), on)) saveConfig(app);
 }
 
 // Auto record (P16, SPEC-REC-08): on until switched off; every time someone
@@ -5148,14 +5145,16 @@ void openStateWindow(AppState& app, const std::string& id)
 void captureSessionState(AppState& app)
 {
     if (app.script) return;  // a script run leaves the user's state alone
-    minidaw::SessionState st;
-    st.project = minidaw::pathToUtf8(app.projectFolder);
-    // Also when it could not start again at this start and was not switched since.
-    st.autoRecord = app.session.autoMode() || (app.autoRestoreFailed && st.project == app.config.state.project);
-    const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : 48000;
-    // While a recording from the timeline plays, the song's own position is kept apart (T1).
-    const std::uint64_t frames = app.previewFolder.empty() ? app.audio.player().position() : app.songPosition;
-    st.position = static_cast<double>(frames) / rate;
+    minidaw::SessionNow now;
+    now.project = minidaw::pathToUtf8(app.projectFolder);
+    now.autoMode = app.session.autoMode();
+    now.autoRestoreFailed = app.autoRestoreFailed;  // could not start again at this start, not switched since
+    const minidaw::StreamInfo& info = app.audio.info();
+    if (info.running && info.sampleRate > 0) {  // without a stream there is no real position (CC6)
+        // While a recording from the timeline plays, the song's own position is kept apart (T1).
+        const std::uint64_t frames = app.previewFolder.empty() ? app.audio.player().position() : app.songPosition;
+        now.position = static_cast<double>(frames) / info.sampleRate;
+    }
     for (const int track : app.pluginWindows.openTracks()) {
         minidaw::EditorPlace e;
         e.track = track;
@@ -5164,13 +5163,13 @@ void captureSessionState(AppState& app)
             e.x = p->first;
             e.y = p->second;
         }
-        if (st.editors.size() < 16) st.editors.push_back(e);
+        now.editors.push_back(e);
     }
     for (const std::string& id : minidaw::stateWindowIds()) {
         const bool* flag = stateWindowFlag(app, id);
-        if (flag && *flag) st.windows.push_back(id);
+        if (flag && *flag) now.windows.push_back(id);
     }
-    app.config.state = st;
+    app.config.state = minidaw::sessionStateAtClose(app.config.state, now);
 }
 
 // Once, in the first frame (the audio stream, the project and its instruments are
@@ -5180,32 +5179,27 @@ void restoreSessionState(AppState& app)
     if (app.stateRestored) return;
     app.stateRestored = true;
     if (app.script) return;
-    const minidaw::SessionState st = app.config.state;
-    for (const std::string& id : st.windows) openStateWindow(app, id);
-    if (st.project != minidaw::pathToUtf8(app.projectFolder)) {
-        if (st.autoRecord || st.position > 0.0 || !st.editors.empty()) {
-            app.log.info("Not restored: the song position, instrument windows and auto record were of another "
-                         "project (" + (st.project.empty() ? std::string("none") : st.project) + ")");
-        }
-        return;
-    }
+    const minidaw::StreamInfo& info = app.audio.info();
+    const minidaw::RestorePlan plan = minidaw::planRestore(app.config.state, minidaw::pathToUtf8(app.projectFolder),
+                                                           info.running && info.sampleRate > 0);
+    for (const std::string& id : plan.windows) openStateWindow(app, id);
+    if (!plan.notRestored.empty()) app.log.info(plan.notRestored);
     std::vector<std::string> done;
-    if (st.position > 0.0) {
-        const unsigned int rate = app.audio.info().sampleRate ? app.audio.info().sampleRate : 48000;
-        const auto frames = static_cast<std::uint64_t>(st.position * rate + 0.5);
+    if (plan.position) {
+        const auto frames = static_cast<std::uint64_t>(*plan.position * info.sampleRate + 0.5);
         app.audio.player().locate(frames);
         app.songPosition = frames;
         char buf[48];
-        std::snprintf(buf, sizeof buf, "song position %.1f s", st.position);
+        std::snprintf(buf, sizeof buf, "song position %.1f s", *plan.position);
         done.push_back(buf);
     }
-    for (const minidaw::EditorPlace& e : st.editors) {
+    for (const minidaw::EditorPlace& e : plan.editors) {
         const minidaw::Track* t = findTrack(app, e.track);
         if (!t || app.instruments.count(e.track) == 0 || !minidaw::app::PluginWindows::supported()) continue;
         openPluginWindow(app, *t, e.hasPlace ? std::optional<std::pair<int, int>>({e.x, e.y}) : std::nullopt);
         if (app.pluginWindows.isOpen(e.track)) done.push_back("track " + std::to_string(e.track) + "'s instrument window");
     }
-    if (st.autoRecord) {
+    if (plan.autoRecord) {
         toggleAuto(app);
         if (app.session.autoMode()) {
             done.push_back("auto record");

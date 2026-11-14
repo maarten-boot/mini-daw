@@ -181,6 +181,39 @@ struct SessionState {
 const std::vector<std::string>& stateWindowIds();
 bool isStateWindowId(std::string_view id);
 
+// The decisions of SPEC-UI-09a, apart from the GUI (crosscheck #21 CC7).
+//
+// Auto record switched with its button in `project`: the state to save at once.
+// For another project than the saved one, its position and instrument windows
+// go (they were of the other project); the own windows stay (CC2). False if
+// nothing changed (no need to save).
+bool switchAutoRecordState(SessionState& state, const std::string& project, bool on);
+
+// What is going on at a normal close.
+struct SessionNow {
+    std::string project;
+    bool autoMode = false;                // auto record running
+    bool autoRestoreFailed = false;       // on at the last close, could not start again, not switched since
+    std::optional<double> position;       // seconds; nothing without a running audio stream (CC6)
+    std::vector<EditorPlace> editors;
+    std::vector<std::string> windows;
+};
+// The state to save from `now`; `saved` is the state as it was (kept: auto record
+// that could not start again, the position when there is no stream; both only
+// for the same project).
+SessionState sessionStateAtClose(const SessionState& saved, const SessionNow& now);
+
+// What comes back at start in `project`, with `streamRunning` telling whether
+// a position can be set (CC6).
+struct RestorePlan {
+    std::vector<std::string> windows;      // always
+    std::optional<double> position;        // the rest only for the same project
+    std::vector<EditorPlace> editors;
+    bool autoRecord = false;
+    std::string notRestored;               // a log line when something was left out, else empty
+};
+RestorePlan planRestore(const SessionState& state, const std::string& project, bool streamRunning);
+
 struct AppConfig {
     ContrastSetting contrast;
     float fontSize = kDefaultFontSize;

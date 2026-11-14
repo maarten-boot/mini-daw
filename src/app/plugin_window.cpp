@@ -27,7 +27,24 @@ struct PluginWindows::Window {
     GLFWwindow* window = nullptr;
     InstrumentEditor editor;
     bool settingSize = false;  // our own glfwSetWindowSize: no size callback loop
+    // The last top-left corner while not minimised (crosscheck #21 CC5: a minimised
+    // window on Windows reports about -32000, -32000).
+    std::optional<std::pair<int, int>> place;
 };
+
+namespace {
+
+// Where `w` is now, if that is a real place (not minimised).
+std::optional<std::pair<int, int>> normalPlace(GLFWwindow* w)
+{
+    if (!w || glfwGetWindowAttrib(w, GLFW_ICONIFIED)) return std::nullopt;
+    int x = 0, y = 0;
+    glfwGetWindowPos(w, &x, &y);
+    if (x <= -30000 || y <= -30000) return std::nullopt;  // Win32's place for a minimised window
+    return std::make_pair(x, y);
+}
+
+} // namespace
 
 #if defined(MINIDAW_PLUGIN_WINDOWS)
 namespace {
@@ -227,7 +244,11 @@ void PluginWindows::update()
     std::vector<int> done;
     for (const auto& [track, win] : windows_) {
         // Closed by the user, or the instrument was unloaded (that closes the editor).
-        if (glfwWindowShouldClose(win->window) || !win->editor.isOpen()) done.push_back(track);
+        if (glfwWindowShouldClose(win->window) || !win->editor.isOpen()) {
+            done.push_back(track);
+        } else if (const auto p = normalPlace(win->window)) {
+            win->place = p;
+        }
     }
     for (const int track : done) close(track);
 }
@@ -243,9 +264,8 @@ std::optional<std::pair<int, int>> PluginWindows::position(int track) const
 {
     const auto it = windows_.find(track);
     if (it == windows_.end() || !it->second->window) return std::nullopt;
-    int x = 0, y = 0;
-    glfwGetWindowPos(it->second->window, &x, &y);
-    return std::make_pair(x, y);
+    if (const auto p = normalPlace(it->second->window)) return p;
+    return it->second->place;  // minimised now: where it was before
 }
 
 } // namespace minidaw::app

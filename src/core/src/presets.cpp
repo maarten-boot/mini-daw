@@ -382,9 +382,21 @@ bool readWholeFile(const fs::path& path, std::string& bytes, std::string& error)
     return true;
 }
 
-bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::string& error, bool sync)
+bool writeFileReplacing(const fs::path& linkOrFile, const std::string& bytes, std::string& error, bool sync)
 {
     std::error_code ec;
+    // A link (e.g. a config.ini kept with dotfiles) stays a link: the file it
+    // points to is replaced (crosscheck #21 CC4).
+    fs::path path = linkOrFile;
+    for (int i = 0; i < 16 && fs::is_symlink(fs::symlink_status(path, ec)); ++i) {
+        const fs::path to = fs::read_symlink(path, ec);
+        if (ec) break;
+        path = to.is_absolute() ? to : path.parent_path() / to;
+    }
+    // The new file gets the old one's permissions (not its owner).
+    std::optional<fs::perms> perms;
+    if (const fs::file_status old = fs::status(path, ec); !ec && fs::is_regular_file(old)) perms = old.permissions();
+    ec.clear();
     fs::create_directories(path.parent_path(), ec);
     if (ec) {
         error = "cannot make the folder " + pathToUtf8(path.parent_path()) + ": " + ec.message();
@@ -404,6 +416,8 @@ bool writeFileReplacing(const fs::path& path, const std::string& bytes, std::str
         error = "cannot write " + pathToUtf8(path) + ": " + std::strerror(writeErrno);
         return false;
     }
+    if (perms) fs::permissions(tmp, *perms, ec);  // best effort
+    ec.clear();
     fs::rename(tmp, path, ec);
     if (ec) {
         error = "cannot replace " + pathToUtf8(path) + ": " + ec.message();  // e.g. open in another program
