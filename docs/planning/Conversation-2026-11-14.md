@@ -45,3 +45,15 @@ User: "pushed it, yes fix CC1–CC8, CC1 first".
 
 - CC1: script runs leave `[project] last` / Recent alone; checked for every script case. CC2/CC6/CC7: restore decisions moved to core with tests; own windows kept; no position without a stream. CC4: a linked config stays a link, permissions kept. CC5: an editor's place kept while minimised. CC3: measured (3–6 ms), no change. CC8: "Project warning" seen on Xvfb; Plan texts.
 - Linux 226/226; MinGW under Wine 213/213. Spec v0.58, Plan P26b.
+
+## 7. CI run 43620889458 (P26b)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 226/226, Windows 215/215. Builds in `dist/`; `dist/TESTS.txt` T-UI-30 step 5 (CC5, Windows).
+
+## 8. DAWproject (question)
+
+User: "there is a initiative for a open daw file format: have a look at: https://github.com/bitwig/dawproject to see what we can do in the future to use that for daw exchange."
+
+- Claude read the README and Project.xsd: ZIP with project.xml (+ metadata.xml), MIT, v1.0; Bitwig, Studio One, Cubase, Cubasis, VST Live, n-Track; tracks / channels (volume, pan, mute, solo), arrangement lanes with clips, audio (file references), notes, markers, VST2 / VST3 / CLAP devices with their state as files, automation; time in beats or seconds. Proposed: export first (P27), import of a subset later (P28); not added to the plan yet (waiting for the user).
