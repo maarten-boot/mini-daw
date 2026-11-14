@@ -42,6 +42,17 @@ FetchContent_Declare(vst3sdk
     GIT_SUBMODULES "base;pluginterfaces;public.sdk"
     SOURCE_SUBDIR  _not_a_cmake_project)   # the hosting sources are compiled in src/CMakeLists.txt
 
+# DAWproject export (P27): XML and ZIP.
+FetchContent_Declare(pugixml
+    GIT_REPOSITORY https://github.com/zeux/pugixml.git
+    GIT_TAG        c8033ce9d039e7f9d134877c363397b3cfe20816  # v1.16
+    SOURCE_SUBDIR  _not_a_cmake_project)
+
+FetchContent_Declare(miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG        77d0dce8627735138c51770d1799a1ef48f2117d  # 3.1.2
+    SOURCE_SUBDIR  _not_a_cmake_project)
+
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        08092139210881f01a34e60c5f2fd6afa0ea4024)  # v3.16.1
@@ -55,6 +66,24 @@ set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_MakeAvailable(vst3sdk)
+
+# ---------------------------------------------------------------------------
+# pugixml and miniz (P27, DAWproject files), compiled as our own static
+# libraries. miniz's export header is normally made by its CMake; ours is empty.
+# ---------------------------------------------------------------------------
+FetchContent_MakeAvailable(pugixml miniz)
+add_library(minidaw_pugixml STATIC ${pugixml_SOURCE_DIR}/src/pugixml.cpp)
+target_include_directories(minidaw_pugixml SYSTEM PUBLIC ${pugixml_SOURCE_DIR}/src)
+file(WRITE ${CMAKE_BINARY_DIR}/miniz_export/miniz_export.h
+     "#pragma once\n#define MINIZ_EXPORT\n")
+add_library(minidaw_miniz STATIC ${miniz_SOURCE_DIR}/miniz.c ${miniz_SOURCE_DIR}/miniz_tdef.c
+            ${miniz_SOURCE_DIR}/miniz_tinfl.c ${miniz_SOURCE_DIR}/miniz_zip.c)
+target_include_directories(minidaw_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR} ${CMAKE_BINARY_DIR}/miniz_export)
+# Large files (WAV takes over 2 GB) through the FILE functions on 32-bit off_t systems.
+target_compile_definitions(minidaw_miniz PRIVATE _FILE_OFFSET_BITS=64 _LARGEFILE64_SOURCE)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(minidaw_miniz PRIVATE -w)  # not our code
+endif()
 
 # ---------------------------------------------------------------------------
 # VST3 SDK hosting part (P10), compiled as our own static library: the

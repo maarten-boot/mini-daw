@@ -26,8 +26,11 @@ add_executable(minidaw_tests
     test_terms.cpp
     test_run_loop.cpp
     test_script.cpp
+    test_dawproject.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
+# DAWproject (P27): the export is read back with the same libraries.
+target_link_libraries(minidaw_tests PRIVATE minidaw_pugixml minidaw_miniz)
 # The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):
 # mini-daw reads and writes the format itself.
 # (with the SDK's base library it needs, the same files the test synth builds)
@@ -120,6 +123,11 @@ add_custom_command(TARGET minidaw_testsynth POST_BUILD
 add_dependencies(minidaw_tests minidaw_testsynth)
 target_compile_definitions(minidaw_tests PRIVATE MINIDAW_TEST_VST3="${testsynth_bundle}")
 catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)
+# T-PRJ-10: XSD (P27): the export against the DAWproject schemas, with xmllint.
+add_test(NAME "T-PRJ-10: XSD"
+    COMMAND ${CMAKE_COMMAND} -DTESTS=$<TARGET_FILE:minidaw_tests> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/dawproject-out
+            -DXSD=${CMAKE_CURRENT_SOURCE_DIR}/dawproject -P ${CMAKE_CURRENT_SOURCE_DIR}/dawproject/check_xsd.cmake)
+set_tests_properties("T-PRJ-10: XSD" PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED: xmllint")
 
 # mini-daw run by a script with the test synth (P25a, T-RUN-04). It opens a
 # window: Linux only for now (CI runs the tests under xvfb-run; without a
@@ -150,6 +158,9 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "Result: 5 command(s), 1 failed" NOT_IN "echo never")
     minidaw_script_test(quit 0 IN "Result: 2 command(s), 0 failed" NOT_IN "echo never")
     minidaw_script_test(locked 3 IN "the script is not run" NOT_IN "Result:" HOLD_LOCK)
+    minidaw_script_test(export 0 IN "Export DAWproject: Written: " "out/Song.dawproject"
+        "2 track(s), 0 audio clip(s), 0 MIDI clip(s) with 0 note(s), 1 instrument(s), 0 marker(s)."
+        "Result: 5 command(s), 0 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"
         "Track 2 \"MIDI 1 sound\" is now a normal audio track" "Result: 7 command(s), 0 failed"
         NOT_IN "output (no MIDI output)")

@@ -43,6 +43,8 @@ const std::vector<ScriptCommand>& scriptCommands()
         {"scan", 0, 0, "scan", "Scans the instrument folders (like Settings > Instruments > Scan) and waits for it."},
         {"open", 1, 1, "open <project folder>", "Opens a project (like File > Open project)."},
         {"save", 0, 0, "save", "Saves the project."},
+        {"export", 1, 1, "export <file.dawproject>",
+         "Writes the tracks as a DAWproject file (like File > Export DAWproject; replaces the file)."},
         {"add-track", 1, 1, "add-track midi|audio",
          "Adds a track (like Add MIDI track / Add audio track); <track> \"last\" is then this one."},
         {"remove-track", 1, 1, "remove-track <track>", "Removes a track (like its X button)."},

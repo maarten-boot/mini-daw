@@ -7,6 +7,7 @@ add_library(minidaw_core STATIC
     core/src/audio_stream.cpp
     core/src/color.cpp
     core/src/config.cpp
+    core/src/dawproject.cpp
     core/src/devices.cpp
     core/src/folder_browse.cpp
     core/src/instance_lock.cpp
@@ -41,7 +42,7 @@ target_include_directories(minidaw_core PUBLIC
 target_link_libraries(minidaw_core
     PUBLIC  minidaw_rtaudio minidaw_rtmidi minidaw_vst3host
             nlohmann_json::nlohmann_json  # script.hpp uses it (P25a)
-    PRIVATE minidaw_warnings)
+    PRIVATE minidaw_warnings minidaw_pugixml minidaw_miniz)  # DAWproject (P27)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
 endif()

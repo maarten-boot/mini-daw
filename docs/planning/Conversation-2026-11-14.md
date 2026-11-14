@@ -61,3 +61,13 @@ User: "there is a initiative for a open daw file format: have a look at: https:/
 User: "pushed it, yes add it to the plan".
 
 - Spec v0.59: SPEC-PRJ-04 (export), SPEC-PRJ-05 (import), both planned; Plan P27 (export first), P28 (import); Tests T-PRJ-10, T-PRJ-11 (planned).
+
+## 9. P27: DAWproject export
+
+User: "pushed it, yes start P27".
+
+- Checked the format in its repository (commit ee4dcdd): VST3 state as `.vstpreset` (`Vst3Plugin.java`), velocities 0–1, volume linear 0–2, the element order of `Project.xsd`.
+- pugixml v1.16 and miniz 3.1.2 (MIT) added, pinned by hash, in THIRD_PARTY.md; built as our own static libraries.
+- Core `exportDawProject` (seconds, a master, tracks, clips, notes, instruments with `.vstpreset`, linked tracks muted as mini-daw plays them, markers, metadata); File → Export DAWproject… window; script command `export`; Terms "DAWproject" (48 terms).
+- Tests: T-PRJ-10 (Catch2, read back with miniz / pugixml), "T-PRJ-10: XSD" with xmllint (CI installs libxml2-utils; here an lxml stand-in), script case `export` with the test synth; GUI on Xvfb; Wine with a non-ASCII folder. Also fixed: Browse… cut off in New project / Save as.
+- Linux 231/231; MinGW under Wine 216/216. Spec v0.60, Plan P27 done. Left for the user: open the file in Bitwig / Cubase; what to do with auto record parts not on a track.

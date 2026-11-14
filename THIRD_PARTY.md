@@ -12,6 +12,8 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 | glfw | 3.5.1 | Zlib | https://github.com/glfw/glfw | Window, OpenGL context, input |
 | nlohmann_json | v3.12.0 | MIT | https://github.com/nlohmann/json | Project files (JSON), header-only |
 | vst3sdk | v3.8.1_build_84 | MIT | https://github.com/steinbergmedia/vst3sdk | Hosting VST3 instruments (P10); only `base`, `pluginterfaces`, `public.sdk` |
+| pugixml | v1.16 | MIT | https://github.com/zeux/pugixml | DAWproject files (XML), P27 |
+| miniz | 3.1.2 | MIT | https://github.com/richgel999/miniz | DAWproject files (ZIP), P27 |
 | catch2 | v3.16.1 | BSL-1.0 | https://github.com/catchorg/Catch2 | Unit tests (not part of the program) |
 
 RtAudio and RtMidi use the MIT licence text with one extra non-binding request: that changes be sent back to the author.

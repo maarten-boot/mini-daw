@@ -23,6 +23,7 @@
 
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
+#include "minidaw/dawproject.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/folder_browse.hpp"
 #include "minidaw/instance_lock.hpp"
@@ -299,7 +300,7 @@ struct AppState {
     // instruments are unloaded.
     minidaw::app::PluginWindows pluginWindows;
     // Browse... buttons (P19, SPEC-UI-14): one folder chooser; what it fills in.
-    enum class BrowseFor { None, InstrumentFolder, ProjectFolder, RecordingFolder, TakeFolder };
+    enum class BrowseFor { None, InstrumentFolder, ProjectFolder, RecordingFolder, TakeFolder, ExportFolder };
     minidaw::app::FolderChooser folderChooser;
     BrowseFor browseFor = BrowseFor::None;
     GLFWwindow* mainWindow = nullptr;
@@ -317,6 +318,11 @@ struct AppState {
     std::int64_t midiDelayFrames = 0;      // MIDI output delay of the current run (end check, M3)
     std::vector<std::string> playWarnings;
     bool showTakeBrowser = false;
+    // File > Export DAWproject (P27, SPEC-PRJ-04).
+    bool showDawExport = false;
+    std::string dawExportName;
+    std::string dawExportFolder;
+    std::vector<std::string> dawExportReport;  // what the last export wrote and left out
     std::string takeFolderInput;
     std::vector<std::filesystem::path> takeFolders;
     std::string takeBrowserError;
@@ -828,6 +834,7 @@ void openAudioSettings(AppState& app)
 
 // Projects (defined further down, with the playback code they use).
 void showProjectDialog(AppState& app, AppState::ProjectDialog kind);
+void showDawExport(AppState& app);
 bool openProject(AppState& app, const std::filesystem::path& folder);
 void closeProject(AppState& app);
 std::filesystem::path activeTakesFolder(const AppState& app);
@@ -859,6 +866,7 @@ void drawMenuBar(AppState& app, bool& quit)
             if (!app.showProjectNote) app.projectNoteEdit = app.projectNote;  // text being typed stays (Y2)
             app.showProjectNote = true;
         }
+        if (ImGui::MenuItem("Export DAWproject...", nullptr, false, !rec)) showDawExport(app);  // P27
         ImGui::Separator();
         if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
             app.showTakeBrowser = true;
@@ -2343,7 +2351,7 @@ void drawProjectDialog(AppState& app)
         } else {
             ImGui::SetNextItemWidth(20 * em);
             ImGui::InputText("Name", &app.projectNameInput);
-            ImGui::SetNextItemWidth(36 * em);
+            ImGui::SetNextItemWidth(30 * em);  // room for the label and Browse... in the 46 em window
             ImGui::InputText("In folder", &app.projectFolderInput);
             browseButton(app, AppState::BrowseFor::ProjectFolder, app.projectFolderInput, projectsBase(app),
                          "Choose the folder to make the project in");
@@ -2373,6 +2381,100 @@ void drawProjectDialog(AppState& app)
     }
     ImGui::End();
     if (!open) app.projectDialog = D::None;
+}
+
+// --- DAWproject export (P27, SPEC-PRJ-04) ------------------------------------
+void showDawExport(AppState& app)
+{
+    if (!app.showDawExport) {
+        app.dawExportName = app.projectFolder.empty() ? std::string("mini-daw session")
+                                                      : minidaw::pathToUtf8(app.projectFolder.filename());
+        // Beside the project folder (a large file inside it would be copied by Save as).
+        app.dawExportFolder = minidaw::pathToUtf8(app.projectFolder.empty() ? projectsBase(app)
+                                                                             : app.projectFolder.parent_path());
+        app.dawExportReport.clear();
+    }
+    app.showDawExport = true;
+}
+
+std::filesystem::path dawExportTarget(const AppState& app)
+{
+    return minidaw::pathFromUtf8(minidaw::cleanPathText(app.dawExportFolder)) /
+           minidaw::pathFromUtf8(minidaw::safeFileName(app.dawExportName) + ".dawproject");
+}
+
+void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
+{
+    refreshInstrumentStates(app);  // the instruments' sound as it is now
+    const minidaw::ProjectData d = currentProject(app);
+    const std::string title = minidaw::cleanPathText(app.dawExportName);
+    std::error_code ec;
+    std::filesystem::create_directories(target.parent_path(), ec);
+    const minidaw::DawExportResult r =
+        minidaw::exportDawProject(d, app.audio.info().sampleRate, title, minidaw::kVersion, target);
+    auto& rep = app.dawExportReport;
+    rep.clear();
+    if (!r.ok) {
+        rep.push_back("Not written: " + r.error);
+        app.log.error("Export DAWproject " + minidaw::pathToUtf8(target) + ": " + r.error);
+        return;
+    }
+    rep.push_back("Written: " + minidaw::pathToUtf8(target));
+    rep.push_back(std::to_string(r.tracks) + " track(s), " + std::to_string(r.audioClips) + " audio clip(s), " +
+                  std::to_string(r.noteClips) + " MIDI clip(s) with " + std::to_string(r.notes) + " note(s), " +
+                  std::to_string(r.instruments) + " instrument(s), " + std::to_string(r.markers) + " marker(s).");
+    // Recordings on the timeline that no track plays are not in the file (P27: for now).
+    int notOnTrack = 0;
+    for (const auto& rec : app.recordings) {
+        const bool used = std::any_of(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
+            return !t.take.empty() && minidaw::isInsideFolder(t.take, rec.folder);
+        });
+        if (!used) ++notOnTrack;
+    }
+    if (notOnTrack > 0) {  // (the core does not know the timeline)
+        rep.push_back("Left out: " + std::to_string(notOnTrack) +
+                      " recording(s) on the Timeline that no track plays (load one onto the tracks to export it).");
+    }
+    for (const auto& l : r.leftOut) rep.push_back("Left out: " + l);
+    for (const auto& l : rep) app.log.info("Export DAWproject: " + l);
+}
+
+void drawDawExportWindow(AppState& app)
+{
+    if (!app.showDawExport) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(46 * em, 0), ImVec2(46 * em, FLT_MAX));
+    minidaw::app::placeNewWindow("Export DAWproject###dawexport");
+    bool open = true;
+    if (ImGui::Begin("Export DAWproject###dawexport", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Writes the tracks with their takes, instruments and notes as one .dawproject file, "
+                           "which Bitwig Studio, Studio One, Cubase and other programs can open. The project "
+                           "itself is not changed.");
+        ImGui::SetNextItemWidth(20 * em);
+        ImGui::InputText("Name", &app.dawExportName);
+        ImGui::SetNextItemWidth(30 * em);
+        ImGui::InputText("In folder", &app.dawExportFolder);
+        browseButton(app, AppState::BrowseFor::ExportFolder, app.dawExportFolder, projectsBase(app),
+                     "Choose the folder for the .dawproject file");
+        const std::filesystem::path target = dawExportTarget(app);
+        ImGui::TextWrapped("File: %s", minidaw::pathToUtf8(target).c_str());
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(target, ec);
+        if (exists) ImGui::TextWrapped("A file with this name is there: Export replaces it.");
+        const bool rec = app.session.recording();
+        if (rec) ImGui::TextUnformatted("Recording: stop it first.");
+        if (app.tracks.empty()) ImGui::TextUnformatted("There are no tracks to export.");
+        minidaw::app::beginDisabled(rec || app.dawExportName.empty() || app.tracks.empty());
+        if (ImGui::Button(exists ? "Replace" : "Export")) {
+            startBusy(app, "Exporting " + minidaw::pathToUtf8(target), [&app, target] { exportDawProjectNow(app, target); });
+        }
+        minidaw::app::endDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showDawExport = false;
+        for (const auto& l : app.dawExportReport) ImGui::TextWrapped("%s", l.c_str());
+    }
+    ImGui::End();
+    if (!open) app.showDawExport = false;
 }
 
 // --- Playback (P8) ------------------------------------------------------------
@@ -4607,6 +4709,7 @@ void updateFolderChooser(AppState& app)
     case AppState::BrowseFor::ProjectFolder: app.projectFolderInput = text; break;
     case AppState::BrowseFor::RecordingFolder: app.pendingRecording.folder = text; break;
     case AppState::BrowseFor::TakeFolder: app.takeFolderInput = text; break;
+    case AppState::BrowseFor::ExportFolder: app.dawExportFolder = text; break;
     case AppState::BrowseFor::None: break;
     }
     app.browseFor = AppState::BrowseFor::None;
@@ -4902,6 +5005,23 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
             ok();
         } else {
             fail(app.projectError);  // AA3
+        }
+    } else if (cmd == "export") {  // P27
+        if (app.session.recording()) {
+            fail("not while recording");
+            return;
+        }
+        if (app.tracks.empty()) {
+            fail("there are no tracks to export");
+            return;
+        }
+        app.dawExportName = app.projectFolder.empty() ? std::string("mini-daw session")
+                                                      : minidaw::pathToUtf8(app.projectFolder.filename());
+        exportDawProjectNow(app, minidaw::pathFromUtf8(minidaw::cleanPathText(w[1])));
+        if (!app.dawExportReport.empty() && app.dawExportReport[0].rfind("Written: ", 0) == 0) {
+            ok();
+        } else {
+            fail(app.dawExportReport.empty() ? std::string("not written") : app.dawExportReport[0]);
         }
     } else if (cmd == "add-track") {
         const int n = addTrack(app, w[1] == "midi" ? minidaw::TrackKind::Midi : minidaw::TrackKind::Audio, why);
@@ -5540,6 +5660,7 @@ int runGui(AppState& app)
         drawLogWindow(app);
         drawTakeBrowser(app);
         drawProjectDialog(app);
+        drawDawExportWindow(app);
         drawInstrumentsWindow(app);
         drawSavePresetWindow(app);
         drawRecordingWindows(app);
