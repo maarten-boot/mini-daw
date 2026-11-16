@@ -14,3 +14,9 @@ User: "one \"Auto record\" track; pushed; start P28".
 - Decided while building (Spec v0.63): several audio clips of a track become one rendered take (mini-daw has one take per track) instead of being left out as SPEC-PRJ-05 first said; notes likewise merged. Playback does not resample, so imported audio is converted to the stream's rate with a windowed-sinc filter (`sinc_kernel`); the first version (16 zero crossings) let 23 kHz fold back at −28 dB, now 24 crossings, cutoff 0.92 (−93 dB).
 - App: File → Import DAWproject… (file with Browse… — the folder chooser got a file mode: the Windows Open dialog with a filter, or the ImGui browser listing `.dawproject` files), project name and folder; the new project opens. Script command `import`. Terms text.
 - Linux 243/243, MinGW under Wine 226/226; the window by hand on Xvfb; a script import with "é" in file and folder names under Wine.
+
+## 3. CI run 43849674053 (P28 + P27b)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 243/243 (XSD over 6 exports, script `import`), Windows 229/229. Builds in `dist/`; `dist/TESTS.txt` with T-PRJ-11 (import a Cubase / Bitwig file) and T-PRJ-10b.
