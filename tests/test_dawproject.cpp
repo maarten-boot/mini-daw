@@ -9,6 +9,7 @@
 #include "minidaw/presets.hpp"
 #include "minidaw/recording_notes.hpp"
 #include "minidaw/smf.hpp"
+#include "minidaw/timeline.hpp"
 #include "minidaw/wav.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -591,4 +592,86 @@ TEST_CASE("T-PRJ-10: an export that cannot be written leaves nothing", "[project
     pugi::xml_document doc;
     REQUIRE(doc.load_string(readZip(dir.path / "empty.dawproject").at("project.xml").c_str()));
     CHECK(doc.child("Project").child("Structure").child("Track"));
+}
+
+TEST_CASE("T-PRJ-10: auto record parts that no track plays on an \"Auto record\" track", "[project][dawproject][T-PRJ-10]")
+{
+    // User 2026-11-16: "one Auto record track": muted, a lane per file, every clip at 0 s.
+    TempDir dir;
+    const unsigned int rate = 48000;
+    const fs::path base = dir.path / "takes";
+    const fs::path a = base / "auto" / "2026-11-16 10-00-00";
+    const fs::path b = base / "auto" / "2026-11-16 10-05-00";
+    const fs::path bad = base / "auto" / "2026-11-16 10-09-00";
+    fs::create_directories(a);
+    fs::create_directories(b);
+    fs::create_directories(bad);
+    writeWav(a / "01-Mic.wav", rate, 1, rate);
+    SmfTrack keys;
+    keys.events = {ev(0, 0x90, 60, 100), ev(rate / 2, 0x80, 60, 0)};
+    std::string err;
+    REQUIRE(writeSmf(a / "02-Keys.mid", "take", {keys}, rate, MidiTiming::Ppq, rate, false, err));
+    RecordingNotes notes;
+    notes.name = "Idea";
+    notes.note = "the good riff";
+    notes.marks = {{0.25, "here"}};
+    REQUIRE(saveRecordingNotes(a, notes, err));
+    writeWav(b / "01-Mic.wav", rate, 2, rate * 2);
+    std::ofstream(bad / "01-Mic.wav", std::ios::binary) << "not a wav file";
+    const std::vector<RecordingInfo> parts = listRecordings(base);
+    REQUIRE(parts.size() == 3);
+    for (const auto& r : parts) CHECK(r.autoPart);
+
+    ProjectData p;
+    p.sampleRate = rate;
+    Track mic;
+    mic.number = 1;
+    mic.name = "Mic";
+    mic.channels = {0};
+    p.tracks = {mic};
+    const fs::path out = dir.path / "auto.dawproject";
+    const DawExportResult r = exportDawProject(p, rate, "auto", "0.1.0", out, parts);
+    REQUIRE(r.ok);
+    CHECK(r.tracks == 1);  // the project's own; the Auto record track is counted as parts
+    CHECK(r.autoRecordParts == 2);
+    CHECK(r.audioClips == 2);
+    CHECK(r.noteClips == 1);
+    CHECK(r.markers == 0);  // all parts start at 0: their marks are not markers
+    REQUIRE(r.leftOut.size() == 1);
+    CHECK(r.leftOut[0].find("Auto record part 2026-11-16 10-09-00 01-Mic.wav: its take could not be read") == 0);
+    keepForXsd(out, "auto");
+
+    const auto doc = projectXml(out);
+    const pugi::xml_node track = trackNamed(doc, "Auto record");
+    REQUIRE(track);
+    CHECK(std::string(track.attribute("contentType").value()) == "audio notes");
+    CHECK(muted(track));
+    CHECK_FALSE(track.child("Channel").child("Devices"));
+    const pugi::xml_node trackLanes = doc.child("Project").child("Arrangement").child("Lanes").find_child_by_attribute(
+        "Lanes", "track", track.attribute("id").value());
+    std::vector<pugi::xml_node> lanes;
+    for (pugi::xml_node l : trackLanes.children("Lanes")) lanes.push_back(l);
+    REQUIRE(lanes.size() == 3);  // two files of the first part, one of the second
+    CHECK(std::string(lanes[0].attribute("name").value()) == "2026-11-16 10-00-00 01-Mic");
+    CHECK(std::string(lanes[1].attribute("name").value()) == "2026-11-16 10-00-00 02-Keys");
+    CHECK(std::string(lanes[2].attribute("name").value()) == "2026-11-16 10-05-00 01-Mic");
+    for (const auto& l : lanes) {
+        const pugi::xml_node clip = l.child("Clips").child("Clip");
+        REQUIRE(clip);
+        CHECK(clip.attribute("time").as_double() == 0.0);
+    }
+    const pugi::xml_node first = lanes[0].child("Clips").child("Clip");
+    CHECK(std::string(first.attribute("name").value()) == "Idea");
+    CHECK(std::string(first.attribute("comment").value()) == "the good riff");
+    CHECK(lanes[1].child("Clips").child("Clip").child("Notes").child("Note"));
+    CHECK(lanes[2].child("Clips").child("Clip").attribute("duration").as_double() == 2.0);
+    CHECK(std::string(lanes[2].child("Clips").child("Clip").attribute("name").value()) == "2026-11-16 10-05-00");
+
+    // Only unreadable parts: no empty track.
+    const DawExportResult none = exportDawProject(p, rate, "auto", "0.1.0", out, {parts[2]});
+    REQUIRE(none.ok);
+    CHECK(none.autoRecordParts == 0);
+    CHECK_FALSE(trackNamed(projectXml(out), "Auto record"));
+    // Without parts, as before.
+    CHECK_FALSE(trackNamed(projectXml((exportDawProject(p, rate, "auto", "0.1.0", out), out)), "Auto record"));
 }

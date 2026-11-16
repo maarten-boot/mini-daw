@@ -21,10 +21,13 @@
 // mute also mutes it and its solo solos it (as mini-daw plays them). Its
 // channel count is the WAV's. Recording names
 // and notes become the clip's name and comment, marks made while recording
-// become Markers (counted from the recording's earliest take). MIDI messages other than notes, MIDI outputs and recordings
-// that are not on a track are left out (listed in the result).
+// become Markers (counted from the recording's earliest take). Auto record
+// parts no track plays go on one muted "Auto record" track. MIDI messages
+// other than notes and MIDI outputs are left out (listed in the result); so
+// are Record takes no track plays (the caller lists those).
 
 #include "minidaw/project.hpp"
+#include "minidaw/timeline.hpp"
 
 #include <filesystem>
 #include <string>
@@ -42,15 +45,19 @@ struct DawExportResult {
     int notes = 0;
     int markers = 0;
     int instruments = 0;
+    int autoRecordParts = 0;        // on the "Auto record" track
     std::vector<std::string> leftOut;  // one line per thing not exported, for the user
 };
 
 // Writes `outFile` (via "<outFile>.tmp" and a rename; nothing is left behind on
 // failure). `sampleRate`: the rate of the takes' timeline positions (the stream's
-// rate; 0 = the project's). `title`: the project's name. Nothing in the
+// rate; 0 = the project's). `title`: the project's name. `autoParts`: auto
+// record parts that no track plays (from the Timeline), put on one muted
+// "Auto record" track, a lane per file, each clip at 0 s. Nothing in the
 // project is changed.
 DawExportResult exportDawProject(const ProjectData& project, unsigned int sampleRate, const std::string& title,
-                                 const std::string& appVersion, const std::filesystem::path& outFile);
+                                 const std::string& appVersion, const std::filesystem::path& outFile,
+                                 const std::vector<RecordingInfo>& autoParts = {});
 
 // Text made safe for XML 1.0: bytes that are not UTF-8 become U+FFFD, control
 // characters other than tab, line feed and carriage return are left out.

@@ -838,6 +838,7 @@ void showDawExport(AppState& app);
 bool openProject(AppState& app, const std::filesystem::path& folder);
 void closeProject(AppState& app);
 std::filesystem::path activeTakesFolder(const AppState& app);
+void refreshRecordings(AppState& app);
 
 void drawMenuBar(AppState& app, bool& quit)
 {
@@ -2420,8 +2421,22 @@ void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
         if (f == f.parent_path()) break;
     }
     std::filesystem::create_directories(target.parent_path(), ec);
+    // Recordings on the Timeline that no track plays: auto record parts go on an
+    // "Auto record" track (user 2026-11-16), Record takes are left out.
+    app.recordingsDirty = true;  // as they are on disk now
+    refreshRecordings(app);
+    std::vector<minidaw::RecordingInfo> autoParts;
+    int takesNotOnTrack = 0;
+    for (const auto& rec : app.recordings) {
+        const bool used = std::any_of(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
+            return !t.take.empty() && minidaw::isInsideFolder(t.take, rec.folder);
+        });
+        if (used) continue;
+        if (rec.autoPart) autoParts.push_back(rec);
+        else ++takesNotOnTrack;
+    }
     const minidaw::DawExportResult r =
-        minidaw::exportDawProject(d, app.audio.info().sampleRate, title, minidaw::kVersion, target);
+        minidaw::exportDawProject(d, app.audio.info().sampleRate, title, minidaw::kVersion, target, autoParts);
     auto& rep = app.dawExportReport;
     rep.clear();
     if (!r.ok) {
@@ -2434,17 +2449,13 @@ void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
     rep.push_back(std::to_string(r.tracks) + " track(s), " + std::to_string(r.audioClips) + " audio clip(s), " +
                   std::to_string(r.noteClips) + " MIDI clip(s) with " + std::to_string(r.notes) + " note(s), " +
                   std::to_string(r.instruments) + " instrument(s), " + std::to_string(r.markers) + " marker(s).");
-    // Recordings on the timeline that no track plays are not in the file (P27: for now).
-    int notOnTrack = 0;
-    for (const auto& rec : app.recordings) {
-        const bool used = std::any_of(app.tracks.begin(), app.tracks.end(), [&](const minidaw::Track& t) {
-            return !t.take.empty() && minidaw::isInsideFolder(t.take, rec.folder);
-        });
-        if (!used) ++notOnTrack;
+    if (r.autoRecordParts > 0) {
+        rep.push_back(std::to_string(r.autoRecordParts) +
+                      " auto record part(s) that no track plays: on the muted track \"Auto record\", a lane per file.");
     }
-    if (notOnTrack > 0) {  // (the core does not know the timeline)
-        rep.push_back("Left out: " + std::to_string(notOnTrack) +
-                      " recording(s) on the Timeline that no track plays (load one onto the tracks to export it).");
+    if (takesNotOnTrack > 0) {
+        rep.push_back("Left out: " + std::to_string(takesNotOnTrack) +
+                      " take(s) on the Timeline that no track plays (load one onto the tracks to export it).");
     }
     for (const auto& l : r.leftOut) rep.push_back("Left out: " + l);
     for (const auto& l : rep) app.log.info("Export DAWproject: " + l);
@@ -3475,6 +3486,17 @@ void drawRecordingWindows(AppState& app)
     }
 }
 
+// The Timeline's list of recordings read again when something changed (also
+// for the DAWproject export, which may run without the tab ever drawn).
+void refreshRecordings(AppState& app)
+{
+    if (!app.recordingsDirty) return;
+    // Folders read before and unchanged are not read again (T4).
+    app.recordings = minidaw::listRecordings(activeTakesFolder(app), app.recordings);
+    app.recordingsDirty = false;
+    ++app.recordingsVersion;
+}
+
 void drawTimeline(AppState& app)
 {
     ImGui::SeparatorText("Timeline of recordings");
@@ -3491,12 +3513,7 @@ void drawTimeline(AppState& app)
                            first.size() < app.projectNote.size() ? " ..." : "");
     }
     const float em = ImGui::GetFontSize();
-    if (app.recordingsDirty) {
-        // Folders read before and unchanged are not read again (T4).
-        app.recordings = minidaw::listRecordings(activeTakesFolder(app), app.recordings);
-        app.recordingsDirty = false;
-        ++app.recordingsVersion;
-    }
+    refreshRecordings(app);
     // The part or take being recorded grows while it is recorded (only its length changes: no copy, T4).
     const bool recNormal = app.session.recording() && !app.session.autoMode();
     // A MIDI-only recording has no file until it ends, so the scan leaves its folder out: add it.

@@ -331,7 +331,8 @@ std::string trackLabel(const Track& t)
 } // namespace
 
 DawExportResult exportDawProject(const ProjectData& project, unsigned int sampleRate, const std::string& title,
-                                 const std::string& appVersion, const fs::path& outFile)
+                                 const std::string& appVersion, const fs::path& outFile,
+                                 const std::vector<RecordingInfo>& autoParts)
 {
     DawExportResult result;
     const unsigned int rate = sampleRate ? sampleRate : (project.sampleRate ? project.sampleRate : 48000);
@@ -396,6 +397,84 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         auto [it, added] = recordingStart.emplace(folder, t.takeStart);
         if (!added) it->second = std::min(it->second, t.takeStart);
     }
+
+    // One take file as a clip in `clips`, placed at `startFrame` on the timeline
+    // (before 0: the clip starts at 0 and skips the part before). Returns the
+    // WAV's channel count, 0 for a MIDI file, -1 when it cannot be read (a
+    // left-out line for `label` then, nothing added).
+    auto writeClip = [&](pugi::xml_node clips, const fs::path& take, std::int64_t startFrame,
+                         const RecordingNotes& notes, const std::string& label) -> int {
+        const fs::path folder = take.parent_path();
+        const double start = static_cast<double>(startFrame) / rate;  // may be < 0 (overdub shift)
+        const double cut = start < 0.0 ? -start : 0.0;
+        auto clipNode = [&](double contentSeconds) {
+            pugi::xml_node clip = clips.append_child("Clip");
+            attr(clip, "time", std::max(0.0, start));
+            attr(clip, "duration", std::max(0.0, contentSeconds - cut));
+            attr(clip, "contentTimeUnit", std::string("seconds"));
+            attr(clip, "playStart", cut);
+            attr(clip, "name", notes.name.empty() ? pathToUtf8(folder.filename()) : notes.name);
+            if (!notes.note.empty()) attr(clip, "comment", notes.note);
+            return clip;
+        };
+        std::string ext = pathToUtf8(take.extension());
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext == ".wav") {
+            WavReader wav;
+            std::string err;
+            if (!wav.open(take, err) || wav.sampleRate() == 0) {
+                result.leftOut.push_back(label + ": its take could not be read (" + err + ")");
+                return -1;
+            }
+            const double seconds = static_cast<double>(wav.frames()) / wav.sampleRate();
+            auto it = audioFiles.find(take);
+            if (it == audioFiles.end()) {
+                const std::string name =
+                    uniqueZipName("audio", pathToUtf8(folder.filename()) + " " + pathToUtf8(take.stem()), ".wav");
+                it = audioFiles.emplace(take, Entry{name}).first;
+                filesToAdd.emplace_back(name, take);
+            }
+            pugi::xml_node clip = clipNode(seconds);
+            pugi::xml_node audio = clip.append_child("Audio");
+            attr(audio, "channels", static_cast<int>(wav.channels()));
+            attr(audio, "sampleRate", static_cast<int>(wav.sampleRate()));
+            attr(audio, "duration", seconds);
+            attr(audio, "timeUnit", std::string("seconds"));
+            attr(audio, "id", ids.make());
+            pugi::xml_node file = audio.append_child("File");
+            attr(file, "path", it->second.zipName);
+            ++result.audioClips;
+            return static_cast<int>(wav.channels());
+        }
+        SmfData smf;
+        std::string err;
+        if (!readSmf(take, smf, err)) {
+            result.leftOut.push_back(label + ": its MIDI take could not be read (" + err + ")");
+            return -1;
+        }
+        const TakeNotes taken = notesFromSmf(smf, rate);
+        double seconds = taken.seconds;
+        for (const NoteOut& n : taken.notes) seconds = std::max(seconds, n.time + n.duration);
+        pugi::xml_node clip = clipNode(seconds);
+        pugi::xml_node notesNode = clip.append_child("Notes");
+        attr(notesNode, "id", ids.make());
+        for (const NoteOut& n : taken.notes) {
+            pugi::xml_node note = notesNode.append_child("Note");
+            attr(note, "time", n.time);
+            attr(note, "duration", n.duration);
+            attr(note, "channel", n.channel);
+            attr(note, "key", n.key);
+            attr(note, "vel", n.vel);
+            attr(note, "rel", n.rel);
+        }
+        result.notes += static_cast<int>(taken.notes.size());
+        ++result.noteClips;
+        if (taken.otherMessages > 0) {
+            result.leftOut.push_back(label + ": " + std::to_string(taken.otherMessages) +
+                                     " MIDI message(s) other than notes (controllers, pitch bend, program changes)");
+        }
+        return 0;
+    };
 
     for (const Track& t : project.tracks) {
         const bool isMidi = t.kind == TrackKind::Midi;
@@ -463,87 +542,17 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         if (!loadRecordingNotes(folder, notes, notesError)) {
             result.leftOut.push_back(trackLabel(t) + ": the name and notes of its recording (" + notesError + ")");
         }
-        const double start = static_cast<double>(t.takeStart) / rate;  // may be < 0 (overdub shift)
-        const double cut = start < 0.0 ? -start : 0.0;
-
         pugi::xml_node trackLanes = lanes.append_child("Lanes");
         attr(trackLanes, "track", trackId);
         attr(trackLanes, "id", ids.make());
         pugi::xml_node clips = trackLanes.append_child("Clips");
         attr(clips, "id", ids.make());
-        pugi::xml_node clip = clips.append_child("Clip");
-        auto finishClip = [&](double contentSeconds) {
-            attr(clip, "time", std::max(0.0, start));
-            attr(clip, "duration", std::max(0.0, contentSeconds - cut));
-            attr(clip, "contentTimeUnit", std::string("seconds"));
-            attr(clip, "playStart", cut);
-            attr(clip, "name", notes.name.empty() ? pathToUtf8(folder.filename()) : notes.name);
-            if (!notes.note.empty()) attr(clip, "comment", notes.note);
-        };
-
-        const std::string ext = [&] {
-            std::string e = pathToUtf8(t.take.extension());
-            std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return e;
-        }();
-        if (ext == ".wav") {
-            WavReader wav;
-            std::string err;
-            if (!wav.open(t.take, err) || wav.sampleRate() == 0) {
-                result.leftOut.push_back(trackLabel(t) + ": its take could not be read (" + err + ")");
-                lanes.remove_child(trackLanes);
-                continue;
-            }
-            const double seconds = static_cast<double>(wav.frames()) / wav.sampleRate();
-            ch.attribute("audioChannels").set_value(wav.channels() == 1 ? 1 : 2);  // as the take is
-            auto it = audioFiles.find(t.take);
-            if (it == audioFiles.end()) {
-                const std::string name =
-                    uniqueZipName("audio", pathToUtf8(folder.filename()) + " " + pathToUtf8(t.take.stem()), ".wav");
-                it = audioFiles.emplace(t.take, Entry{name}).first;
-                filesToAdd.emplace_back(name, t.take);
-            }
-            finishClip(seconds);
-            pugi::xml_node audio = clip.append_child("Audio");
-            attr(audio, "channels", static_cast<int>(wav.channels()));
-            attr(audio, "sampleRate", static_cast<int>(wav.sampleRate()));
-            attr(audio, "duration", seconds);
-            attr(audio, "timeUnit", std::string("seconds"));
-            attr(audio, "id", ids.make());
-            pugi::xml_node file = audio.append_child("File");
-            attr(file, "path", it->second.zipName);
-            ++result.audioClips;
-        } else {
-            SmfData smf;
-            std::string err;
-            if (!readSmf(t.take, smf, err)) {
-                result.leftOut.push_back(trackLabel(t) + ": its MIDI take could not be read (" + err + ")");
-                lanes.remove_child(trackLanes);
-                continue;
-            }
-            const TakeNotes taken = notesFromSmf(smf, rate);
-            double seconds = taken.seconds;
-            for (const NoteOut& n : taken.notes) seconds = std::max(seconds, n.time + n.duration);
-            finishClip(seconds);
-            pugi::xml_node notesNode = clip.append_child("Notes");
-            attr(notesNode, "id", ids.make());
-            for (const NoteOut& n : taken.notes) {
-                pugi::xml_node note = notesNode.append_child("Note");
-                attr(note, "time", n.time);
-                attr(note, "duration", n.duration);
-                attr(note, "channel", n.channel);
-                attr(note, "key", n.key);
-                attr(note, "vel", n.vel);
-                attr(note, "rel", n.rel);
-            }
-            result.notes += static_cast<int>(taken.notes.size());
-            ++result.noteClips;
-            if (taken.otherMessages > 0) {
-                result.leftOut.push_back(trackLabel(t) + ": " + std::to_string(taken.otherMessages) +
-                                         " MIDI message(s) other than notes (controllers, pitch bend, program "
-                                         "changes)");
-            }
+        const int wavChannels = writeClip(clips, t.take, t.takeStart, notes, trackLabel(t));
+        if (wavChannels < 0) {
+            lanes.remove_child(trackLanes);
+            continue;
         }
+        if (wavChannels > 0) ch.attribute("audioChannels").set_value(wavChannels == 1 ? 1 : 2);  // as the take is
         // Marks made while recording, once per recording, at their place on the timeline.
         if (!marksDone[folder]) {
             marksDone[folder] = true;
@@ -552,6 +561,60 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
                 const double at = from + m.seconds;
                 if (at >= 0.0) markers.emplace_back(at, m.text);
             }
+        }
+    }
+
+    // Auto record parts that no track plays (user 2026-11-16: "one Auto record
+    // track"): one muted track, a lane per file of each part, every clip at 0 s
+    // (where a part goes when it is loaded onto the tracks). Their marks are
+    // not markers (all parts start at 0); the part's name and note are the clips'.
+    std::vector<const RecordingInfo*> parts;
+    for (const RecordingInfo& r : autoParts) {
+        if (!r.files.empty()) parts.push_back(&r);
+    }
+    if (!parts.empty()) {
+        bool audio = false;
+        bool midi = false;
+        for (const RecordingInfo* r : parts) {
+            for (const fs::path& f : r->files) {
+                std::string e = pathToUtf8(f.extension());
+                std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                (e == ".wav" ? audio : midi) = true;
+            }
+        }
+        pugi::xml_node track = structure.append_child("Track");
+        attr(track, "contentType", std::string(audio && midi ? "audio notes" : (audio ? "audio" : "notes")));
+        attrBool(track, "loaded", true);
+        const std::string trackId = ids.make();
+        attr(track, "id", trackId);
+        attr(track, "name", std::string("Auto record"));
+        attr(track, "comment", std::string("mini-daw's auto record parts that no track plays, one lane per file; "
+                                           "muted (unmute or move what you want to use)"));
+        pugi::xml_node ch = channel(track, ids, "regular", 2, masterId, false);
+        channelControls(ch, ids, true, 1.0);
+        pugi::xml_node trackLanes = lanes.append_child("Lanes");
+        attr(trackLanes, "track", trackId);
+        attr(trackLanes, "id", ids.make());
+        for (const RecordingInfo* r : parts) {
+            const std::string folderName = pathToUtf8(r->folder.filename());
+            bool any = false;
+            for (const fs::path& f : r->files) {
+                pugi::xml_node lane = trackLanes.append_child("Lanes");
+                attr(lane, "id", ids.make());
+                attr(lane, "name", folderName + " " + pathToUtf8(f.stem()));
+                pugi::xml_node clips = lane.append_child("Clips");
+                attr(clips, "id", ids.make());
+                if (writeClip(clips, f, 0, r->notes, "Auto record part " + folderName + " " + pathToUtf8(f.filename())) < 0) {
+                    trackLanes.remove_child(lane);
+                } else {
+                    any = true;
+                }
+            }
+            if (any) ++result.autoRecordParts;
+        }
+        if (result.autoRecordParts == 0) {  // none could be read: no empty track
+            lanes.remove_child(trackLanes);
+            structure.remove_child(track);
         }
     }
     if (!markers.empty()) {
