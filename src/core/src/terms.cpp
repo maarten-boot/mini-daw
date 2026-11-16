@@ -172,10 +172,12 @@ std::vector<Term> makeTerms()
          "The file of a MIDI take (.mid): the notes and controls with their times. Any music program can open it.",
          "In the take folder", {"Take", "MIDI"}},
         {"DAWproject", kProjects,
-         "An open file format (.dawproject) for moving a whole project to another music program, such as Bitwig "
+         "An open file format (.dawproject) for moving a whole project between music programs, such as Bitwig "
          "Studio, Studio One or Cubase: the tracks with their volume, the takes, the notes of MIDI takes, the "
-         "instruments with their sound, and the marks. Controllers and other MIDI messages are left out.",
-         "File > Export DAWproject...", {"Project", "Take", "Instrument"}},
+         "instruments with their sound, and the marks. Export writes mini-daw's project as one; Import makes a "
+         "new project from one, with what mini-daw can hold (effects, automation, pan and the like are listed as "
+         "left out). Controllers and other MIDI messages are left out.",
+         "File > Export DAWproject... / Import DAWproject...", {"Project", "Take", "Instrument"}},
         {"Deleted", kProjects,
          "Delete on the Timeline tab does not throw a recording away: it moves its folder to \"deleted\" in the takes "
          "folder. Move it back to get it again.",

@@ -3,6 +3,7 @@
 #include "minidaw/path_util.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cwctype>
 #include <iterator>
@@ -77,9 +78,39 @@ bool startsWithDot(const fs::path& p)
 
 } // namespace
 
-FolderListing listSubfolders(const fs::path& folder, bool showHidden)
+FolderListing listSubfolders(const fs::path& folder, bool showHidden) { return listFolder(folder, showHidden, {}); }
+
+FolderListing listFolder(const fs::path& folder, bool showHidden, std::string_view fileExtension)
 {
     FolderListing out;
+    auto hidden = [&](const fs::path& p) {
+        if (showHidden) return false;
+        if (startsWithDot(p)) return true;
+#ifdef _WIN32
+        const DWORD attr = GetFileAttributesW(p.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) return true;
+#endif
+        return false;
+    };
+    // The extension compared without case (".dawproject" = ".DAWproject").
+    auto wanted = [&](const fs::path& p) {
+        if (fileExtension.empty()) return false;
+        const std::string ext = pathToUtf8(p.extension());
+        return ext.size() == fileExtension.size() &&
+               std::equal(ext.begin(), ext.end(), fileExtension.begin(), [](char a, char b) {
+                   return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+               });
+    };
+    auto sorted = [](std::vector<fs::path>& list) {
+        std::vector<std::pair<SortKey, fs::path>> keyed;
+        keyed.reserve(list.size());
+        for (auto& f : list) keyed.emplace_back(sortKey(f), std::move(f));
+        std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first < b.first : a.second.filename().native() < b.second.filename().native();
+        });
+        list.clear();
+        for (auto& k : keyed) list.push_back(std::move(k.second));
+    };
     try {
         std::error_code ec;
         // No skip_permission_denied: a folder that may not be read must say so,
@@ -92,26 +123,18 @@ FolderListing listSubfolders(const fs::path& folder, bool showHidden)
         for (; it != end; it.increment(ec)) {
             if (ec) break;
             std::error_code e2;
-            if (!it->is_directory(e2) || e2) continue;
-            if (!showHidden && startsWithDot(it->path())) continue;
-#ifdef _WIN32
-            const DWORD attr = GetFileAttributesW(it->path().c_str());
-            if (!showHidden && attr != INVALID_FILE_ATTRIBUTES && (attr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)))
-                continue;
-#endif
-            out.folders.push_back(it->path());
+            if (it->is_directory(e2) && !e2) {
+                if (!hidden(it->path())) out.folders.push_back(it->path());
+            } else if (wanted(it->path()) && it->is_regular_file(e2) && !e2 && !hidden(it->path())) {
+                out.files.push_back(it->path());
+            }
         }
         if (ec) out.error = "Not all of " + pathToUtf8(folder) + " could be read: " + ec.message();
-        std::vector<std::pair<SortKey, fs::path>> keyed;
-        keyed.reserve(out.folders.size());
-        for (auto& f : out.folders) keyed.emplace_back(sortKey(f), std::move(f));
-        std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
-            return a.first != b.first ? a.first < b.first : a.second.filename().native() < b.second.filename().native();
-        });
-        out.folders.clear();
-        for (auto& k : keyed) out.folders.push_back(std::move(k.second));
+        sorted(out.folders);
+        sorted(out.files);
     } catch (const std::exception& e) {  // any other file system surprise: reported, not fatal
         out.folders.clear();
+        out.files.clear();
         out.error = "Cannot read " + pathToUtf8(folder) + ": " + e.what();
     }
     return out;

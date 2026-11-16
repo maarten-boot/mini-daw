@@ -1,6 +1,6 @@
 #pragma once
 
-// Choosing a folder with a Browse... button (P19, SPEC-UI-14).
+// Choosing a folder with a Browse... button (P19, SPEC-UI-14); also a file (P28).
 //
 // Windows: the system's "Select folder" dialog (IFileOpenDialog), shown from a
 // thread of its own so mini-daw's window keeps drawing (meters, auto record)
@@ -25,6 +25,11 @@ public:
 
     // Starts choosing, beginning in `start`. Ignored while one is open.
     void open(GLFWwindow* owner, const std::string& title, const std::filesystem::path& start);
+    // Choosing a file with `extension` (".dawproject"; P28) instead of a folder:
+    // the Windows "Open" dialog with a filter named `typeName`, or the browser
+    // listing those files too (a click on one chooses it).
+    void openFile(GLFWwindow* owner, const std::string& title, const std::filesystem::path& start,
+                  const std::string& extension, const std::string& typeName);
     bool active() const;
     // The Windows dialog is still open (its thread runs).
     bool nativeOpen() const;
@@ -33,7 +38,7 @@ public:
     void cancel();
 
     // Every frame, outside other windows: draws the ImGui browser when it is
-    // used. Returns true once when a folder was chosen (in `chosen`); false
+    // used. Returns true once when a folder (or file) was chosen (in `chosen`); false
     // while choosing, after Cancel, or when there is nothing to do.
     bool update(std::filesystem::path& chosen);
 
@@ -42,6 +47,7 @@ public:
     std::string takeNote();
 
 private:
+    void openAny(GLFWwindow* owner, const std::string& title, const std::filesystem::path& start);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

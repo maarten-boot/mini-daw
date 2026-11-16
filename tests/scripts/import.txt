@@ -1,0 +1,16 @@
+# T-PRJ-11 / T-RUN-04: File > Import DAWproject through a script (P28): the
+# export of a project with the test synth comes back as a new project, and the
+# instrument is found again by its class ID and loaded with its state.
+stop-on-failure on
+open "@WORK@/project"
+scan
+instrument 1 "mini-daw test synth"
+export "@WORK@/out/Song.dawproject"
+import "@WORK@/out/Song.dawproject" "@WORK@/imported"
+expect project "@WORK@/imported"
+expect trackCount 2
+expect tracks.1.kind midi
+wait-for 5 tracks.1.loaded == true
+expect tracks.1.instrument "mini-daw Test Synth"
+expect tracks.2.kind audio
+import "@WORK@/out/Song.dawproject" "@WORK@/project"   # an existing project is not overwritten

@@ -43,6 +43,10 @@ struct FolderChooser::Impl {
     fs::path nativeResult;         // with mutex
     std::string nativeError;       // with mutex
 
+    // A file with this extension instead of a folder (P28); empty: a folder.
+    std::string fileExtension;
+    std::string fileTypeName;
+
     // ImGui browser.
     std::string title;
     fs::path current;
@@ -65,8 +69,8 @@ struct FolderChooser::Impl {
 namespace {
 
 // Runs on the dialog's thread. Returns false if the dialog could not be made.
-bool runNativeDialog(HWND owner, const std::wstring& title, const fs::path& start, bool& chosen, fs::path& result,
-                     std::string& error)
+bool runNativeDialog(HWND owner, const std::wstring& title, const fs::path& start, const std::wstring& extension,
+                     const std::wstring& typeName, bool& chosen, fs::path& result, std::string& error)
 {
     chosen = false;
     const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -78,7 +82,14 @@ bool runNativeDialog(HWND owner, const std::wstring& title, const fs::path& star
         made = true;
         DWORD options = 0;
         dialog->GetOptions(&options);
-        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+        if (extension.empty()) {
+            dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+        } else {
+            dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_NOCHANGEDIR);
+            const std::wstring pattern = L"*" + extension;
+            const COMDLG_FILTERSPEC types[] = {{typeName.c_str(), pattern.c_str()}, {L"All files", L"*.*"}};
+            dialog->SetFileTypes(2, types);
+        }
         dialog->SetTitle(title.c_str());
         if (!start.empty()) {
             IShellItem* folder = nullptr;
@@ -99,13 +110,13 @@ bool runNativeDialog(HWND owner, const std::wstring& title, const fs::path& star
                     chosen = true;
                     CoTaskMemFree(text);
                 } else {
-                    error = "The folder chosen is not on a disk (choose a folder with a drive letter or network path).";
+                    error = "The item chosen is not on a disk (choose one with a drive letter or network path).";
                 }
                 item->Release();
             }
         } else if (hr != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
             char buf[64];
-            std::snprintf(buf, sizeof buf, "The folder dialog failed (0x%08lX).", static_cast<unsigned long>(hr));
+            std::snprintf(buf, sizeof buf, "The file or folder dialog failed (0x%08lX).", static_cast<unsigned long>(hr));
             error = buf;
         }
         dialog->Release();
@@ -166,10 +177,26 @@ std::string FolderChooser::takeNote()
     return n;
 }
 
+void FolderChooser::openFile(GLFWwindow* owner, const std::string& title, const fs::path& start,
+                            const std::string& extension, const std::string& typeName)
+{
+    if (impl_->mode != Impl::Mode::Idle) return;
+    impl_->fileExtension = extension;
+    impl_->fileTypeName = typeName;
+    openAny(owner, title, start);
+}
+
 void FolderChooser::open(GLFWwindow* owner, const std::string& title, const fs::path& start)
 {
+    if (impl_->mode != Impl::Mode::Idle) return;
+    impl_->fileExtension.clear();
+    impl_->fileTypeName.clear();
+    openAny(owner, title, start);
+}
+
+void FolderChooser::openAny(GLFWwindow* owner, const std::string& title, const fs::path& start)
+{
     Impl& d = *impl_;
-    if (d.mode != Impl::Mode::Idle) return;
     d.note.clear();
     d.title = title;
     d.start = start.empty() ? homeFolder() : start;
@@ -182,12 +209,13 @@ void FolderChooser::open(GLFWwindow* owner, const std::string& title, const fs::
         d.mode = Impl::Mode::Native;
         HWND hwnd = owner ? glfwGetWin32Window(owner) : nullptr;
         d.nativeThreadId = 0;
-        d.thread = std::thread([&d, hwnd, t = widen(title), start]() {
+        d.thread = std::thread([&d, hwnd, t = widen(title), start, ext = widen(d.fileExtension),
+                                type = widen(d.fileTypeName)]() {
             d.nativeThreadId = GetCurrentThreadId();
             bool chosen = false;
             fs::path result;
             std::string error;
-            const bool made = runNativeDialog(hwnd, t, start, chosen, result, error);
+            const bool made = runNativeDialog(hwnd, t, start, ext, type, chosen, result, error);
             {
                 std::lock_guard<std::mutex> lock(d.mutex);
                 d.nativeChosen = chosen;
@@ -233,7 +261,8 @@ bool FolderChooser::update(fs::path& chosen)
     }
     if (d.mode != Impl::Mode::Browser) return false;
 
-    const char* popupId = "Choose a folder###choose-folder";
+    const bool files = !d.fileExtension.empty();
+    const char* popupId = files ? "Choose a file###choose-folder" : "Choose a folder###choose-folder";
     if (d.openPopup) {
         ImGui::OpenPopup(popupId);
         d.openPopup = false;
@@ -246,7 +275,7 @@ bool FolderChooser::update(fs::path& chosen)
     bool result = false;
     if (ImGui::BeginPopupModal(popupId, &keepOpen)) {
         if (!d.listed) {
-            d.listing = listSubfolders(d.current, d.showHidden);
+            d.listing = listFolder(d.current, d.showHidden, d.fileExtension);
             d.listed = true;
         }
         ImGui::TextWrapped("%s", d.title.c_str());
@@ -283,7 +312,9 @@ bool FolderChooser::update(fs::path& chosen)
         const float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing();
         if (ImGui::BeginChild("folders", ImVec2(0, -footer), ImGuiChildFlags_Borders)) {
             if (!d.listing.error.empty()) ImGui::TextWrapped("%s", d.listing.error.c_str());
-            if (d.listing.folders.empty() && d.listing.error.empty()) ImGui::TextUnformatted("(no folders inside)");
+            if (d.listing.folders.empty() && d.listing.files.empty() && d.listing.error.empty()) {
+                ImGui::TextUnformatted(files ? "(no folders or matching files inside)" : "(no folders inside)");
+            }
             // A folder name is shown as text, not used as a label: "##" in a name
             // would hide part of it or clash with another ID (V5).
             fs::path into;
@@ -297,18 +328,35 @@ bool FolderChooser::update(fs::path& chosen)
                 ImGui::TextUnformatted(name.c_str());
                 ImGui::PopID();
             }
+            for (const auto& f : d.listing.files) {  // a file mode: a click chooses it
+                ImGui::PushID(row++);
+                const float x = ImGui::GetCursorPosX();
+                if (ImGui::Selectable("##file", false, ImGuiSelectableFlags_AllowOverlap)) {
+                    chosen = f;
+                    result = true;
+                }
+                ImGui::SameLine(x);
+                ImGui::TextUnformatted(pathToUtf8(f.filename()).c_str());
+                ImGui::PopID();
+            }
             if (!into.empty()) d.go(into);
         }
         ImGui::EndChild();
-        ImGui::TextUnformatted("Click a folder to open it. The folder shown above is chosen:");
-        std::string chooseLabel = "Choose \"" + pathToUtf8(d.current.filename().empty() ? d.current : d.current.filename()) +
-                                  "\"###choose";
-        if (ImGui::Button(chooseLabel.c_str())) {
-            chosen = d.current;
-            result = true;
-            ImGui::CloseCurrentPopup();
+        if (files) {
+            ImGui::TextUnformatted(("Click a folder to open it, a " + d.fileTypeName + " file to choose it.").c_str());
+            if (result) ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::TextUnformatted("Click a folder to open it. The folder shown above is chosen:");
+            std::string chooseLabel = "Choose \"" +
+                                      pathToUtf8(d.current.filename().empty() ? d.current : d.current.filename()) +
+                                      "\"###choose";
+            if (ImGui::Button(chooseLabel.c_str())) {
+                chosen = d.current;
+                result = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
         if (ImGui::Button("Cancel") ||
             (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput)) {
             ImGui::CloseCurrentPopup();

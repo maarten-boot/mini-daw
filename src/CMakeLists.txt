@@ -8,6 +8,7 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/dawproject.cpp
+    core/src/dawproject_import.cpp
     core/src/devices.cpp
     core/src/folder_browse.cpp
     core/src/instance_lock.cpp
@@ -30,6 +31,7 @@ add_library(minidaw_core STATIC
     core/src/midi_player.cpp
     core/src/auto_record.cpp
     core/src/recording_session.cpp
+    core/src/sinc_kernel.cpp
     core/src/smf.cpp
     core/src/track.cpp
     core/src/theme.cpp

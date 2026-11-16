@@ -79,4 +79,54 @@ std::string dawExportName(std::string_view typed);
 // Windows device names such as CON) plus ".dawproject"; "" for an empty name.
 std::string dawExportFileName(std::string_view typed);
 
+// --- Import (P28, SPEC-PRJ-05) ------------------------------------------------
+//
+// A new mini-daw project from a .dawproject file, as far as mini-daw can hold
+// it. Times in beats are converted with the file's tempo (Transport); every
+// imported file goes into one recording folder `takes/<takeFolderName>`.
+//   - Tracks: in file order; group tracks give their tracks (the group's own
+//     mix is left out); the master and effect return tracks are left out. A
+//     track's notes become a MIDI track, its audio an audio track (both: two
+//     tracks). A nested lane of a track becomes a track of its own
+//     ("<track> <lane>"), so lanes on top of each other stay apart.
+//   - Mixer: volume (linear or dB, kept within -60 .. +6 dB), mute, solo.
+//   - Notes: all note clips of a track in one MIDI take (playStart / playStop,
+//     loops, the clip's length applied; velocities 0..1 to 1..127).
+//   - Audio: all audio clips of a track rendered into one WAV at
+//     `sampleRate` (from the first clip's start; overlapping clips added),
+//     with playStart / playStop, loops and fades; another sample rate
+//     converted (SincKernel); clips in Warps only when they play at their
+//     own speed (else left out: mini-daw cannot stretch). WAV files only
+//     (16/24/32-bit, float), inside the file or external.
+//   - A VST3 instrument on a notes track: its class ID and, from its
+//     .vstpreset, its state. Other plugins and devices are left out.
+//   - Markers become marks of the recording; the title its name; the
+//     metadata comment the project note.
+// Left out, with a line each in `leftOut`: automation, sends, pan, effects,
+// CLAP / VST2 / AU plugins, the clip launcher (scenes), time-stretched clips,
+// other audio formats, tempo changes, disabled clips. A damaged or unknown
+// file, or a newer major version, gives `error` and creates nothing; a
+// failure while writing removes what was written.
+struct DawImportResult {
+    bool ok = false;
+    std::string error;
+    std::string application;        // what made the file ("Bitwig Studio 5.2")
+    std::string title;              // the metadata title, else the file's name
+    int tracks = 0;
+    int audioClips = 0;
+    int noteClips = 0;
+    int notes = 0;
+    int instruments = 0;
+    int markers = 0;
+    std::vector<std::string> leftOut;
+};
+
+DawImportResult importDawProject(const std::filesystem::path& file, const std::filesystem::path& projectFolder,
+                                 unsigned int sampleRate, const std::string& takeFolderName);
+
+// A VST3 deviceID ("01234567-89AB-CDEF-0123-456789ABCDEF", with or without
+// braces or dashes, any case) as mini-daw's class ID (32 hex digits, upper
+// case); "" when it is not one.
+std::string vst3ClassFromDeviceId(const std::string& deviceId);
+
 } // namespace minidaw

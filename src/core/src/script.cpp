@@ -45,6 +45,8 @@ const std::vector<ScriptCommand>& scriptCommands()
         {"save", 0, 0, "save", "Saves the project."},
         {"export", 1, 1, "export <file.dawproject>",
          "Writes the tracks as a DAWproject file (like File > Export DAWproject; replaces the file)."},
+        {"import", 2, 2, "import <file.dawproject> <project folder>",
+         "Makes a new project from a DAWproject file and opens it (like File > Import DAWproject)."},
         {"add-track", 1, 1, "add-track midi|audio",
          "Adds a track (like Add MIDI track / Add audio track); <track> \"last\" is then this one."},
         {"remove-track", 1, 1, "remove-track <track>", "Removes a track (like its X button)."},

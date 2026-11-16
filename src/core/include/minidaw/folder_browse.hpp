@@ -17,12 +17,16 @@ std::string cleanPathText(std::string_view text);
 
 struct FolderListing {
     std::vector<std::filesystem::path> folders;  // full paths, by name (case ignored)
+    std::vector<std::filesystem::path> files;    // listFolder with an extension: those files, by name
     std::string error;                           // the folder could not be read
 };
 
 // The folders inside `folder` (not files). Names starting with '.' are left
 // out unless `showHidden`. Entries that cannot be read are skipped.
 FolderListing listSubfolders(const std::filesystem::path& folder, bool showHidden);
+// The same, and also the files with `fileExtension` (".dawproject", case
+// ignored; P28: choosing a file); none when it is empty.
+FolderListing listFolder(const std::filesystem::path& folder, bool showHidden, std::string_view fileExtension);
 
 // Where a browser starts: the folder in `text` if it exists, else the nearest
 // existing folder above it, else `fallback`.

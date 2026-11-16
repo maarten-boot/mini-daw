@@ -27,6 +27,7 @@ add_executable(minidaw_tests
     test_run_loop.cpp
     test_script.cpp
     test_dawproject.cpp
+    test_dawproject_import.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # DAWproject (P27): the export is read back with the same libraries.
@@ -162,6 +163,8 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "2 track(s), 0 audio clip(s), 0 MIDI clip(s) with 0 note(s), 1 instrument(s), 0 marker(s)."
         "Result: 5 command(s), 0 failed")
     minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
+    minidaw_script_test(import 1 IN "Import DAWproject: Imported into " "1 instrument(s)"
+        "already holds a project" "Result: 13 command(s), 1 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"
         "Track 2 \"MIDI 1 sound\" is now a normal audio track" "Result: 7 command(s), 0 failed"
         NOT_IN "output (no MIDI output)")
