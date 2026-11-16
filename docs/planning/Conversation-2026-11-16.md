@@ -20,3 +20,16 @@ User: "one \"Auto record\" track; pushed; start P28".
 User: "pushed it, check the CI run".
 
 - windows, linux, licence green; Linux 243/243 (XSD over 6 exports, script `import`), Windows 229/229. Builds in `dist/`; `dist/TESTS.txt` with T-PRJ-11 (import a Cubase / Bitwig file) and T-PRJ-10b.
+
+## 4. Crosscheck #23 (after P27b / P28)
+
+User: "pushed it, do the crosscheck".
+
+- `Crosscheck-2026-11-14.md` #23: an independent reviewer (subagent) read the code; Claude checked Spec ↔ Plan ↔ Tests ↔ docs and confirmed CC1, CC2 and CC4 at the code. 11 findings, no high ones:
+  - CC1: the export's Markers have no `timeUnit`, so other programs read seconds as beats. This has been there since P27. The importer hides it.
+  - CC2: on Windows, cleanup after a failed import runs while the files are still open.
+  - CC3: no limit on a clip's place or length.
+  - CC4–CC9: small things, mostly a line missing for something left out.
+  - CC10: doc fixes.
+  - CC11: test gaps.
+- Still open for the user: P28 merges a track's clips instead of leaving them out.
