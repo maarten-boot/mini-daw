@@ -25,8 +25,16 @@ jobs:
 
       - name: Install NSIS (installer, P9b)
         # Pinned version (crosscheck #8, O2); the runner image has no NSIS.
+        # Up to 3 tries a minute apart: the Chocolatey feed sometimes answers
+        # 504 Gateway Timeout (run 44339405990).
         run: |
-          choco install nsis --version=3.13.0 -y --no-progress --allow-downgrade
+          for ($try = 1; $try -le 3; $try++) {
+            choco install nsis --version=3.13.0 -y --no-progress --allow-downgrade
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($try -eq 3) { throw "NSIS could not be installed (3 tries)" }
+            Write-Output "choco failed (exit $LASTEXITCODE), try $($try + 1) of 3 in 60 s"
+            Start-Sleep -Seconds 60
+          }
           $v = & "C:\Program Files (x86)\NSIS\makensis.exe" -VERSION
           Write-Output "makensis $v"
           if ($v -ne "v3.13") { throw "unexpected NSIS version $v" }

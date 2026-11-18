@@ -12,3 +12,12 @@ User: "the mini-daw shows no version and that gets very confusing, can you show 
   - It is shown in Help → About mini-daw… (with Copy) and at the right end of the menu bar, where a click opens About.
   - It is also in the window title, the log, `--version`, the script report and the Windows file version (0.28.1.<run number>).
 - Linux 244/244 and Wine 227/227. Checked in the GUI on Xvfb.
+
+## 2. CI run 44339405990 (P28a)
+
+User: "pushed it, check the CI run". Then: "yes add the retry; reran it, check the CI run; The mini synth has a installer on windows, we currently dont, can we add one ?"
+
+- Linux 244/244, and the build calls itself "0.28.1 (commit 9f2165c of 2026-11-18, CI run 44339405990)". Licence check green.
+- The Windows job failed at "Install NSIS": the Chocolatey feed returned 504 Gateway Timeout. Claude could not re-run the job (the token can only read Actions: HTTP 403).
+- The workflow now tries `choco install nsis` up to 3 times, 60 s apart.
+- Installer: mini-daw has had an NSIS installer since P9b (`mini-daw-<version>-setup.exe`, in `dist/windows`). Claude asked the user what the synth's installer does that this one does not.
