@@ -469,6 +469,23 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                     cfg.state.windows.push_back(l);
                 }
             }
+        } else if (section == "remote" && key == "enabled") {
+            if (!parseBool(value, cfg.remote.enabled)) {
+                cfg.remote.enabled = false;
+                warn("enabled '" + value + "' must be true or false. Using false.");
+            }
+        } else if (section == "remote" && key == "port") {
+            char* end = nullptr;
+            const long v = std::strtol(value.c_str(), &end, 10);
+            if (value.empty() || *end != '\0' || v < 1024 || v > 65535) {
+                warn("port '" + value + "' must be a number from 1024 to 65535. Using 7800.");
+            } else {
+                cfg.remote.port = static_cast<int>(v);
+            }
+        } else if (section == "remote" && key == "allow") {
+            cfg.remote.allow = value;
+        } else if (section == "remote" && key == "token") {
+            cfg.remote.token = value;
         } else if (section == "project" && key == "last") {
             cfg.project.last = value;
         } else if (section == "project" && key.size() >= 7 && key.compare(0, 6, "recent") == 0 &&
@@ -614,6 +631,17 @@ std::string defaultConfigText()
            "; recent1 .. recent8 (written by mini-daw) are the File > Recent projects list.\n"
            "last = \"\"\n"
            "\n"
+           "[remote]\n"
+           "; Remote control over HTTP + JSON: the script commands from another program\n"
+           "; (see the README). Off unless enabled here or started with --remote.\n"
+           "; This computer may always send commands; allow adds networks, e.g.\n"
+           "; allow = 192.168.1.0/24, which then need the token (made by mini-daw when\n"
+           "; empty). Plain HTTP: use it only on a network you trust.\n"
+           "enabled = false\n"
+           "port = 7800\n"
+           "allow =\n"
+           "token = \"\"\n"
+           "\n"
            "[state]\n"
            "; Written by mini-daw: what was going on when it closed, restored at the next\n"
            "; start. auto_record (saved at once when switched, so also after a crash), the\n"
@@ -733,6 +761,10 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "recording", "auto_pause_seconds", std::to_string(config.recording.autoPauseSeconds));
     text = setConfigValue(text, "recording", "auto_threshold_db", std::to_string(config.recording.autoThresholdDb));
     text = setConfigValue(text, "project", "last", quoteConfigString(config.project.last));
+    text = setConfigValue(text, "remote", "enabled", config.remote.enabled ? "true" : "false");
+    text = setConfigValue(text, "remote", "port", std::to_string(config.remote.port));
+    text = setConfigValue(text, "remote", "allow", config.remote.allow);
+    text = setConfigValue(text, "remote", "token", quoteConfigString(config.remote.token));
     for (std::size_t i = 0; i < 8; ++i) {
         const std::string v = i < config.instruments.folders.size() ? config.instruments.folders[i] : std::string();
         text = setConfigValue(text, "instruments", "folder" + std::to_string(i + 1), quoteConfigString(v));

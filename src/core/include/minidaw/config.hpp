@@ -118,6 +118,16 @@ struct InstrumentSettings {
     friend bool operator==(const InstrumentSettings&, const InstrumentSettings&) = default;
 };
 
+// Remote control over HTTP (P25b, SPEC-RUN-03); off unless switched on here
+// or with --remote for one run.
+struct RemoteSettings {
+    bool enabled = false;
+    int port = 7800;           // 1024 .. 65535
+    std::string allow;         // networks besides this computer, e.g. "192.168.1.0/24"
+    std::string token;         // needed from those networks; made by mini-daw when empty
+    friend bool operator==(const RemoteSettings&, const RemoteSettings&) = default;
+};
+
 // Main window place and size (SPEC-UI-09), written when mini-daw closes.
 struct WindowSettings {
     bool remember = true;
@@ -224,6 +234,7 @@ struct AppConfig {
     ProjectSettings project;
     InstrumentSettings instruments;
     SessionState state;
+    RemoteSettings remote;
 };
 
 struct ConfigLoadResult {

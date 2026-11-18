@@ -17,6 +17,7 @@
 #include "icon_data.hpp"
 #include "imgui_theme.hpp"
 #include "plugin_window.hpp"
+#include "remote_server.hpp"
 #include "renderer.hpp"
 #include "state_cues.hpp"
 #include "window_place.hpp"
@@ -46,6 +47,7 @@
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
 #include "minidaw/build_info.hpp"
+#include "minidaw/remote.hpp"
 #include "minidaw/version.hpp"
 
 #include <imgui.h>
@@ -118,6 +120,19 @@ struct ScriptRun {
     bool busyResult = false;        // set by the slow work (open)
     int lastAdded = 0;              // the track the last add-track made ("last" as a track number)
     std::uint64_t logSeen = 0;      // log lines already copied into the report
+    // Remote control (P25b): the same runner, one line per request; no report file.
+    bool remote = false;
+    std::string client;                  // who sent the current line
+    bool loopback = false;               // from this computer
+    std::vector<std::string> logLines;   // the log lines written while it ran, for the answer
+};
+
+// Remote control over HTTP (P25b, SPEC-RUN-03).
+struct RemoteControl {
+    minidaw::app::RemoteBridge bridge;
+    std::unique_ptr<minidaw::app::RemoteServer> server;
+    ScriptRun run;
+    std::string status;  // for the status line
 };
 
 // Application state
@@ -131,6 +146,7 @@ struct AppState {
     };
     std::optional<BusyJob> busy;
     std::unique_ptr<ScriptRun> script;  // --script (P25a)
+    std::unique_ptr<RemoteControl> remote;  // --remote / [remote] enabled (P25b); never with a script
     bool stateRestored = false;         // [state] applied in the first frame (P26)
     bool autoRestoreFailed = false;     // auto record was on but did not start again: kept on until switched
     int scriptExitCode = 0;
@@ -336,6 +352,14 @@ struct AppState {
     std::vector<std::filesystem::path> takeFolders;
     std::string takeBrowserError;
 };
+
+// The runner of commands: the script file's, else the remote control's (P25b).
+// Never both: remote control is off while a script file runs.
+ScriptRun* activeRun(AppState& app)
+{
+    if (app.script) return app.script.get();
+    return app.remote ? &app.remote->run : nullptr;
+}
 
 void saveConfig(AppState& app)
 {
@@ -4340,7 +4364,7 @@ bool requestInstrument(AppState& app, int number, const minidaw::PluginClass& cl
         }
         chooseInstrument(app, *track, cls);
         const bool loaded = app.instruments.count(number) != 0;
-        if (app.script) app.script->busyResult = loaded && track->instrumentClass == cls.classId;  // for a script (AA2)
+        if (ScriptRun* run = activeRun(app)) run->busyResult = loaded && track->instrumentClass == cls.classId;  // AA2
         // Its sound track appears at once, silent (SPEC-VST-03a; user test 2026-11-05).
         if (loaded) ensureLinkedTrack(app, number);
     });
@@ -4978,6 +5002,7 @@ void drawStatusLine(const AppState& app)
     }
     for (const auto& n : app.projectWarnings) ImGui::TextWrapped("Project warning: %s", n.c_str());
     ImGui::Text("Config: %s", minidaw::pathToUtf8(app.configPath).c_str());
+    if (app.remote) ImGui::TextWrapped("%s", app.remote->status.c_str());  // P25b: always said when it listens
     ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (Ctrl+L)", app.rendererName.c_str(),
                 static_cast<unsigned long long>(app.log.warningCount()),
                 static_cast<unsigned long long>(app.log.errorCount()));
@@ -5083,28 +5108,55 @@ nlohmann::json scriptState(AppState& app)
 }
 
 // The log lines written since the last call, into the report (indented).
+// Remote control: into the answer instead.
 void scriptCopyLog(AppState& app)
 {
-    ScriptRun& sr = *app.script;
+    ScriptRun& sr = *activeRun(app);
     const std::uint64_t total = app.log.lineCount();
     if (total == sr.logSeen) return;
     const std::vector<minidaw::LogEntry> recent = app.log.recent();
     const std::uint64_t fresh = std::min<std::uint64_t>(total - sr.logSeen, recent.size());
     for (std::size_t i = recent.size() - static_cast<std::size_t>(fresh); i < recent.size(); ++i) {
         const auto& e = recent[i];
-        sr.report << "        log " << e.time.substr(e.time.size() >= 12 ? e.time.size() - 12 : 0) << ' '
-                  << minidaw::logLevelName(e.level) << ' ' << e.text << '\n';
+        const std::string text = e.time.substr(e.time.size() >= 12 ? e.time.size() - 12 : 0) + ' ' +
+                                 std::string(minidaw::logLevelName(e.level)) + ' ' + e.text;
+        if (sr.remote) {
+            sr.logLines.push_back(text);
+        } else {
+            sr.report << "        log " << text << '\n';
+        }
     }
     sr.logSeen = total;
-    sr.report.flush();
+    if (!sr.remote) sr.report.flush();
 }
 
 // The end of the current line: ok or FAIL, with how long it took and a note.
 void scriptFinish(AppState& app, bool ok, const std::string& note)
 {
-    ScriptRun& sr = *app.script;
+    ScriptRun& sr = *activeRun(app);
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - sr.started).count();
+    if (sr.remote) {  // the answer to the request (P25b)
+        scriptCopyLog(app);
+        const std::string line = sr.current ? sr.current->text : std::string();
+        nlohmann::json body = {{"ok", ok}, {"line", line}, {"note", note}, {"seconds", seconds}, {"log", sr.logLines}};
+        if (sr.current && sr.current->words[0] == "state") body["state"] = scriptState(app);
+        ++sr.commands;
+        if (!ok) ++sr.failures;
+        const std::string what = "Remote " + sr.client + ": " + line + (ok ? " - ok" : " - FAILED") +
+                                 (note.empty() ? "" : " (" + note + ")");
+        if (ok) {
+            app.log.info(what);
+        } else {
+            app.log.warning(what);
+        }
+        sr.logSeen = app.log.lineCount();  // the line just written is not the next command's
+        sr.logLines.clear();
+        sr.pending = ScriptRun::Pending::None;
+        sr.current = nullptr;
+        app.remote->bridge.commands.answer({200, minidaw::stateText(body)});
+        return;
+    }
     char head[64];
     std::snprintf(head, sizeof head, "line %3d  %-4s  ", sr.current ? sr.current->number : 0, ok ? "ok" : "FAIL");
     sr.report << head << (sr.current ? sr.current->text : std::string()) << "  (" << std::fixed;
@@ -5161,7 +5213,8 @@ std::string lowerWord(std::string s)
 minidaw::Track* scriptTrack(AppState& app, const std::string& word, std::string& why)
 {
     if (lowerWord(word) == "last") {
-        minidaw::Track* t = app.script && app.script->lastAdded > 0 ? findTrack(app, app.script->lastAdded) : nullptr;
+        const ScriptRun* run = activeRun(app);
+        minidaw::Track* t = run && run->lastAdded > 0 ? findTrack(app, run->lastAdded) : nullptr;
         if (!t) why = "no track added by the script (last)";
         return t;
     }
@@ -5179,7 +5232,7 @@ minidaw::Track* scriptTrack(AppState& app, const std::string& word, std::string&
 // Starts the current line. It either finishes now (scriptFinish) or sets `pending`.
 void scriptStart(AppState& app, const minidaw::ScriptLine& line)
 {
-    ScriptRun& sr = *app.script;
+    ScriptRun& sr = *activeRun(app);
     sr.current = &line;
     sr.started = std::chrono::steady_clock::now();
     const auto& w = line.words;
@@ -5187,6 +5240,13 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
     std::string why;
     auto fail = [&](const std::string& note) { scriptFinish(app, false, note); };
     auto ok = [&](const std::string& note = {}) { scriptFinish(app, true, note); };
+    if (sr.remote) {  // what the remote control may not do: already refused by the server, checked again here
+        std::string no;
+        if (!minidaw::remoteCommandAllowed(cmd, sr.loopback, no)) {
+            fail(no);
+            return;
+        }
+    }
 
     if (cmd == "echo") {
         std::string text;
@@ -5228,6 +5288,7 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         ok();
         sr.next = sr.lines.size();
         sr.stay = false;
+        if (sr.remote && app.mainWindow) glfwSetWindowShouldClose(app.mainWindow, GLFW_TRUE);  // as closing the window
     } else if (cmd == "scan") {
         if (app.scanning) {
             fail("a scan is already running");
@@ -5241,7 +5302,7 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         sr.lastAdded = 0;  // its tracks are another project's (AA4)
         startBusy(app, "Opening project " + folder, [&app, folder] {
             const bool opened = openProject(app, minidaw::pathFromUtf8(folder));
-            if (app.script) app.script->busyResult = opened;
+            if (ScriptRun* run = activeRun(app)) run->busyResult = opened;
         });
         sr.pending = ScriptRun::Pending::Busy;
     } else if (cmd == "save") {
@@ -5413,15 +5474,13 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
 
 // Every frame, after the slow work: the current line goes on, or the next one starts.
 // One line per frame, so the window and the state follow each step.
-void stepScript(AppState& app)
+// The line that runs over several frames goes on; false when none is running.
+bool continueLine(AppState& app, ScriptRun& sr)
 {
-    if (!app.script || app.script->done) return;
-    ScriptRun& sr = *app.script;
-    if (app.busy) return;  // its message is on screen; it runs next frame
     const auto now = std::chrono::steady_clock::now();
     switch (sr.pending) {
     case ScriptRun::Pending::None:
-        break;
+        return false;
     case ScriptRun::Pending::Busy: {
         const auto& w = sr.current->words;
         if (w[0] == "open") {
@@ -5439,16 +5498,16 @@ void stepScript(AppState& app)
                 scriptFinish(app, false, "not loaded (see the log)");
             }
         }
-        return;
+        return true;
     }
     case ScriptRun::Pending::Scan:
-        if (app.scanning) return;
+        if (app.scanning) return true;
         scriptFinish(app, true, std::to_string(app.pluginCache.instruments().size()) + " instrument(s)");
-        return;
+        return true;
     case ScriptRun::Pending::Wait:
-        if (now < sr.deadline) return;
+        if (now < sr.deadline) return true;
         scriptFinish(app, true, "");
-        return;
+        return true;
     case ScriptRun::Pending::WaitFor: {
         const auto& w = sr.current->words;
         const std::string op = w.size() == 5 ? w[3] : "==";
@@ -5462,9 +5521,18 @@ void stepScript(AppState& app)
         } else if (now >= sr.deadline) {
             scriptFinish(app, false, "still " + seen);
         }
-        return;
+        return true;
     }
     }
+    return false;
+}
+
+void stepScript(AppState& app)
+{
+    if (!app.script || app.script->done) return;
+    ScriptRun& sr = *app.script;
+    if (app.busy) return;  // its message is on screen; it runs next frame
+    if (continueLine(app, sr)) return;
     if (sr.next == 0 && sr.commands == 0) {  // what happened at start (devices, project, instruments)
         sr.report << "Start:\n";
         scriptCopyLog(app);
@@ -5474,6 +5542,33 @@ void stepScript(AppState& app)
         return;
     }
     scriptStart(app, sr.lines[sr.next++]);
+}
+
+// Remote control (P25b): a state request any time; a command when the one before is done.
+void stepRemote(AppState& app)
+{
+    if (!app.remote) return;
+    RemoteControl& rc = *app.remote;
+    if (auto job = rc.bridge.states.take()) {
+        rc.bridge.states.answer({200, minidaw::stateText(nlohmann::json{{"ok", true}, {"state", scriptState(app)}})});
+    }
+    ScriptRun& sr = rc.run;
+    if (app.busy) return;  // its message is on screen; it runs next frame
+    if (continueLine(app, sr)) return;
+    auto job = rc.bridge.commands.take();
+    if (!job) return;
+    const minidaw::ScriptParse parsed = minidaw::parseScript(job->line);
+    if (!parsed.errors.empty() || parsed.lines.empty()) {  // the server checked it; not expected
+        rc.bridge.commands.answer({400, minidaw::stateText(nlohmann::json{{"ok", false}, {"error", "not a command"}})});
+        return;
+    }
+    sr.lines = parsed.lines;
+    sr.next = sr.lines.size();
+    sr.client = job->client;
+    sr.loopback = job->loopback;
+    sr.logLines.clear();
+    sr.logSeen = app.log.lineCount();
+    scriptStart(app, sr.lines.front());
 }
 
 // --- What was going on, kept for the next start (P26, SPEC-UI-09a) -------------
@@ -5594,6 +5689,53 @@ void restoreSessionState(AppState& app)
         for (const auto& d : done) list += (list.empty() ? "" : ", ") + d;
         app.log.info("Restored from the last time: " + list);
     }
+}
+
+// Remote control (P25b, SPEC-RUN-03): listens when [remote] enabled or --remote.
+// This computer always; the networks in [remote] allow with the token, which is
+// made and saved in the config when there is none.
+void startRemote(AppState& app, bool fromCommandLine)
+{
+    if (!fromCommandLine && !app.config.remote.enabled) return;
+    if (app.script) {
+        app.log.info("Remote control is off while a script file runs.");
+        return;
+    }
+    std::vector<std::string> bad;
+    minidaw::RemotePolicy policy;
+    policy.networks = minidaw::parseIpNetworks(app.config.remote.allow, bad);
+    for (const auto& b : bad) app.log.warning("Remote control: \"" + b + "\" in [remote] allow is not a network (e.g. 192.168.1.0/24); left out");
+    if (!policy.networks.empty() && app.config.remote.token.empty()) {
+        app.config.remote.token = minidaw::makeRemoteToken();
+        saveConfig(app);
+        app.log.info("Remote control: a token was made for the other computers; it is in " +
+                     minidaw::pathToUtf8(app.configPath) + " ([remote] token)");
+    }
+    policy.token = app.config.remote.token;
+    auto rc = std::make_unique<RemoteControl>();
+    rc->run.remote = true;
+    rc->server = std::make_unique<minidaw::app::RemoteServer>(app.log, rc->bridge);
+    const std::string host = policy.networks.empty() ? "127.0.0.1" : "0.0.0.0";
+    std::string networks;
+    for (const auto& n : policy.networks) networks += (networks.empty() ? "" : ", ") + n.text;
+    std::string error;
+    if (!rc->server->start(host, app.config.remote.port, policy, error)) {
+        rc->status = "Remote control: OFF - " + error;
+        app.log.error("Remote control: " + error);
+        rc->server.reset();
+    } else {
+        rc->status = "Remote control: on, port " + std::to_string(app.config.remote.port) + ", from this computer" +
+                     (networks.empty() ? std::string() : " and " + networks + " (with the token)");
+        app.log.info(rc->status + (fromCommandLine ? " (--remote)" : " ([remote] enabled)"));
+    }
+    app.remote = std::move(rc);
+}
+
+void stopRemote(AppState& app)
+{
+    if (!app.remote) return;
+    if (app.remote->server) app.remote->server->stop();  // waiting requests get "closing"
+    app.remote->bridge.close();
 }
 
 int runGui(AppState& app)
@@ -5767,6 +5909,7 @@ int runGui(AppState& app)
         glfwPollEvents();
         runBusy(app);  // slow work asked for in the frame before, now that its message is on screen
         stepScript(app);  // --script (P25a): after the slow work, so a line waiting for it sees the result
+        stepRemote(app);  // --remote (P25b): the same, for a command sent over HTTP
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
         minidaw::editorRunLoop().poll();  // Linux plugin editors: their X11 events and timers (P24)
@@ -5933,6 +6076,7 @@ int runGui(AppState& app)
         minidaw::app::rendererRender(window, clear);
     }
 
+    stopRemote(app);  // no more commands from outside while mini-daw closes (P25b)
     // What was going on, for the next start (P26), before anything is stopped.
     if (!app.script) {
         captureSessionState(app);
@@ -5975,7 +6119,7 @@ void printUsage(const char* argv0)
 {
     std::printf("usage: %s [--config <file>] [--list-devices | --audio-test <seconds> [--monitor] |\n"
                 "        --record-test <seconds> <folder> | --contrast-report | --version | --help |\n"
-                "        --script <file> [--script-report <file>]]\n",
+                "        --script <file> [--script-report <file>] | --remote]\n",
                 argv0);
     std::printf("--script runs the window and does what the file says, then quits; exit code 0 if every\n"
                 "line worked, 1 if not, 2 for a script with errors (nothing is run), 3 if mini-daw is\n"
@@ -5983,6 +6127,10 @@ void printUsage(const char* argv0)
     for (const auto& c : minidaw::scriptCommands()) {
         std::printf("  %-42s %s\n", std::string(c.usage).c_str(), std::string(c.text).c_str());
     }
+    std::printf("--remote lets other programs send these commands over HTTP for this run (also\n"
+                "[remote] enabled in the config): POST /api/command with {\"line\": \"<command>\"},\n"
+                "GET /api/state, GET /api/commands; from this computer, port 7800 unless [remote]\n"
+                "port says otherwise; [remote] allow adds networks, which need the token. Not with --script.\n");
 #if defined(_WIN32)
     std::printf("In a terminal, run mini-daw.com (or just `mini-daw`): it prints and returns exit codes;\n"
                 "mini-daw.exe is the window program.\n");
@@ -6036,6 +6184,7 @@ int main(int argc, char** argv)
     std::filesystem::path recordFolder;
     std::filesystem::path scriptFile;
     std::filesystem::path scriptReport;
+    bool remoteFlag = false;  // --remote (P25b)
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -6072,6 +6221,8 @@ int main(int argc, char** argv)
             app.configPath = argv[++i];
         } else if (std::strcmp(arg, "--script") == 0 && i + 1 < argc) {
             scriptFile = std::filesystem::path(argv[++i]);  // native encoding, as argv is
+        } else if (std::strcmp(arg, "--remote") == 0) {
+            remoteFlag = true;
         } else if (std::strcmp(arg, "--script-report") == 0 && i + 1 < argc) {
             scriptReport = std::filesystem::path(argv[++i]);
         } else {
@@ -6197,6 +6348,7 @@ int main(int argc, char** argv)
         app.log.info("Script " + minidaw::pathToUtf8(app.script->file) + ": " +
                      std::to_string(app.script->lines.size()) + " command(s)");
     }
+    startRemote(app, remoteFlag);
     const int rc = runGui(app);
     if (app.script) {
         app.script->stay = true;  // the window is gone: nothing to close

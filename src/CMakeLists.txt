@@ -36,6 +36,7 @@ add_library(minidaw_core STATIC
     core/src/plugin_scan.cpp
     core/src/presets.cpp
     core/src/project.cpp
+    core/src/remote.cpp
     core/src/recorder.cpp
     core/src/recording_notes.cpp
     core/src/terms.cpp
@@ -67,13 +68,13 @@ endif()
 if(MINIDAW_BUILD_APP)
     # The program's code, built once and linked into the programs below.
     add_library(minidaw_app OBJECT app/main.cpp app/imgui_theme.cpp app/plugin_window.cpp app/folder_chooser.cpp
-                app/state_cues.cpp app/window_place.cpp)
+                app/state_cues.cpp app/window_place.cpp app/remote_server.cpp)
     if(WIN32)
         target_sources(minidaw_app PRIVATE app/renderer_d3d11.cpp)
     else()
         target_sources(minidaw_app PRIVATE app/renderer_opengl.cpp)
     endif()
-    target_link_libraries(minidaw_app PUBLIC minidaw_core minidaw_imgui PRIVATE minidaw_warnings)
+    target_link_libraries(minidaw_app PUBLIC minidaw_core minidaw_imgui minidaw_httplib PRIVATE minidaw_warnings)
     if(WIN32)
         # shell32: ShellExecuteW (View > Log > Open log folder) and the folder dialog (P19); ole32 / uuid: COM
         target_link_libraries(minidaw_app PUBLIC shell32 ole32 uuid)

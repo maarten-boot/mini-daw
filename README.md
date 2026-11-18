@@ -53,6 +53,7 @@ mini-daw --contrast-report   print every colour pair and its contrast, then exit
 mini-daw --version           print the version and build, then exit
 mini-daw --script <file>     open the window, do what the file says, write <file>.report.txt, quit
                              (for tests; mini-daw --help lists the commands)
+mini-daw --remote            let other programs send the same commands over HTTP for this run
 ```
 
 A script is a text file with one command per line, the same actions as in the window, plus checks. For example:
@@ -66,6 +67,29 @@ expect log.errors == 0
 ```
 
 The report lists each line as `ok` or `FAIL`, with the log lines it caused. The exit code is 0 when every line worked, 1 otherwise, 2 for a script with mistakes (nothing is run), 3 if mini-daw is already running with that config (use `--config` with another folder). Examples are in `tests/scripts/`.
+
+### Remote control (HTTP + JSON)
+
+With `mini-daw --remote` (for one run) or `enabled = true` under `[remote]` in the config file, another program can send mini-daw the same commands, one at a time, and read its state. The bottom of the window says when this is on. The port is 7800 unless `[remote] port` says otherwise.
+
+```
+curl http://127.0.0.1:7800/api/state                     # mini-daw's state as JSON
+curl http://127.0.0.1:7800/api/commands                  # the commands, and which you may send
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"line": "add-track midi"}' http://127.0.0.1:7800/api/command
+# -> {"ok":true,"line":"add-track midi","note":"track 2","seconds":0.0001,"log":["... Track 2 \"MIDI 2\" added"]}
+```
+
+A command answers when it is done, so `instrument` waits until the plugin is loaded and `wait-for` until its condition holds or its time is up. `"ok": false` means the command ran and failed (the `note` says why). A second command sent while one runs gets 409; the state can be read meanwhile.
+
+Who may send commands:
+
+- **This computer** may always send them, without a token.
+- **Other computers** may only send them from the networks in `[remote] allow`, for example `allow = 192.168.1.0/24`. They must also send the token with `-H "Authorization: Bearer <token>"`. mini-daw makes the token the first time and writes it into the config file.
+- **Web pages** cannot use it. Requests with an `Origin` header are refused, the address has to be a number or `localhost`, and commands have to be sent as JSON.
+- **`export`**, which can replace a file, is only accepted from this computer. `stay` and `stop-on-failure` are for script files only.
+
+This is plain HTTP: the token and everything else go over the network unencrypted, so only allow a network you trust. Windows asks once whether mini-daw may use the network when `allow` is set. Remote control is off while a script file runs.
 
 ## Screen contrast
 

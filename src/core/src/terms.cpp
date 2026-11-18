@@ -186,6 +186,17 @@ std::vector<Term> makeTerms()
          "A list of what mini-daw did and what went wrong, with times. It also says why a click on a greyed-out "
          "button did nothing. Useful when something does not work.",
          "View > Log (Ctrl+L)", {}},
+        {"Script file", kProjects,
+         "A text file with one command per line (open a project, add a track, choose an instrument, record, check "
+         "what happened ...). mini-daw does them as if you clicked, writes a report and closes: for tests that "
+         "should run the same way every time.",
+         "mini-daw --script <file> (the commands: mini-daw --help)", {"Remote control", "Log"}},
+        {"Remote control", kProjects,
+         "Another program sends mini-daw the same commands as a script file, one at a time over HTTP, and gets the "
+         "answer and mini-daw's state back. Off unless you switch it on. This computer may always send; other "
+         "computers only from the networks you allow, and with the token from the config file. While it is on, "
+         "the bottom of the window says so.",
+         "mini-daw --remote, or [remote] enabled = true in config.ini", {"Script file", "Log"}},
 
         // --- Sound and audio setup ------------------------------------------
         {"MIDI", kSound,

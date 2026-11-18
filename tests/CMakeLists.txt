@@ -28,6 +28,7 @@ add_executable(minidaw_tests
     test_script.cpp
     test_dawproject.cpp
     test_dawproject_import.cpp
+    test_remote.cpp
     test_instrument.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # DAWproject (P27): the export is read back with the same libraries.
@@ -177,6 +178,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND Python3::Interpreter -I ${PROJECT_SOURCE_DIR}/tools/check_licenses.py
                 --root ${PROJECT_SOURCE_DIR})
     set_tests_properties(licence_check PROPERTIES LABELS "licence")
+    # Remote control over HTTP (P25b, T-RUN-07): mini-daw with --remote, driven as
+    # another program would. It opens a window: Linux only, as the script cases.
+    if(UNIX AND NOT APPLE AND TARGET minidaw)
+        add_test(NAME "T-RUN-07: remote control over HTTP"
+            COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/remote/run_remote.py $<TARGET_FILE:minidaw>
+                    ${CMAKE_CURRENT_BINARY_DIR}/remote-work ${CMAKE_CURRENT_BINARY_DIR}/vst3)
+        set_tests_properties("T-RUN-07: remote control over HTTP" PROPERTIES
+            LABELS "script" SKIP_REGULAR_EXPRESSION "SKIPPED: no display" TIMEOUT 150)
+    endif()
     # Windows programs: mini-daw.exe without console, mini-daw.com with, both
     # with icon and version information (T-PKG-01).
     if(WIN32 AND TARGET minidaw AND TARGET minidaw_cli)

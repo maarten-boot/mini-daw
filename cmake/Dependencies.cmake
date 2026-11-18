@@ -53,6 +53,12 @@ FetchContent_Declare(miniz
     GIT_TAG        77d0dce8627735138c51770d1799a1ef48f2117d  # 3.1.2
     SOURCE_SUBDIR  _not_a_cmake_project)
 
+# Remote control over HTTP (P25b): one header; no TLS (plain HTTP, see SPEC-RUN-03).
+FetchContent_Declare(cpp_httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG        7800c3dc5b33285cbb18baa5998de4ff7ef63515  # v0.67.0
+    SOURCE_SUBDIR  _not_a_cmake_project)
+
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        08092139210881f01a34e60c5f2fd6afa0ea4024)  # v3.16.1
@@ -83,6 +89,16 @@ target_include_directories(minidaw_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR} ${CMA
 target_compile_definitions(minidaw_miniz PRIVATE _FILE_OFFSET_BITS=64 _LARGEFILE64_SOURCE)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(minidaw_miniz PRIVATE -w)  # not our code
+endif()
+
+# cpp-httplib (P25b): header-only, used by the app's remote server only.
+FetchContent_MakeAvailable(cpp_httplib)
+add_library(minidaw_httplib INTERFACE)
+target_include_directories(minidaw_httplib SYSTEM INTERFACE ${cpp_httplib_SOURCE_DIR})
+find_package(Threads REQUIRED)
+target_link_libraries(minidaw_httplib INTERFACE Threads::Threads)
+if(WIN32)
+    target_link_libraries(minidaw_httplib INTERFACE ws2_32)
 endif()
 
 # ---------------------------------------------------------------------------

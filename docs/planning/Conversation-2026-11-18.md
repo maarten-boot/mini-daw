@@ -54,3 +54,27 @@ User: "pushed it, check the CI run".
 
 - windows, linux, licence green; Linux 249/249, Windows 235/235. The write-failure case also passed on real Windows (CC2). Version 0.28.2, file version 0.28.2.97, `mini-daw-0.28.2-setup.exe`.
 - `dist/` refilled. `dist/TESTS.txt` has the P28b steps: markers in another program, the open-project folder line, the Auto record count, odd files.
+
+## 6. P25b: remote control over HTTP + JSON (version 0.28.3)
+
+User: "pushed it; start P25b".
+
+- How it works:
+  - Switched on with `--remote` or `[remote] enabled`; port 7800.
+  - `GET /api/state`, `GET /api/commands`, and `POST /api/command` with `{"line": …}`.
+  - The answer comes when the command is done, with its note and the log lines it wrote.
+  - One command at a time (409 otherwise); the state can be read meanwhile.
+  - The commands run on the GUI thread through the script runner.
+- Who may send:
+  - this computer always;
+  - the `[remote] allow` networks with a token, made by mini-daw and saved in the config;
+  - never web pages: Origin refused, the Host must be an address, JSON only.
+  - `export` only from this computer; `stay` / `stop-on-failure` never.
+  - Commands from outside count as the user's own (the project is remembered).
+- Found while testing: cpp-httplib's default socket options let a second program listen on the same port. The port is now exclusive (SO_REUSEADDR on Linux, SO_EXCLUSIVEADDRUSE on Windows).
+- Version: P25b comes after P28, so it is 0.28.3 (rule: a step with a lower number done later raises the round).
+- Terms: "Script file" and "Remote control" (50 terms).
+- cpp-httplib v0.67.0 (released today, with security fixes), pinned by hash.
+- Linux 254/254 (T-RUN-07: 29 checks over HTTP). Wine 236/236, and mini-daw.exe `--remote` under Wine answered curl.
+- By hand: the token path through the VM's own address.
+- Still to test: from another computer to the Windows machine (T-RUN-07 M).
