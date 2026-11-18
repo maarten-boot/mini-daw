@@ -107,3 +107,10 @@ User: "yes fix CC1–CC8, CC1 first; add for the future: export-render a selecti
 - The channel between the server and the window was rewritten: a list of slots, each request waits for its own answer.
 - Tests: Linux 254/254 (T-RUN-07 39 checks), Wine 236/236; by hand from the VM's own address and under Wine (cancel, a client that gave up).
 - Planned: SPEC-PRJ-06 / P29 Export audio. Questions for the user before it starts: one file per take or one mix of the chosen takes; with the project mix or as stems; which formats (Ogg Vorbis, plus FLAC, WAV, MP3, Opus?) and quality; MP3 needs an encoder (LAME is LGPL); which MIDI goes into the zip.
+
+## 10. CI run 44398240257 (P25f)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 254/254 (T-RUN-07 39 checks), Windows 239/239. Version 0.28.4, file version 0.28.4.101, `mini-daw-0.28.4-setup.exe`.
+- `dist/` refilled; `dist/TESTS.txt` at 0.28.4: T-RUN-07 M with the P25f steps, Terms, version.
