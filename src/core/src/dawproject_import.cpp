@@ -32,6 +32,10 @@ namespace fs = std::filesystem;
 
 namespace minidaw {
 
+namespace detail {
+int importFailAfterTakes = -1;
+} // namespace detail
+
 std::string vst3ClassFromDeviceId(const std::string& deviceId)
 {
     std::string out;
@@ -46,6 +50,13 @@ std::string vst3ClassFromDeviceId(const std::string& deviceId)
 namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();
+// Clips and notes further than this from the song's start are left out
+// (crosscheck #23, CC3): no endless renders from a damaged file.
+constexpr double kMaxSongSeconds = 24.0 * 3600.0;
+// project.xml, metadata.xml and instrument states are read into memory (CC5).
+constexpr std::uint64_t kMaxInMemory = 256ull * 1024 * 1024;
+
+bool tooFar(double seconds) { return !std::isfinite(seconds) || std::abs(seconds) > kMaxSongSeconds; }
 
 std::FILE* openRead(const fs::path& p)
 {
@@ -103,6 +114,12 @@ public:
         const int i = find(name);
         if (i < 0) {
             error = name + " is not in the file";
+            return false;
+        }
+        mz_zip_archive_file_stat st;
+        if (mz_zip_reader_file_stat(&zip_, static_cast<mz_uint>(i), &st) && st.m_uncomp_size > kMaxInMemory) {
+            error = name + " is too large (" + std::to_string(st.m_uncomp_size / (1024 * 1024)) + " MB; at most " +
+                    std::to_string(kMaxInMemory / (1024 * 1024)) + " MB)";
             return false;
         }
         std::size_t size = 0;
@@ -189,18 +206,22 @@ struct ClipMap {
         if (u < first) return playStart + u;
         return loopStart + std::fmod(u - first, loopEnd - loopStart);
     }
-    // Calls f(contentFrom, contentTo, arrangementTimeOfContentFrom) for each pass over the content.
+    static constexpr int kMaxPasses = 100000;
+    // Calls f(contentFrom, contentTo, arrangementTimeOfContentFrom, first) for each pass over
+    // the content; false when the loop has more passes than kMaxPasses (the rest are left out).
     template <class F>
-    void forEachPass(F f) const
+    bool forEachPass(F f) const
     {
         if (!loop) {
-            f(playStart, playStop.value_or(kInf), time);
-            return;
+            f(playStart, playStop.value_or(kInf), time, true);
+            return true;
         }
-        f(playStart, loopEnd, time);
+        f(playStart, loopEnd, time, true);
         const double len = loopEnd - loopStart;
         double u = loopEnd - playStart;
-        for (int pass = 0; u < duration && pass < 100000; ++pass, u += len) f(loopStart, loopEnd, time + u);
+        int pass = 0;
+        for (; u < duration && pass < kMaxPasses; ++pass, u += len) f(loopStart, loopEnd, time + u, false);
+        return u >= duration;
     }
 };
 
@@ -265,6 +286,18 @@ struct TrackDef {
     std::vector<LaneContent> lanes;  // [0] = the track's own
     int automation = 0;
 
+    std::set<std::string> laneNames;  // nested lanes met so far (CC6)
+
+    // A nested lane's name, numbered when the track has one of that name already
+    // ("Take 1", "Take 1 2"), so lanes stay apart (crosscheck #23, CC6).
+    std::string uniqueLaneName(const std::string& n)
+    {
+        std::string out = n;
+        for (int k = 2; laneNames.count(out) > 0; ++k) out = n + " " + std::to_string(k);
+        laneNames.insert(out);
+        return out;
+    }
+
     LaneContent& lane(const std::string& laneName)
     {
         for (auto& l : lanes) {
@@ -281,7 +314,12 @@ std::string label(const TrackDef& t) { return "Track \"" + t.name + "\""; }
 
 class Reader {
 public:
-    Reader(DawImportResult& result, const Times& times) : result_(result), times_(times) {}
+    // markersLikeLanes: a file from mini-daw before 0.28.2, which wrote the
+    // arrangement's Markers in seconds without saying so (crosscheck #23, CC1).
+    Reader(DawImportResult& result, const Times& times, bool markersLikeLanes = false)
+        : result_(result), times_(times), markersLikeLanes_(markersLikeLanes)
+    {
+    }
 
     std::vector<TrackDef> tracks;
     std::vector<std::pair<double, std::string>> markers;  // seconds, name
@@ -303,10 +341,14 @@ public:
     void readArrangement(pugi::xml_node arrangement)
     {
         if (!arrangement) return;
+        // Each element takes its unit from its own scope: the Arrangement's for
+        // its Markers, not the Lanes' next to them (crosscheck #23, CC1).
+        const TimeUnit own = unitOf(arrangement, TimeUnit::Beats);
         const pugi::xml_node lanes = arrangement.child("Lanes");
-        const TimeUnit unit = unitOf(lanes, TimeUnit::Beats);
+        const TimeUnit unit = unitOf(lanes, own);
         walk(lanes, unit, -1, "");
-        for (pugi::xml_node m : arrangement.children("Markers")) readMarkers(m, unitOf(m, unit));
+        const TimeUnit markerUnit = markersLikeLanes_ ? unit : own;
+        for (pugi::xml_node m : arrangement.children("Markers")) readMarkers(m, unitOf(m, markerUnit));
         const pugi::xml_node tempo = arrangement.child("TempoAutomation");
         if (tempo && tempo.first_child()) {
             note("Tempo changes (the file's tempo " + std::to_string(static_cast<int>(std::lround(60.0 / times_.secondsPerBeat))) +
@@ -342,6 +384,9 @@ private:
         } else if (group) {
             t.skip = true;
             note(label(t) + ": a group; its tracks are imported, its own volume, mute and effects are not");
+        } else if (role == "submix" || role == "vca") {  // without tracks of its own (CC8)
+            t.skip = true;
+            note(label(t) + ": a " + (role == "vca" ? std::string("VCA") : std::string("submix")) + " channel");
         }
         if (!t.skip) readChannel(ch, t);
         tracks.push_back(std::move(t));
@@ -420,13 +465,19 @@ private:
                 if (ct != track) cl.clear();
             }
             if (kind == "Lanes") {
-                if (!c.attribute("track") && track >= 0) {  // a lane of the track: a track of its own
+                const bool ownLane = !c.attribute("track") && track >= 0;  // a lane of the track: a track of its own
+                if (ownLane) {
                     ++laneNumber;
                     std::string n = c.attribute("name").value();
                     if (n.empty()) n = "lane " + std::to_string(laneNumber);
-                    cl = lane.empty() ? n : lane + " " + n;
+                    cl = tracks[static_cast<std::size_t>(ct)].uniqueLaneName(lane.empty() ? n : lane + " " + n);
                 }
+                const std::size_t lanesBefore = ct >= 0 ? tracks[static_cast<std::size_t>(ct)].lanes.size() : 0;
                 walk(c, cu, ct, cl);
+                // Nothing came from it or from lanes inside it (names are unique: no lane gets content twice).
+                if (ownLane && tracks[static_cast<std::size_t>(ct)].lanes.size() == lanesBefore) {
+                    note(label(tracks[static_cast<std::size_t>(ct)]) + ": the lane \"" + cl + "\" (nothing on it to import)");
+                }
             } else if (kind == "Clips") {
                 for (pugi::xml_node clip : c.children("Clip")) readClip(clip, cu, ct, cl);
             } else if (kind == "Notes" || kind == "Audio" || kind == "Warps") {
@@ -484,9 +535,19 @@ private:
             m.loopEnd = times_.sec(*le, cu);
             if (m.duration == kInf) m.duration = m.loopEnd - m.playStart;  // no length: one pass
         }
+        if (tooFar(m.time) || (m.duration != kInf && tooFar(m.time + m.duration)) || tooFar(m.playStart) ||
+            (m.playStop && tooFar(*m.playStop)) || (m.loop && (tooFar(m.loopStart) || tooFar(m.loopEnd)))) {
+            note(what + " (it lies more than 24 hours from the song's start)");
+            return;
+        }
         const TimeUnit fu = unitOf(clip, unit, "fadeTimeUnit");
-        const double fadeIn = times_.sec(number(clip, "fadeInTime").value_or(0.0), fu);
-        const double fadeOut = times_.sec(number(clip, "fadeOutTime").value_or(0.0), fu);
+        double fadeIn = times_.sec(number(clip, "fadeInTime").value_or(0.0), fu);
+        double fadeOut = times_.sec(number(clip, "fadeOutTime").value_or(0.0), fu);
+        if (fadeIn < 0.0 || fadeOut < 0.0) {  // a cross-fade with the clip next to it (CC7)
+            note(what + " (its cross-fade: played without it)");
+            fadeIn = std::max(0.0, fadeIn);
+            fadeOut = std::max(0.0, fadeOut);
+        }
 
         pugi::xml_node content = clip.first_child();
         while (content && content.type() != pugi::node_element) content = content.next_sibling();
@@ -512,7 +573,10 @@ private:
         const TimeUnit inner = unitOf(content, cu);
         if (kind == "Notes") {
             LaneContent& l = t.lane(lane);
-            readNotes(content, inner, m, l);
+            if (!readNotes(content, inner, m, l)) {
+                note(context + " (a loop of more than " + std::to_string(ClipMap::kMaxPasses) +
+                     " passes: the passes after that)");
+            }
             ++l.noteClips;
             l.notesFrom = std::min(l.notesFrom, m.time);
             if (m.duration != kInf) l.notesTo = std::max(l.notesTo, m.time + m.duration);
@@ -532,7 +596,9 @@ private:
             for (pugi::xml_node p : content.children("Warp")) {
                 const auto a = number(p, "time");
                 const auto b = number(p, "contentTime");
-                if (a && b) w.push_back({times_.sec(*a, inner), times_.sec(*b, wcu)});
+                if (a && b && !tooFar(times_.sec(*a, inner)) && !tooFar(times_.sec(*b, wcu))) {
+                    w.push_back({times_.sec(*a, inner), times_.sec(*b, wcu)});
+                }
             }
             std::sort(w.begin(), w.end(), [](const WarpPoint& a, const WarpPoint& b) { return a.time < b.time; });
             bool ownSpeed = true;
@@ -578,34 +644,45 @@ private:
         return !p.path.empty();
     }
 
-    void readNotes(pugi::xml_node notes, TimeUnit unit, const ClipMap& m, LaneContent& l)
+    // False when a loop had more passes than ClipMap::kMaxPasses.
+    bool readNotes(pugi::xml_node notes, TimeUnit unit, const ClipMap& m, LaneContent& l)
     {
-        const double windowEnd = m.time + m.duration;
+        const double windowEnd = std::min(m.time + m.duration, kMaxSongSeconds);
+        bool allPasses = true;
         for (pugi::xml_node n : notes.children("Note")) {
             const auto time = number(n, "time");
             const auto dur = number(n, "duration");
             const int key = n.attribute("key").as_int(-1);
             if (!time || !dur || key < 0 || key > 127) continue;
             const double c = times_.sec(*time, unit);
-            const double d = std::max(0.0, times_.sec(*dur, unit));
-            m.forEachPass([&](double from, double to, double at) {
-                if (c < from || c >= to) return;
-                const double start = at + (c - from);
+            const double d = std::min(std::max(0.0, times_.sec(*dur, unit)), kMaxSongSeconds);
+            if (tooFar(c)) continue;
+            allPasses = m.forEachPass([&](double from, double to, double at, bool first) {
+                double cc = c;
+                double dd = d;
+                if (first && c < from && c + d > from) {  // sounding when the clip starts: from there (CC8)
+                    dd = c + d - from;
+                    cc = from;
+                }
+                if (cc < from || cc >= to) return;
+                const double start = at + (cc - from);
                 if (start >= windowEnd) return;
                 NoteOut o;
                 o.time = start;
-                o.duration = std::min({start + d, at + (to - from), windowEnd}) - start;
+                o.duration = std::min({start + dd, at + (to - from), windowEnd}) - start;
                 o.channel = std::clamp(n.attribute("channel").as_int(0), 0, 15);
                 o.key = key;
                 if (const auto v = number(n, "vel")) o.vel = *v;
                 if (const auto r = number(n, "rel")) o.rel = *r;
                 l.notes.push_back(o);
-            });
+            }) && allPasses;
         }
+        return allPasses;
     }
 
     DawImportResult& result_;
     const Times& times_;
+    bool markersLikeLanes_ = false;
     int unknownClipTracks_ = 0;
     int automationNoTrack_ = 0;
 };
@@ -651,15 +728,18 @@ private:
 struct Placed {
     const AudioPiece* piece = nullptr;
     Source* source = nullptr;
-    double duration = 0.0;  // the clip's length on the arrangement (finite)
+    double duration = 0.0;    // how long it sounds on the arrangement (finite; ends with its content, CC3)
+    double clipLength = 0.0;  // the clip's own length: its fade-out ends there
     std::unique_ptr<SincKernel> kernel;
 };
 
 // All audio pieces of one lane into one WAV at `rate`, from the first piece's
 // start; false with `error` when it cannot be written. `startFrame` gets its place.
+// `clipped` counts the samples above full scale (overlapping clips added, CC7).
 bool renderAudio(std::vector<Placed>& placed, unsigned int rate, const fs::path& out, std::int64_t& startFrame,
-                 unsigned int& channelsOut, std::string& error)
+                 unsigned int& channelsOut, std::uint64_t& clipped, std::string& error)
 {
+    clipped = 0;
     double from = kInf;
     double to = 0.0;
     channelsOut = 1;
@@ -697,7 +777,9 @@ bool renderAudio(std::vector<Placed>& placed, unsigned int rate, const fs::path&
                 const double pos = warpAt(a.warps, *c) * srcRate;  // in source frames
                 float gain = 1.0f;
                 if (a.fadeIn > 0.0 && u < a.fadeIn) gain *= static_cast<float>(u / a.fadeIn);
-                if (a.fadeOut > 0.0 && p.duration - u < a.fadeOut) gain *= static_cast<float>((p.duration - u) / a.fadeOut);
+                if (a.fadeOut > 0.0 && p.clipLength - u < a.fadeOut) {
+                    gain *= static_cast<float>(std::max(0.0, p.clipLength - u) / a.fadeOut);
+                }
                 const double whole = std::round(pos);
                 for (unsigned int ch = 0; ch < channelsOut; ++ch) {
                     const unsigned int sc = std::min(ch, srcCh - 1);  // mono → both sides
@@ -715,6 +797,9 @@ bool renderAudio(std::vector<Placed>& placed, unsigned int rate, const fs::path&
                     buf[i * channelsOut + ch] += v * gain;
                 }
             }
+        }
+        for (std::size_t i = 0; i < n * channelsOut; ++i) {
+            if (std::abs(buf[i]) > 1.0f) ++clipped;
         }
         if (!w.write(buf.data(), n, error)) {
             std::string ignored;
@@ -809,10 +894,17 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         result.error = "the file is in DAWproject version " + version + "; mini-daw reads version 1";
         return result;
     }
+    bool oldMiniDaw = false;  // its Markers in seconds without saying so (CC1)
     if (const pugi::xml_node app = project.child("Application")) {
         result.application = std::string(app.attribute("name").value());
         const std::string v = app.attribute("version").value();
         if (!v.empty()) result.application += " " + v;
+        if (result.application.rfind("mini-daw", 0) == 0) {
+            int major = 0, minor = 0, patch = 0;
+            if (std::sscanf(v.c_str(), "%d.%d.%d", &major, &minor, &patch) == 3) {
+                oldMiniDaw = major == 0 && (minor < 28 || (minor == 28 && patch < 2));
+            }
+        }
     }
     std::string metaText;
     std::string projectComment;
@@ -830,7 +922,7 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
     if (const auto bpm = number(project.child("Transport").child("Tempo"), "value"); bpm && *bpm > 0.0) {
         times.secondsPerBeat = 60.0 / *bpm;
     }
-    Reader reader(result, times);
+    Reader reader(result, times, oldMiniDaw);
     reader.readStructure(project.child("Structure"));
     reader.readArrangement(project.child("Arrangement"));
     if (const pugi::xml_node scenes = project.child("Scenes"); scenes && scenes.child("Scene")) {
@@ -842,16 +934,18 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
     // 2. The project folder and the recording folder for the files.
     std::error_code ec;
     const bool folderWasThere = fs::exists(projectFolder, ec);
+    const fs::path takes = projectFolder / "takes";
+    const bool takesWasThere = fs::exists(takes, ec);  // before createProjectFolder makes it (CC9)
     if (!createProjectFolder(projectFolder, error)) {
         result.error = error;
         return result;
     }
-    const fs::path takes = projectFolder / "takes";
-    const bool takesWasThere = fs::exists(takes, ec);
     const fs::path takeDir = takes / takeFolderName;
     if (fs::exists(takeDir, ec) || !fs::create_directories(takeDir, ec)) {
         result.error = "cannot make " + pathToUtf8(takeDir) + (ec ? ": " + ec.message() : " (it is there already)");
-        if (!folderWasThere) fs::remove(projectFolder, ec);
+        std::error_code e;
+        if (!takesWasThere) fs::remove(takes, e);           // only when empty
+        if (!folderWasThere) fs::remove(projectFolder, e);  // only when empty
         return result;
     }
     const fs::path unpacked = takeDir / ".unpacked";
@@ -864,7 +958,9 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         if (!takesWasThere) fs::remove(takes, e);
         if (!folderWasThere) fs::remove(projectFolder, e);  // only when empty
     };
+    std::map<std::string, std::unique_ptr<Source>> sources;  // by ZIP entry or path
     auto fail = [&](const std::string& why) {
+        sources.clear();  // closes the files first: Windows cannot remove open ones (CC2)
         cleanUp(true);
         DawImportResult r;
         r.error = why;
@@ -875,8 +971,17 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
     ProjectData data;
     data.sampleRate = rate;
     data.note = projectComment;
-    std::map<std::string, std::unique_ptr<Source>> sources;  // by ZIP entry or path
     int unpackedFiles = 0;
+    // An external file: only one in the .dawproject file's folder or below it, so a
+    // file cannot copy files from elsewhere on the computer into the project (CC5).
+    const fs::path fileFolder = (file.has_parent_path() ? fs::absolute(file.parent_path(), ec) : fs::current_path(ec)).lexically_normal();
+    auto externalPath = [&](const std::string& text) -> fs::path {
+        const fs::path p = pathFromUtf8(text);
+        if (p.is_absolute() || p.has_root_name() || p.has_root_directory()) return {};
+        const fs::path full = (fileFolder / p).lexically_normal();
+        if (!isInsideFolder(full, fileFolder)) return {};
+        return full;
+    };
     auto sourceFor = [&](const AudioPiece& p, const std::string& who) -> Source* {
         const std::string key = (p.external ? "file:" : "zip:") + p.path;
         if (auto it = sources.find(key); it != sources.end()) return it->second.get();
@@ -889,8 +994,11 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         fs::path path;
         std::string err;
         if (p.external) {
-            path = pathFromUtf8(p.path);
-            if (path.is_relative()) path = file.parent_path() / path;
+            path = externalPath(p.path);
+            if (path.empty()) {
+                result.leftOut.push_back(who + ": " + p.path + " (outside the file's folder)");
+                return nullptr;
+            }
         } else {
             std::error_code e;
             fs::create_directories(unpacked, e);
@@ -912,6 +1020,8 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         return raw;
     };
 
+    int takesWritten = 0;
+    auto testFailure = [&]() { return detail::importFailAfterTakes >= 0 && takesWritten++ >= detail::importFailAfterTakes; };
     double recordingFrom = kInf;  // the earliest take: where the marks count from
     int trackNumber = 0;
     for (TrackDef& def : reader.tracks) {
@@ -941,15 +1051,19 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
                         std::string err;
                         bool got = false;
                         if (def.stateExternal) {
-                            fs::path p = pathFromUtf8(def.statePath);
-                            if (p.is_relative()) p = file.parent_path() / p;
-                            std::FILE* f = openRead(p);
-                            if (f) {
+                            const fs::path p = externalPath(def.statePath);
+                            std::FILE* f = p.empty() ? nullptr : openRead(p);
+                            if (p.empty()) {
+                                err = def.statePath + " is outside the file's folder";
+                            } else if (f) {
                                 char buf[65536];
                                 std::size_t k;
-                                while ((k = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.append(buf, k);
+                                while ((k = std::fread(buf, 1, sizeof buf, f)) > 0 && bytes.size() <= kMaxInMemory) {
+                                    bytes.append(buf, k);
+                                }
                                 std::fclose(f);
-                                got = true;
+                                got = bytes.size() <= kMaxInMemory;
+                                if (!got) err = def.statePath + " is too large";
                             } else {
                                 err = std::strerror(errno);
                             }
@@ -971,7 +1085,8 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
                 if (hasNotes) {
                     t.take = takeDir / pathFromUtf8(takeFileName(t));
                     std::string err;
-                    if (!writeNotes(lane, rate, t.take, baseName, t.takeStart, err)) {
+                    if (testFailure() || !writeNotes(lane, rate, t.take, baseName, t.takeStart, err)) {
+                        if (err.empty()) err = "no space left (test)";
                         return fail("cannot write " + pathToUtf8(t.take) + ": " + err);
                     }
                     recordingFrom = std::min(recordingFrom, static_cast<double>(t.takeStart) / rate);
@@ -995,28 +1110,51 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
                     Source* s = sourceFor(p, label(def));
                     if (!s) continue;
                     double d = p.map.duration;
-                    if (d == kInf) {  // no length: up to the end of the file (or playStop)
+                    if (!p.map.loop) {  // it sounds until its content ends (or playStop), at most its length (CC3)
                         double contentEnd = p.map.playStop.value_or(kInf);
                         if (contentEnd == kInf) {
                             // the content time where the audio file ends
                             contentEnd = p.warps.empty() ? s->seconds()
                                                          : p.warps.back().time + (s->seconds() - p.warps.back().content);
                         }
-                        d = std::max(0.0, contentEnd - p.map.playStart);
+                        d = std::min(d, std::max(0.0, contentEnd - p.map.playStart));
                     }
-                    if (d <= 0.0) continue;
+                    if (!(d > 0.0)) continue;
                     Placed pl;
                     pl.piece = &p;
                     pl.source = s;
                     pl.duration = d;
+                    pl.clipLength = p.map.duration == kInf ? d : p.map.duration;
                     placed.push_back(std::move(pl));
+                }
+                // One WAV per track: at most what a WAV file holds (4 GB, stereo 24-bit), and
+                // at most 3 hours from the first clip; later clips are left out (CC3).
+                std::stable_sort(placed.begin(), placed.end(),
+                                 [](const Placed& a, const Placed& b) { return a.piece->map.time < b.piece->map.time; });
+                const double maxSpan = std::min(3.0 * 3600.0, (4294967295.0 - 1024.0 * 1024.0) / (rate * 2.0 * 3.0));
+                for (std::size_t i = 1; i < placed.size();) {
+                    if (placed[i].piece->map.time + placed[i].duration - placed.front().piece->map.time > maxSpan) {
+                        result.leftOut.push_back(label(def) + ": a clip at " +
+                                                 std::to_string(static_cast<long long>(placed[i].piece->map.time)) +
+                                                 " s (one track's audio can span at most " +
+                                                 std::to_string(static_cast<int>(maxSpan / 60.0)) + " minutes)");
+                        placed.erase(placed.begin() + static_cast<std::ptrdiff_t>(i));
+                    } else {
+                        ++i;
+                    }
                 }
                 if (!placed.empty()) {
                     t.take = takeDir / pathFromUtf8(takeFileName(t));
                     unsigned int channels = 2;
+                    std::uint64_t clipped = 0;
                     std::string err;
-                    if (!renderAudio(placed, rate, t.take, t.takeStart, channels, err)) {
+                    if (testFailure() || !renderAudio(placed, rate, t.take, t.takeStart, channels, clipped, err)) {
+                        if (err.empty()) err = "no space left (test)";
                         return fail("cannot write " + pathToUtf8(t.take) + ": " + err);
+                    }
+                    if (clipped > 0) {
+                        result.leftOut.push_back(label(def) + ": " + std::to_string(clipped) +
+                                                 " sample(s) above full scale, clipped (clips added where they overlap)");
                     }
                     t.channels = channels == 1 ? std::vector<unsigned int>{0} : std::vector<unsigned int>{0, 1};
                     recordingFrom = std::min(recordingFrom, static_cast<double>(t.takeStart) / rate);

@@ -13,4 +13,8 @@ expect tracks.1.kind midi
 wait-for 5 tracks.1.loaded == true
 expect tracks.1.instrument "mini-daw Test Synth"
 expect tracks.2.kind audio
+stop-on-failure off
 import "@WORK@/out/Song.dawproject" "@WORK@/project"   # an existing project is not overwritten
+# Not inside the open project ("imported"), also when written with ".." (crosscheck #23, CC4 / CC10)
+import "@WORK@/out/Song.dawproject" "@WORK@/imported/sub"
+import "@WORK@/out/Song.dawproject" "@WORK@/other/../imported/sub2"

@@ -28,3 +28,22 @@ User: "pushed it, check the CI run". The user's re-run of 44339405990 had not st
 
 - windows, linux, licence green; Linux 244/244, Windows 230/230; both "0.28.1 (commit a1ca7b2 …, CI run 44349222471)"; file version 0.28.1.96; `mini-daw-0.28.1-setup.exe`.
 - Installer: user: "Nothing, I missed it". `dist/TESTS.txt` now names the setup first, with T-PKG-03 (install) and T-UI-32 (version / About).
+
+## 4. P28b: crosscheck #23 fixes (version 0.28.2)
+
+User: "yes fix CC1–CC11, CC1 first".
+
+- CC1: the export writes `timeUnit="seconds"` on Markers. The import reads Markers in the Arrangement's unit. Files from mini-daw before 0.28.2 are read as they were meant.
+- CC2–CC9:
+  - files are closed before a failed import is removed;
+  - limits on clip places and lengths and on one track's WAV;
+  - external files only from the file's folder;
+  - lanes with the same name are numbered;
+  - lines for cross-fades, clipping, submix / VCA tracks, empty lanes and cut loops;
+  - a note still sounding at a clip's start plays from there;
+  - the fade-out ends at the clip's end.
+  - Found along the way (CC9): `takes` was checked after it had been made, so a failed import left the new project folder behind.
+- CC4 / CC10: the folder is made absolute. The window says "Choose a folder outside the open project …". The "Auto record" track is counted in the export's track count. The Spec, Plan and Tests texts are updated.
+- CC11: tests for all of these, plus WAV formats, the Browse… file list and a write failure (a test switch in the import).
+- Linux 249/249, Wine 232/232.
+- Also checked (new global rule): the repo has no releases, so the artifact cleanup does not apply (178 artifacts, 42 older than 14 days, 43 MB).

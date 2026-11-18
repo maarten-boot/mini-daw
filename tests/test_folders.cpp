@@ -61,6 +61,31 @@ TEST_CASE("T-UI-21: folder text cleaned, folders listed, where browsing starts",
     CHECK(!filesystemRoots().empty());
 }
 
+TEST_CASE("T-UI-21c: files of one kind listed for Browse... (P28, crosscheck #23 CC11)", "[folders][T-UI-21]")
+{
+    TempDir dir;
+    fs::create_directories(dir / "Songs");
+    fs::create_directories(dir / ".hidden");
+    std::ofstream(dir / "b.dawproject") << "x";
+    std::ofstream(dir / "A Song.DAWPROJECT") << "x";  // any case
+    std::ofstream(dir / ".old.dawproject") << "x";    // hidden
+    std::ofstream(dir / "notes.txt") << "x";
+    std::ofstream(dir / "dawproject") << "x";         // no extension
+    fs::create_directories(dir / "folder.dawproject");  // a folder, not a file
+
+    const auto list = listFolder(dir.path(), false, ".dawproject");
+    CHECK(list.error.empty());
+    REQUIRE(list.files.size() == 2);
+    CHECK(list.files[0].filename() == "A Song.DAWPROJECT");
+    CHECK(list.files[1].filename() == "b.dawproject");
+    REQUIRE(list.folders.size() == 2);
+    CHECK(list.folders[0].filename() == "folder.dawproject");
+    CHECK(list.folders[1].filename() == "Songs");
+    CHECK(listFolder(dir.path(), true, ".dawproject").files.size() == 3);
+    CHECK(listFolder(dir.path(), false, "").files.empty());  // folders only, as listSubfolders
+    CHECK(listSubfolders(dir.path(), false).files.empty());
+}
+
 TEST_CASE("T-VST-32: an instrument folder is checked before it is added", "[folders][vst][T-VST-32]")
 {
     TempDir dir;

@@ -2513,7 +2513,8 @@ void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
                   std::to_string(r.instruments) + " instrument(s), " + std::to_string(r.markers) + " marker(s).");
     if (r.autoRecordParts > 0) {
         rep.push_back(std::to_string(r.autoRecordParts) +
-                      " auto record part(s) that no track plays: on the muted track \"Auto record\", a lane per file.");
+                      " auto record part(s) that no track plays: on the muted track \"Auto record\" (counted above), a lane per "
+                      "file.");
     }
     if (takesNotOnTrack > 0) {
         rep.push_back("Left out: " + std::to_string(takesNotOnTrack) +
@@ -2582,21 +2583,29 @@ std::filesystem::path dawImportTarget(const AppState& app)
     const std::string folder = minidaw::cleanPathText(app.dawImportFolder);
     const std::string name = minidaw::dawExportName(app.dawImportName);  // trimmed, a ".dawproject" dropped
     if (folder.empty() || name.empty()) return {};
-    return minidaw::pathFromUtf8(folder) / minidaw::pathFromUtf8(minidaw::safePresetName(name));
+    // Absolute and without "..", as Open and New do (crosscheck #23, CC4).
+    return cleanFolder(minidaw::pathFromUtf8(folder) / minidaw::pathFromUtf8(minidaw::safePresetName(name)));
+}
+
+// A new project may not be the open one or inside it (no nested projects, N9).
+bool insideOpenProject(const AppState& app, const std::filesystem::path& folder)
+{
+    return !app.projectFolder.empty() &&
+           (folder == app.projectFolder || minidaw::isInsideFolder(folder, app.projectFolder));
 }
 
 // Makes the project and opens it; the report goes into app.dawImportReport
 // and the log. False (with `why`) when nothing was imported or it could not be opened.
-bool importDawProjectNow(AppState& app, const std::filesystem::path& file, const std::filesystem::path& folder,
+bool importDawProjectNow(AppState& app, const std::filesystem::path& file, const std::filesystem::path& typedFolder,
                          std::string& why)
 {
     auto& rep = app.dawImportReport;
     rep.clear();
+    const std::filesystem::path folder = cleanFolder(typedFolder);  // a relative path or ".." (CC4)
     if (app.session.recording()) {
         why = "not while recording";
-    } else if (!app.projectFolder.empty() &&
-               (folder == app.projectFolder || minidaw::isInsideFolder(folder, app.projectFolder))) {
-        why = "choose a folder outside the open project";  // no nested projects (N9)
+    } else if (insideOpenProject(app, folder)) {
+        why = "choose a folder outside the open project";
     }
     if (!why.empty()) {
         rep.push_back("Not imported: " + why);
@@ -2686,6 +2695,8 @@ void drawDawImportWindow(AppState& app)
                                                                           : "Type a name for the project.";
         } else if (minidaw::isProjectFolder(target)) {
             problem = "A project " + minidaw::pathToUtf8(target) + " is there already: choose another name.";
+        } else if (insideOpenProject(app, target)) {  // said before Import, not after (CC10)
+            problem = "Choose a folder outside the open project " + minidaw::pathToUtf8(app.projectFolder) + ".";
         }
         if (problem.empty()) ImGui::TextWrapped("New project: %s", minidaw::pathToUtf8(target).c_str());
         else ImGui::TextWrapped("%s", problem.c_str());

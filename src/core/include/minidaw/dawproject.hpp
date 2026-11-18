@@ -129,4 +129,10 @@ DawImportResult importDawProject(const std::filesystem::path& file, const std::f
 // case); "" when it is not one.
 std::string vst3ClassFromDeviceId(const std::string& deviceId);
 
+namespace detail {
+// Tests only (crosscheck #23, CC2 / CC11): when >= 0, the import fails as a disk
+// would after writing this many take files, to check what it removes.
+extern int importFailAfterTakes;
+} // namespace detail
+
 } // namespace minidaw

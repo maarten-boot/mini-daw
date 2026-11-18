@@ -339,6 +339,9 @@ TEST_CASE("T-PRJ-10: a project exported as a .dawproject file", "[project][dawpr
 
     // The marks of the recording, once, on the timeline (it starts at 1 s).
     std::vector<pugi::xml_node> marks;
+    // In seconds by its own attribute: Markers is not inside the Lanes, so it
+    // would be beats otherwise (crosscheck #23, CC1).
+    CHECK(std::string(project.child("Arrangement").child("Markers").attribute("timeUnit").value()) == "seconds");
     for (pugi::xml_node m : project.child("Arrangement").child("Markers").children("Marker")) marks.push_back(m);
     REQUIRE(marks.size() == 2);
     CHECK(marks[0].attribute("time").as_double() == 1.75);
@@ -632,7 +635,7 @@ TEST_CASE("T-PRJ-10: auto record parts that no track plays on an \"Auto record\"
     const fs::path out = dir.path / "auto.dawproject";
     const DawExportResult r = exportDawProject(p, rate, "auto", "0.1.0", out, parts);
     REQUIRE(r.ok);
-    CHECK(r.tracks == 1);  // the project's own; the Auto record track is counted as parts
+    CHECK(r.tracks == 2);  // the project's own and "Auto record" (crosscheck #23, CC10)
     CHECK(r.autoRecordParts == 2);
     CHECK(r.audioClips == 2);
     CHECK(r.noteClips == 1);

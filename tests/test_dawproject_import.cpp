@@ -1,11 +1,13 @@
 // T-PRJ-11: DAWproject import (P28, SPEC-PRJ-05).
 
 #include "minidaw/dawproject.hpp"
+#include "minidaw/path_util.hpp"
 #include "minidaw/presets.hpp"
 #include "minidaw/project.hpp"
 #include "minidaw/recording_notes.hpp"
 #include "minidaw/sinc_kernel.hpp"
 #include "minidaw/smf.hpp"
+#include "minidaw/version.hpp"
 #include "minidaw/wav.hpp"
 #include "minidaw/wav_reader.hpp"
 
@@ -13,6 +15,7 @@
 #include <miniz.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -140,6 +143,72 @@ std::vector<NoteSeen> notesOf(const fs::path& mid, unsigned int rate)
     return out;
 }
 
+// A WAV written byte by byte, every sample `values[channel]`: any bit depth, also
+// those mini-daw does not read (8-bit).
+std::string rawWav(unsigned int rate, unsigned int bits, bool isFloat, std::size_t frames, const std::vector<double>& values)
+{
+    std::string s;
+    auto u16 = [&](unsigned int v) { s += static_cast<char>(v & 0xFF); s += static_cast<char>((v >> 8) & 0xFF); };
+    auto u32 = [&](std::uint32_t v) { u16(v & 0xFFFF); u16(v >> 16); };
+    const auto channels = static_cast<unsigned int>(values.size());
+    const std::uint32_t dataBytes = static_cast<std::uint32_t>(frames * channels * (bits / 8));
+    s += "RIFF";
+    u32(36 + dataBytes);
+    s += "WAVEfmt ";
+    u32(16);
+    u16(isFloat ? 3 : 1);
+    u16(channels);
+    u32(rate);
+    u32(rate * channels * (bits / 8));
+    u16(channels * (bits / 8));
+    u16(bits);
+    s += "data";
+    u32(dataBytes);
+    for (std::size_t i = 0; i < frames; ++i) {
+        for (double v : values) {
+            if (isFloat) {
+                const float f = static_cast<float>(v);
+                std::uint32_t b = 0;
+                std::memcpy(&b, &f, 4);
+                u32(b);
+            } else if (bits == 8) {
+                s += static_cast<char>(static_cast<int>(std::lround(128 + v * 127)));
+            } else {
+                const double full = bits == 16 ? 32768.0 : 2147483648.0;
+                const auto x = static_cast<std::int64_t>(std::llround(v * full));
+                if (bits == 16) u16(static_cast<unsigned int>(x) & 0xFFFF);
+                else u32(static_cast<std::uint32_t>(x));
+            }
+        }
+    }
+    return s;
+}
+
+// One audio clip per track at 0 s, in seconds, 120 bpm: {track name, ZIP entry}.
+std::string audioTracksXml(const std::vector<std::pair<std::string, std::string>>& tracks)
+{
+    std::string structure;
+    std::string lanes;
+    int n = 0;
+    for (const auto& [name, entry] : tracks) {
+        const std::string id = "t" + std::to_string(++n);
+        structure += "<Track contentType=\"audio\" id=\"" + id + "\" name=\"" + name + "\"><Channel role=\"regular\" id=\"c" +
+                     id + "\"/></Track>";
+        lanes += "<Lanes track=\"" + id + "\" id=\"l" + id + "\"><Clips id=\"k" + id +
+                 "\"><Clip time=\"0\"><Audio channels=\"1\" sampleRate=\"48000\" duration=\"1\"><File path=\"" + entry +
+                 "\"/></Audio></Clip></Clips></Lanes>";
+    }
+    return "<Project version=\"1.0\"><Application name=\"Some DAW\" version=\"1\"/><Structure>" + structure +
+           "</Structure><Arrangement id=\"arr\"><Lanes timeUnit=\"seconds\" id=\"l0\">" + lanes +
+           "</Lanes></Arrangement></Project>";
+}
+
+// Sets the test failure switch and sets it back afterwards.
+struct FailAfterTakes {
+    explicit FailAfterTakes(int n) { detail::importFailAfterTakes = n; }
+    ~FailAfterTakes() { detail::importFailAfterTakes = -1; }
+};
+
 bool hasLine(const DawImportResult& r, const std::string& text)
 {
     for (const auto& l : r.leftOut) {
@@ -258,13 +327,13 @@ TEST_CASE("T-PRJ-11: mini-daw's own export comes back", "[project][dawimport][T-
     cut.mute = true;
     p.tracks = {vocal, synth, sound, cut};
     const fs::path file = dir.path / "Song.dawproject";
-    REQUIRE(exportDawProject(p, rate, "Song", "0.1.0", file).ok);
+    REQUIRE(exportDawProject(p, rate, "Song", kVersion, file).ok);
 
     const fs::path folder = dir.path / "projects" / "Song again";
     const DawImportResult r = importDawProject(file, folder, rate, "take-20261116-130000");
     REQUIRE(r.ok);
     CHECK(r.error.empty());
-    CHECK(r.application == "mini-daw 0.1.0");
+    CHECK(r.application == std::string("mini-daw ") + kVersion);
     CHECK(r.title == "Song");
     CHECK(r.tracks == 4);
     CHECK(r.audioClips == 3);
@@ -328,7 +397,7 @@ TEST_CASE("T-PRJ-11: mini-daw's own export comes back", "[project][dawimport][T-
     RecordingNotes back;
     REQUIRE(loadRecordingNotes(folder / "takes" / "take-20261116-130000", back, err));
     CHECK(back.name == "Song");
-    CHECK(back.note.find("made with mini-daw 0.1.0") != std::string::npos);
+    CHECK(back.note.find(std::string("made with mini-daw ") + kVersion) != std::string::npos);
     REQUIRE(back.marks.size() == 1);
     // Exported 0.5 s after the recording's earliest take (the cut one at -0.25 s), so at 0.25 s; that
     // take now starts at 0, the earliest: the mark is 0.25 s into the imported recording.
@@ -574,4 +643,212 @@ TEST_CASE("T-PRJ-11: files that cannot be imported change nothing", "[project][d
     REQUIRE(ok.ok);
     CHECK(ok.tracks == 0);
     CHECK(isProjectFolder(dir.path / "new"));
+}
+
+TEST_CASE("T-PRJ-11: Markers take their unit from their own scope (crosscheck #23, CC1)", "[project][dawimport][T-PRJ-11]")
+{
+    TempDir dir;
+    const unsigned int rate = 48000;
+    writeWav(dir.path / "ramp.wav", rate, 1, rate);
+    // The Lanes in seconds, the Markers beside them without a unit: beats (4 beats at 120 bpm = 2 s).
+    auto markAt = [&](const std::string& app, const std::string& version, const std::string& markersUnit) {
+        const std::string xml =
+            "<Project version=\"1.0\"><Application name=\"" + app + "\" version=\"" + version +
+            "\"/><Transport><Tempo unit=\"bpm\" value=\"120\"/></Transport><Structure><Track contentType=\"audio\" "
+            "id=\"a\" name=\"A\"><Channel role=\"regular\" id=\"ac\"/></Track></Structure><Arrangement id=\"arr\">"
+            "<Lanes timeUnit=\"seconds\" id=\"l0\"><Lanes track=\"a\" id=\"l1\"><Clips id=\"c\"><Clip time=\"0\" "
+            "duration=\"1\"><Audio channels=\"1\" sampleRate=\"48000\" duration=\"1\"><File path=\"audio/ramp.wav\"/>"
+            "</Audio></Clip></Clips></Lanes></Lanes><Markers id=\"mk\"" + markersUnit +
+            "><Marker time=\"4\" name=\"M\"/></Markers></Arrangement></Project>";
+        const fs::path file = dir.path / (app + version + ".dawproject");
+        writeZip(file, {{"project.xml", xml}, {"audio/ramp.wav", fileBytes(dir.path / "ramp.wav")}});
+        const fs::path folder = dir.path / "projects" / (app + version + std::to_string(markersUnit.size()));
+        const DawImportResult r = importDawProject(file, folder, rate, "take-20261118-120000");
+        REQUIRE(r.ok);
+        RecordingNotes back;
+        std::string err;
+        REQUIRE(loadRecordingNotes(folder / "takes" / "take-20261118-120000", back, err));
+        REQUIRE(back.marks.size() == 1);
+        return back.marks[0].seconds;
+    };
+    CHECK(std::abs(markAt("Some DAW", "1.0", "") - 2.0) < 1e-9);
+    CHECK(std::abs(markAt("Some DAW", "1.0", " timeUnit=\"seconds\"") - 4.0) < 1e-9);
+    // mini-daw before 0.28.2 wrote seconds without saying so: read as it meant them.
+    CHECK(std::abs(markAt("mini-daw", "0.1.0", "") - 4.0) < 1e-9);
+    CHECK(std::abs(markAt("mini-daw", "0.28.1", "") - 4.0) < 1e-9);
+    CHECK(std::abs(markAt("mini-daw", "0.28.2", "") - 2.0) < 1e-9);
+}
+
+TEST_CASE("T-PRJ-11: WAV formats (crosscheck #23, CC11)", "[project][dawimport][T-PRJ-11]")
+{
+    TempDir dir;
+    const unsigned int rate = 48000;
+    const fs::path file = dir.path / "formats.dawproject";
+    writeZip(file, {{"project.xml", audioTracksXml({{"s16", "audio/s16.wav"},
+                                                    {"s32", "audio/s32.wav"},
+                                                    {"f32", "audio/f32.wav"},
+                                                    {"three", "audio/three.wav"},
+                                                    {"u8", "audio/u8.wav"}})},
+                    {"audio/s16.wav", rawWav(rate, 16, false, 1000, {0.25})},
+                    {"audio/s32.wav", rawWav(rate, 32, false, 1000, {0.25})},
+                    {"audio/f32.wav", rawWav(rate, 32, true, 1000, {0.25})},
+                    {"audio/three.wav", rawWav(rate, 16, false, 1000, {0.25, -0.25, 0.5})},
+                    {"audio/u8.wav", rawWav(rate, 8, false, 1000, {0.25})}});
+    const fs::path folder = dir.path / "projects" / "Formats";
+    const DawImportResult r = importDawProject(file, folder, rate, "take-20261118-120000");
+    REQUIRE(r.ok);
+    for (const auto& l : r.leftOut) INFO(l);
+    CHECK(hasLine(r, "audio/three.wav has 3 channels; the first two are used"));
+    CHECK(hasLine(r, "audio/u8.wav could not be read"));
+    CHECK(r.leftOut.size() == 2);
+    const ProjectData d = loadImported(folder);
+    unsigned int wr = 0;
+    unsigned int wc = 0;
+    for (const char* name : {"s16", "s32", "f32"}) {
+        INFO(name);
+        const auto got = readWav(trackNamed(d, name).take, wr, wc);
+        REQUIRE(wc == 1);
+        REQUIRE(got.size() == 1000);
+        CHECK(std::abs(got[500] - 0.25f) < 1e-4f);
+    }
+    const auto three = readWav(trackNamed(d, "three").take, wr, wc);
+    REQUIRE(wc == 2);
+    CHECK(std::abs(three[1000] - 0.25f) < 1e-4f);
+    CHECK(std::abs(three[1001] + 0.25f) < 1e-4f);
+    CHECK(trackNamed(d, "u8").take.empty());  // the track stays, without audio
+}
+
+TEST_CASE("T-PRJ-11: limits and what is listed (crosscheck #23, CC3, CC5-CC8)", "[project][dawimport][T-PRJ-11]")
+{
+    TempDir dir;
+    const unsigned int rate = 48000;
+    writeWav(dir.path / "ramp.wav", rate, 1, rate);       // 1 s, up to 0.4995
+    writeWav(dir.path / "half.wav", rate, 1, rate / 2);   // 0.5 s
+    writeWav(dir.path / "outside.wav", rate, 1, rate / 4);
+    fs::create_directories(dir.path / "sub");
+    writeWav(dir.path / "sub" / "inside.wav", rate, 1, rate / 4);
+    const std::string absolute = pathToUtf8(dir.path / "outside.wav");
+    auto clip = [](const std::string& attrs, const std::string& path, const std::string& file = "") {
+        return "<Clip " + attrs + " contentTimeUnit=\"seconds\"><Audio channels=\"1\" sampleRate=\"48000\" duration=\"1\"><File " +
+               file + "path=\"" + path + "\"/></Audio></Clip>";
+    };
+    auto track = [](const std::string& id, const std::string& name, const std::string& channel = "<Channel role=\"regular\"/>",
+                    const std::string& type = "audio") {
+        return "<Track contentType=\"" + type + "\" id=\"" + id + "\" name=\"" + name + "\">" + channel + "</Track>";
+    };
+    auto lanes = [](const std::string& id, const std::string& inside) {
+        return "<Lanes track=\"" + id + "\">" + inside + "</Lanes>";
+    };
+    const std::string xml =
+        "<Project version=\"1.0\"><Application name=\"Some DAW\" version=\"1\"/>"
+        "<Transport><Tempo unit=\"bpm\" value=\"120\"/></Transport><Structure>" +
+        track("a", "Long") + track("b", "Fade") + track("c", "Cross") + track("d", "Loud") +
+        track("e", "Bus", "<Channel role=\"submix\"/>") +
+        track("f", "Hot", "<Channel role=\"regular\"><Volume unit=\"decibel\" value=\"10\"/></Channel>") +
+        track("g", "Lanes") + track("h", "Ext") + track("n", "Notes", "<Channel role=\"regular\"/>", "notes") +
+        "</Structure><Arrangement><Lanes timeUnit=\"seconds\">" +
+        // A clip far longer than its file ends with the file; one a day later is left out (CC3).
+        lanes("a", "<Clips>" + clip("time=\"0\" duration=\"1000\"", "audio/half.wav") +
+                       clip("time=\"100000\" duration=\"1\"", "audio/half.wav") + "</Clips>") +
+        // Its content stops at 0.5 s, its fade-out is in the clip's last 0.5 s: what sounds is not faded (CC7).
+        lanes("b", "<Clips>" + clip("time=\"0\" duration=\"1\" playStop=\"0.5\" fadeOutTime=\"0.5\"", "audio/ramp.wav") +
+                       "</Clips>") +
+        lanes("c", "<Clips>" + clip("time=\"0\" duration=\"0.5\" fadeInTime=\"-0.1\"", "audio/ramp.wav") + "</Clips>") +
+        lanes("d", "<Clips>" + clip("time=\"0\" duration=\"1\"", "audio/ramp.wav") +
+                       clip("time=\"0\" duration=\"1\"", "audio/ramp.wav") + clip("time=\"0\" duration=\"1\"", "audio/ramp.wav") +
+                       "</Clips>") +
+        lanes("f", "<Clips>" + clip("time=\"0\" duration=\"0.5\"", "audio/half.wav") + "</Clips>") +
+        // Two lanes of one name stay apart; an empty one is listed (CC6, CC8).
+        lanes("g", "<Lanes name=\"Take 1\"><Clips>" + clip("time=\"0\"", "audio/ramp.wav") +
+                       "</Clips></Lanes><Lanes name=\"Take 1\"><Clips>" + clip("time=\"0\"", "audio/half.wav") +
+                       "</Clips></Lanes><Lanes name=\"Spare\"/>") +
+        // Only files in the .dawproject file's folder or below it (CC5).
+        lanes("h", "<Clips>" + clip("time=\"0\"", "inside.wav", "external=\"true\" ") +
+                       clip("time=\"1\"", "../outside.wav", "external=\"true\" ") +
+                       clip("time=\"2\"", absolute, "external=\"true\" ") + "</Clips>") +
+        // A note sounding when its clip starts plays from there; a loop of too many passes is cut (CC8).
+        lanes("n", "<Clips><Clip time=\"0\" duration=\"2\" playStart=\"1\"><Notes><Note time=\"0\" duration=\"2\" key=\"60\" "
+                   "vel=\"0.8\"/></Notes></Clip><Clip time=\"3\" duration=\"100\" loopStart=\"0\" loopEnd=\"0.0005\"><Notes>"
+                   "<Note time=\"0\" duration=\"0.0001\" key=\"61\"/></Notes></Clip></Clips>") +
+        "</Lanes></Arrangement></Project>";
+    const fs::path file = dir.path / "sub" / "limits.dawproject";
+    writeZip(file, {{"project.xml", xml},
+                    {"audio/ramp.wav", fileBytes(dir.path / "ramp.wav")},
+                    {"audio/half.wav", fileBytes(dir.path / "half.wav")}});
+    const fs::path folder = dir.path / "projects" / "Limits";
+    const DawImportResult r = importDawProject(file, folder, rate, "take-20261118-120000");
+    REQUIRE(r.ok);
+    for (const auto& l : r.leftOut) INFO(l);
+    CHECK(hasLine(r, "\"Long\": the clip (it lies more than 24 hours from the song's start)"));
+    CHECK(hasLine(r, "\"Cross\": the clip (its cross-fade: played without it)"));
+    CHECK(hasLine(r, "\"Loud\": "));
+    CHECK(hasLine(r, "sample(s) above full scale, clipped"));
+    CHECK(hasLine(r, "\"Bus\": a submix channel"));
+    CHECK(hasLine(r, "\"Hot\": its volume 10 dB"));
+    CHECK(hasLine(r, "\"Lanes\": the lane \"Spare\" (nothing on it to import)"));
+    CHECK(hasLine(r, "../outside.wav (outside the file's folder)"));
+    CHECK(hasLine(r, absolute + " (outside the file's folder)"));
+    CHECK(hasLine(r, "\"Notes\": the clip (a loop of more than 100000 passes"));
+    CHECK_FALSE(fs::exists(folder / "takes" / "take-20261118-120000" / "outside.wav"));
+
+    const ProjectData d = loadImported(folder);
+    std::vector<std::string> names;
+    for (const auto& t : d.tracks) names.push_back(t.name);
+    CHECK(names == std::vector<std::string>{"Long", "Fade", "Cross", "Loud", "Hot", "Lanes Take 1", "Lanes Take 1 2", "Ext",
+                                            "Notes"});
+    unsigned int wr = 0;
+    unsigned int wc = 0;
+    CHECK(readWav(trackNamed(d, "Long").take, wr, wc).size() == rate / 2);  // not 1000 s
+    const auto fade = readWav(trackNamed(d, "Fade").take, wr, wc);
+    unsigned int rr = 0;
+    unsigned int rc = 0;
+    const auto ramp = readWav(dir.path / "ramp.wav", rr, rc);
+    REQUIRE(fade.size() == rate / 2);
+    CHECK(fade[rate / 4] == ramp[rate / 4]);  // full level: the fade-out lies after the sound
+    CHECK(std::abs(trackNamed(d, "Hot").volumeDb - 6.0f) < 0.01f);
+    CHECK(readWav(trackNamed(d, "Lanes Take 1").take, wr, wc).size() == rate);
+    CHECK(readWav(trackNamed(d, "Lanes Take 1 2").take, wr, wc).size() == rate / 2);
+    CHECK(readWav(trackNamed(d, "Ext").take, wr, wc).size() == rate / 4);  // only the file beside it
+    const auto ns = notesOf(trackNamed(d, "Notes").take, rate);
+    REQUIRE_FALSE(ns.empty());
+    CHECK(ns[0].key == 60);
+    CHECK(ns[0].on == 0);
+    CHECK(ns[0].off == rate);  // from the clip's start to the note's end, 1 s
+    CHECK(ns.size() == 1 + 100001);  // the first pass and 100000 more
+}
+
+TEST_CASE("T-PRJ-11: a write failure removes what the import made (crosscheck #23, CC2, CC9)", "[project][dawimport][T-PRJ-11]")
+{
+    TempDir dir;
+    const unsigned int rate = 48000;
+    writeWav(dir.path / "ramp.wav", rate, 2, rate);
+    const fs::path file = dir.path / "two.dawproject";
+    writeZip(file, {{"project.xml", audioTracksXml({{"A", "audio/a.wav"}, {"B", "audio/b.wav"}})},
+                    {"audio/a.wav", fileBytes(dir.path / "ramp.wav")},
+                    {"audio/b.wav", fileBytes(dir.path / "ramp.wav")}});
+    {
+        // The second take fails while the unpacked files are open (Windows cannot remove open files).
+        const FailAfterTakes failing(1);
+        const fs::path folder = dir.path / "projects" / "New";
+        const DawImportResult r = importDawProject(file, folder, rate, "take-20261118-120000");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("no space left (test)") != std::string::npos);
+        CHECK_FALSE(fs::exists(folder));
+        CHECK(fs::exists(dir.path / "projects"));  // a folder above it stays (it may hold other projects)
+
+        // A folder that was there with the user's own file: the file and the folder stay.
+        const fs::path mine = dir.path / "projects" / "Mine";
+        fs::create_directories(mine);
+        std::ofstream(mine / "notes.txt") << "mine";
+        const DawImportResult again = importDawProject(file, mine, rate, "take-20261118-120000");
+        CHECK_FALSE(again.ok);
+        CHECK(fs::exists(mine / "notes.txt"));
+        CHECK_FALSE(fs::exists(mine / "takes"));
+        CHECK_FALSE(fs::exists(mine / "project.json"));
+    }
+    // The recording folder cannot be made (a name too long for any file system): nothing stays (CC9).
+    const fs::path folder = dir.path / "projects" / "Long name";
+    const DawImportResult r = importDawProject(file, folder, rate, std::string(300, 'x'));
+    CHECK_FALSE(r.ok);
+    CHECK_FALSE(fs::exists(folder));
 }

@@ -615,12 +615,17 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         if (result.autoRecordParts == 0) {  // none could be read: no empty track
             lanes.remove_child(trackLanes);
             structure.remove_child(track);
+        } else {
+            ++result.tracks;  // counted with the others (crosscheck #23, CC10)
         }
     }
     if (!markers.empty()) {
         std::stable_sort(markers.begin(), markers.end(),
                          [](const auto& a, const auto& b) { return a.first < b.first; });
         pugi::xml_node node = arrangement.append_child("Markers");
+        // Its own unit: Markers is not inside the Lanes, so without it other
+        // programs read the times as beats (crosscheck #23, CC1).
+        attr(node, "timeUnit", std::string("seconds"));
         attr(node, "id", ids.make());
         for (const auto& [at, text] : markers) {
             pugi::xml_node m = node.append_child("Marker");

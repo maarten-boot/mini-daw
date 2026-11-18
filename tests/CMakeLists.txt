@@ -164,7 +164,7 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "Result: 5 command(s), 0 failed")
     minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
     minidaw_script_test(import 1 IN "Import DAWproject: Imported into " "1 instrument(s)"
-        "already holds a project" "Result: 13 command(s), 1 failed")
+        "already holds a project" "choose a folder outside the open project" "Result: 16 command(s), 3 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"
         "Track 2 \"MIDI 1 sound\" is now a normal audio track" "Result: 7 command(s), 0 failed"
         NOT_IN "output (no MIDI output)")
