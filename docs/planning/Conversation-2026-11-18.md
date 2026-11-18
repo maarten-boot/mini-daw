@@ -86,3 +86,10 @@ User: "pushed it, check the CI run".
 - windows, linux, licence green; Linux 254/254 (T-RUN-07 over HTTP under `xvfb-run`), Windows 239/239. Version 0.28.3, file version 0.28.3.99, `mini-daw-0.28.3-setup.exe`.
 - `dist/` refilled. `dist/TESTS.txt` has the P25b steps: T-RUN-07 M (commands from another computer to the Windows VM with the token, the Windows network question), the two new terms, version 0.28.3.
 - README: the status line still said 0.28.1; now 0.28.3 (steps P2–P28b).
+
+## 8. Crosscheck #24 (P25b)
+
+User: "pushed it, do the crosscheck".
+
+- `Crosscheck-2026-11-18.md`: an independent reviewer (subagent) read the code and cpp-httplib; Claude checked its points at the code and did the doc check. No bypass of the access check was found.
+- Findings CC1–CC8: a token holder can still `import` / `open` / `record` and reach a `\\host` path on Windows (CC1, medium); a long `wait` cannot be ended from outside (CC2, medium); closing can wait 5–10 s for open connections (CC3); local programs need no token (CC4); two state reads at once give 409 (CC5); 413 and the Content-Type compare (CC6); request text in the log (CC7); doc mismatches and test gaps (CC8).
