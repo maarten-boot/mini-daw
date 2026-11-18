@@ -47,3 +47,10 @@ User: "yes fix CC1–CC11, CC1 first".
 - CC11: tests for all of these, plus WAV formats, the Browse… file list and a write failure (a test switch in the import).
 - Linux 249/249, Wine 232/232.
 - Also checked (new global rule): the repo has no releases, so the artifact cleanup does not apply (178 artifacts, 42 older than 14 days, 43 MB).
+
+## 5. CI run 44369824195 (P28b)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 249/249, Windows 235/235. The write-failure case also passed on real Windows (CC2). Version 0.28.2, file version 0.28.2.97, `mini-daw-0.28.2-setup.exe`.
+- `dist/` refilled. `dist/TESTS.txt` has the P28b steps: markers in another program, the open-project folder line, the Auto record count, odd files.
