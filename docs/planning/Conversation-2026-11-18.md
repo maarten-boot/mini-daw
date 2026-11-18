@@ -78,3 +78,11 @@ User: "pushed it; start P25b".
 - Linux 254/254 (T-RUN-07: 29 checks over HTTP). Wine 236/236, and mini-daw.exe `--remote` under Wine answered curl.
 - By hand: the token path through the VM's own address.
 - Still to test: from another computer to the Windows machine (T-RUN-07 M).
+
+## 7. CI run 44389452648 (P25b)
+
+User: "pushed it, check the CI run".
+
+- windows, linux, licence green; Linux 254/254 (T-RUN-07 over HTTP under `xvfb-run`), Windows 239/239. Version 0.28.3, file version 0.28.3.99, `mini-daw-0.28.3-setup.exe`.
+- `dist/` refilled. `dist/TESTS.txt` has the P25b steps: T-RUN-07 M (commands from another computer to the Windows VM with the token, the Windows network question), the two new terms, version 0.28.3.
+- README: the status line still said 0.28.1; now 0.28.3 (steps P2–P28b).
