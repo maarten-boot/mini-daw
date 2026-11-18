@@ -1,10 +1,24 @@
 configure_file(core/include/minidaw/version.hpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/minidaw/version.hpp @ONLY)
 
+# Build information (P28a): commit, its date, CI run; written at every build,
+# rewritten only when it changes. Also once now, so the file exists.
+set(MINIDAW_BUILD_INFO ${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.cpp)
+set(MINIDAW_BUILD_INFO_CMD ${CMAKE_COMMAND} -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -DOUT=${MINIDAW_BUILD_INFO}
+    -P ${PROJECT_SOURCE_DIR}/cmake/build_info.cmake)
+execute_process(COMMAND ${MINIDAW_BUILD_INFO_CMD})
+add_custom_target(minidaw_build_info
+    COMMAND ${MINIDAW_BUILD_INFO_CMD}
+    BYPRODUCTS ${MINIDAW_BUILD_INFO}
+    COMMENT "Build information (commit, CI run)"
+    VERBATIM)
+
 # Core library: everything that is not GUI. Tests link against this.
 add_library(minidaw_core STATIC
     core/src/alsa_quiet.cpp
     core/src/audio_stream.cpp
+    core/src/build_info.cpp
+    ${MINIDAW_BUILD_INFO}
     core/src/color.cpp
     core/src/config.cpp
     core/src/dawproject.cpp
@@ -38,6 +52,7 @@ add_library(minidaw_core STATIC
     core/src/timeline.cpp
     core/src/wav.cpp
     core/src/wav_reader.cpp)
+add_dependencies(minidaw_core minidaw_build_info)
 target_include_directories(minidaw_core PUBLIC
     core/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -72,6 +87,11 @@ if(MINIDAW_BUILD_APP)
     if(WIN32)
         # Icon and version information (P9b).
         set(MINIDAW_ICON_FILE "${PROJECT_SOURCE_DIR}/res/mini-daw.ico")
+        # The fourth number of the file version: the CI run number (0 for a local build).
+        set(MINIDAW_RUN_NUMBER "$ENV{GITHUB_RUN_NUMBER}")
+        if(NOT MINIDAW_RUN_NUMBER MATCHES "^[0-9]+$" OR MINIDAW_RUN_NUMBER GREATER 65535)
+            set(MINIDAW_RUN_NUMBER 0)
+        endif()
         configure_file(app/mini-daw.rc.in ${CMAKE_CURRENT_BINARY_DIR}/mini-daw.rc @ONLY)
         set(MINIDAW_RC ${CMAKE_CURRENT_BINARY_DIR}/mini-daw.rc)
 

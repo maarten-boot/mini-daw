@@ -45,6 +45,7 @@
 #include "minidaw/timeline.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
+#include "minidaw/build_info.hpp"
 #include "minidaw/version.hpp"
 
 #include <imgui.h>
@@ -183,6 +184,7 @@ struct AppState {
 
     bool showCustomContrast = false;
     bool showContrastReport = false;
+    bool showAbout = false;  // Help > About (P28a)
     double customInput = 7.0;
     std::string customError;
 
@@ -346,7 +348,7 @@ void openLog(AppState& app, const char* mode)
 {
     const std::filesystem::path file = app.configPath.parent_path() / "mini-daw.log";
     app.logError = app.log.open(file);
-    app.log.info(std::string(minidaw::kProductName) + " " + minidaw::kVersion + " started (" + mode + ")");
+    app.log.info(std::string(minidaw::kProductName) + " " + minidaw::fullVersionText() + " started (" + mode + ")");
     app.log.info("Config file: " + minidaw::pathToUtf8(app.configPath));
     if (!app.logError.empty()) std::fprintf(stderr, "warning: %s\n", app.logError.c_str());
     for (const auto& w : app.configWarnings) app.log.warning("Config: " + w);
@@ -928,6 +930,21 @@ void drawMenuBar(AppState& app, bool& quit)
         ImGui::MenuItem("Log", "Ctrl+L", &app.showLog);
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Help")) {  // P28a
+        if (ImGui::MenuItem("About mini-daw...")) app.showAbout = true;
+        ImGui::EndMenu();
+    }
+    {
+        // The version always in sight at the right end (P28a); a click opens About.
+        const std::string v = std::string(minidaw::kProductName) + " " + minidaw::versionText();
+        const float w = ImGui::CalcTextSize(v.c_str()).x + 2 * ImGui::GetStyle().ItemSpacing.x;
+        const float x = ImGui::GetWindowContentRegionMax().x - w;
+        if (x > ImGui::GetCursorPosX()) {
+            ImGui::SetCursorPosX(x);
+            if (ImGui::MenuItem(v.c_str())) app.showAbout = true;
+            ImGui::SetItemTooltip("Help > About mini-daw: the build and platform");
+        }
+    }
     ImGui::EndMenuBar();
 }
 
@@ -1133,6 +1150,42 @@ void drawCustomContrastWindow(AppState& app)
             // Shown as text with a label, not by colour alone.
             ImGui::TextWrapped("Not applied: %s", app.customError.c_str());
         }
+    }
+    ImGui::End();
+}
+
+// Help > About (P28a, SPEC-UI-18): which mini-daw this is, to copy into a test
+// report or a question.
+std::string aboutText()
+{
+    return std::string(minidaw::kProductName) + " " + minidaw::versionText() + "\n" +
+           "Build: " + minidaw::buildText() + "\n" +
+           "Platform: " + minidaw::platformText() + "\n";
+}
+
+void drawAboutWindow(AppState& app)
+{
+    if (!app.showAbout) return;
+    ImGui::SetNextWindowSize(ImVec2(34 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("About mini-daw");
+    if (ImGui::Begin("About mini-daw", &app.showAbout, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.3f);
+        ImGui::Text("%s %s", minidaw::kProductName, minidaw::versionText().c_str());
+        ImGui::PopFont();
+        ImGui::TextWrapped("Small MIDI and audio recorder with VST3 instrument hosting.");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Build: %s", minidaw::buildText().c_str());
+        ImGui::TextWrapped("Platform: %s", minidaw::platformText().c_str());
+        ImGui::TextWrapped("Licence: MIT. Copyright (c) Maarten Boot. Libraries: see THIRD_PARTY.md.");
+        ImGui::TextWrapped("VST is a registered trademark of Steinberg Media Technologies GmbH.");
+        ImGui::Spacing();
+        if (ImGui::Button("Copy")) {
+            ImGui::SetClipboardText(aboutText().c_str());
+            app.log.info("About: version copied");
+        }
+        ImGui::SetItemTooltip("Copy the version, build and platform, e.g. for a test report");
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showAbout = false;
     }
     ImGui::End();
 }
@@ -4958,7 +5011,7 @@ std::string scriptReportHeader(const std::filesystem::path& script, const std::f
     const std::time_t now = std::time(nullptr);
     char when[32];
     std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    return std::string(minidaw::kProductName) + ' ' + minidaw::kVersion + ", script " + minidaw::pathToUtf8(script) +
+    return std::string(minidaw::kProductName) + ' ' + minidaw::fullVersionText() + ", script " + minidaw::pathToUtf8(script) +
            ", " + when + ", config " + minidaw::pathToUtf8(config) + '\n';
 }
 
@@ -5850,6 +5903,7 @@ int runGui(AppState& app)
         drawCustomContrastWindow(app);
         drawTabsWindow(app);
         drawContrastReportWindow(app);
+        drawAboutWindow(app);
         drawLogWindow(app);
         drawTakeBrowser(app);
         drawProjectDialog(app);
@@ -5975,7 +6029,7 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "--version") == 0) {
-            std::printf("%s %s\n", minidaw::kProductName, minidaw::kVersion);
+            std::printf("%s %s\n", minidaw::kProductName, minidaw::fullVersionText().c_str());
             return 0;
         }
         if (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0) {
