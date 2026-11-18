@@ -14,9 +14,13 @@
 // sends for a page's request to another site) is refused, the Host header must
 // be an address or "localhost" (no DNS rebinding), and a command must be sent
 // as JSON (a page cannot send that to another site without asking first).
-// Commands that delete or overwrite files (export, which replaces a file) are
-// only for this computer; script-file settings (stay, stop-on-failure) are not
-// commands here.
+// Commands that write files outside the open project (export, which can replace
+// a file; import, which makes a new project anywhere) are only for this
+// computer, and so are network paths (\\host\share: Windows would log on to
+// that host). Script-file settings (stay, stop-on-failure) are not commands here.
+// What a client with the token can still do: open a project (mini-daw saves
+// into it from then on), record (the microphone), and everything else the
+// window can do with the open project.
 
 #include <cstdint>
 #include <optional>
@@ -78,11 +82,33 @@ struct RemoteAccess {
 RemoteAccess checkRemoteAccess(const RemoteRequest& request, const RemotePolicy& policy);
 
 // Whether a command (the first word, lower case) may be sent remotely; false
-// with `why` for script-file settings, and for commands that delete or
-// overwrite files when the client is not on this computer.
+// with `why` for script-file settings, and for commands that write files
+// outside the open project when the client is not on this computer.
 bool remoteCommandAllowed(std::string_view command, bool loopback, std::string& why);
 
-// The body of a command request: {"line": "arm 1 on"} -> the line. False with `why`.
+// The longest wait / wait-for over remote control (a running one can also be
+// cancelled: POST /api/cancel).
+inline constexpr double kMaxRemoteWaitSeconds = 600.0;
+
+// "\\host\share", "//host/share", "\\?\UNC\...", "\\.\device": a path that
+// leaves this computer (or is a device), refused from other computers.
+bool isNetworkPath(std::string_view path);
+
+// The whole line (words as parseScript gives them, the command lower case):
+// remoteCommandAllowed, plus no network path in any word from another computer,
+// and wait / wait-for at most kMaxRemoteWaitSeconds.
+bool remoteLineAllowed(const std::vector<std::string>& words, bool loopback, std::string& why);
+
+// The body of a command request: {"line": "arm 1 on"} -> the line. False with
+// `why`: not JSON, no "line", more than one line, control characters.
 bool parseRemoteCommandBody(std::string_view body, std::string& line, std::string& why);
+
+// Content-Type "application/json", in any case, with or without parameters
+// ("; charset=utf-8").
+bool remoteJsonContentType(std::string_view contentType);
+
+// Text from a request, for the log: control characters shown as '?', so a
+// request cannot make a line look like another; at most `max` bytes.
+std::string remoteLogText(std::string_view text, std::size_t max = 200);
 
 } // namespace minidaw

@@ -9,40 +9,75 @@ namespace minidaw::app {
 
 // --- RemoteChannel -------------------------------------------------------------
 
-RemoteChannel::Result RemoteChannel::submit(RemoteJob job, RemoteReply& reply)
+RemoteChannel::Result RemoteChannel::submit(RemoteJob job, RemoteReply& reply, const std::function<bool()>& gone)
 {
     std::unique_lock<std::mutex> lock(mutex_);
     if (closed_) return Result::Closed;
-    if (inProgress_) return Result::Busy;
-    inProgress_ = true;
-    waiting_ = std::move(job);
-    reply_.reset();
-    cv_.wait(lock, [&] { return reply_.has_value() || closed_; });
-    inProgress_ = false;
-    if (!reply_) {
-        waiting_.reset();
-        return Result::Closed;
+    if (slots_.size() >= capacity_) return Result::Busy;
+    auto slot = std::make_shared<Slot>();
+    slot->id = nextId_++;
+    slot->job = std::move(job);
+    slots_.push_back(slot);
+    for (;;) {
+        if (cv_.wait_for(lock, std::chrono::milliseconds(250), [&] { return slot->reply.has_value() || closed_; })) break;
+        if (gone && !slot->cancel) {
+            lock.unlock();
+            const bool away = gone();  // a socket check, without the lock
+            lock.lock();
+            if (away) {
+                if (!slot->taken) break;  // never started: nothing to stop
+                slot->cancel = true;      // the GUI thread ends it; its answer goes nowhere
+            }
+        }
     }
-    reply = std::move(*reply_);
-    reply_.reset();
+    slots_.remove(slot);
+    if (!slot->reply) return Result::Closed;
+    reply = std::move(*slot->reply);
     return Result::Done;
 }
 
-std::optional<RemoteJob> RemoteChannel::take()
+std::optional<RemoteChannel::Taken> RemoteChannel::take()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::optional<RemoteJob> job = std::move(waiting_);
-    waiting_.reset();
-    return job;
+    for (auto& s : slots_) {
+        if (s->taken) continue;
+        s->taken = true;
+        return Taken{s->id, s->job};
+    }
+    return std::nullopt;
 }
 
-void RemoteChannel::answer(RemoteReply reply)
+void RemoteChannel::answer(std::uint64_t id, RemoteReply reply)
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        reply_ = std::move(reply);
+        for (auto& s : slots_) {
+            if (s->id == id) s->reply = std::move(reply);
+        }
     }
     cv_.notify_all();
+}
+
+bool RemoteChannel::requestCancel()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool any = false;
+    for (auto& s : slots_) {
+        if (s->taken && !s->reply) {
+            s->cancel = true;
+            any = true;
+        }
+    }
+    return any;
+}
+
+bool RemoteChannel::cancelRequested(std::uint64_t id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& s : slots_) {
+        if (s->id == id) return s->cancel;
+    }
+    return true;  // its request is gone (the client left before it was taken)
 }
 
 void RemoteChannel::close()
@@ -118,14 +153,17 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
 #endif
     });
     s.set_payload_max_length(64 * 1024);
-    s.set_read_timeout(10, 0);
-    s.set_write_timeout(10, 0);
+    // One request per connection and short timeouts: closing mini-daw waits for
+    // open connections, and a slow sender holds a server thread (crosscheck #24 CC3).
+    s.set_keep_alive_max_count(1);
+    s.set_read_timeout(2, 0);
+    s.set_write_timeout(5, 0);
 
     // Who sent it, before anything else (minidaw/remote.hpp).
     s.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
         const RemoteAccess a = checkRemoteAccess(requestInfo(req), policy_);
         if (a.status == 0) return httplib::Server::HandlerResponse::Unhandled;
-        logRefusal(req.remote_addr + " " + req.method + " " + req.path + ": " + a.why);
+        logRefusal(remoteLogText(req.remote_addr + " " + req.method + " " + req.path + ": " + a.why));
         sendError(res, a.status, a.why);
         return httplib::Server::HandlerResponse::Handled;
     });
@@ -163,7 +201,7 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
     s.Post("/api/command", [this](const httplib::Request& req, httplib::Response& res) {
         const RemoteAccess access = checkRemoteAccess(requestInfo(req), policy_);
         const std::string type = req.get_header_value("Content-Type");
-        if (type.rfind("application/json", 0) != 0) {
+        if (!remoteJsonContentType(type)) {
             sendError(res, 415, "send the command as JSON (Content-Type: application/json)");
             return;
         }
@@ -184,8 +222,8 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
             sendError(res, 400, "no command");
             return;
         }
-        if (!remoteCommandAllowed(parsed.lines.front().words.front(), access.loopback, why)) {
-            logRefusal(req.remote_addr + ": " + line + ": " + why);
+        if (!remoteLineAllowed(parsed.lines.front().words, access.loopback, why)) {
+            logRefusal(remoteLogText(req.remote_addr + ": " + line + ": " + why));
             sendError(res, 403, why);
             return;
         }
@@ -195,7 +233,7 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
         job.client = req.remote_addr;
         job.loopback = access.loopback;
         RemoteReply reply;
-        switch (bridge_.commands.submit(std::move(job), reply)) {
+        switch (bridge_.commands.submit(std::move(job), reply, [&req] { return req.is_connection_closed(); })) {
         case RemoteChannel::Result::Done:
             res.status = reply.status;
             res.set_content(reply.body, "application/json");
@@ -209,9 +247,18 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
         }
     });
 
+    // Ends a running wait / wait-for at once (other commands end when they are done).
+    s.Post("/api/cancel", [this](const httplib::Request&, httplib::Response& res) {
+        const bool running = bridge_.commands.requestCancel();
+        sendJson(res, 200,
+                 {{"ok", true},
+                  {"note", running ? "asked: a wait or wait-for ends at once, other commands when they are done"
+                                   : "no command is running"}});
+    });
+
     s.set_error_handler([](const httplib::Request&, httplib::Response& res) {
         if (res.body.empty()) {
-            sendError(res, res.status, res.status == 404 ? "no such address: use /api/state, /api/commands or /api/command"
+            sendError(res, res.status, res.status == 404 ? "no such address: use /api/state, /api/commands, /api/command or /api/cancel"
                                                           : "request not handled");
         }
     });

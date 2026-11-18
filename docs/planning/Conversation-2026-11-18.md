@@ -93,3 +93,17 @@ User: "pushed it, do the crosscheck".
 
 - `Crosscheck-2026-11-18.md`: an independent reviewer (subagent) read the code and cpp-httplib; Claude checked its points at the code and did the doc check. No bypass of the access check was found.
 - Findings CC1–CC8: a token holder can still `import` / `open` / `record` and reach a `\\host` path on Windows (CC1, medium); a long `wait` cannot be ended from outside (CC2, medium); closing can wait 5–10 s for open connections (CC3); local programs need no token (CC4); two state reads at once give 409 (CC5); 413 and the Content-Type compare (CC6); request text in the log (CC7); doc mismatches and test gaps (CC8).
+
+## 9. P25f: crosscheck #24 fixes (version 0.28.4); P29 planned
+
+User: "yes fix CC1–CC8, CC1 first; add for the future: export-render a selection of takes or all takes as a music stream (ogg and other common formats) with a option to zip that with the midi file as final product."
+
+- CC1: from other computers `import` is refused too, and so is any word that is a network path (`\\host`, `//host`, `\\?\UNC`, `\\.\`): Windows would log on to that host. Spec and README say what a token holder can still do (open projects, record, instruments).
+- CC2: `POST /api/cancel` ends a running `wait` / `wait-for`; a client that goes away does the same (the server asks the socket a few times a second); `wait` at most 600 s over remote control.
+- CC3: one request per connection, read timeout 2 s, write 5 s.
+- CC4: README: "this computer" means every program on it; on Linux config.ini is made 0600 when it holds the token. Not done: a token also from this computer (not asked for).
+- CC5: the state channel holds up to 16 requests; each frame answers all. CC6: 413 in the Spec, Content-Type compared in any case with parameters. CC7: control characters refused in a command line; refusal lines show them as `?`.
+- CC8: Plan P25 row, the Terms test id, CLAUDE.md, Plan PX row; the T-RUN-07 M steps in `dist/TESTS.txt`.
+- The channel between the server and the window was rewritten: a list of slots, each request waits for its own answer.
+- Tests: Linux 254/254 (T-RUN-07 39 checks), Wine 236/236; by hand from the VM's own address and under Wine (cancel, a client that gave up).
+- Planned: SPEC-PRJ-06 / P29 Export audio. Questions for the user before it starts: one file per take or one mix of the chosen takes; with the project mix or as stems; which formats (Ogg Vorbis, plus FLAC, WAV, MP3, Opus?) and quality; MP3 needs an encoder (LAME is LGPL); which MIDI goes into the zip.

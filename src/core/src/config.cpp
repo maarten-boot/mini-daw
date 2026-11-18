@@ -802,6 +802,14 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     // the old or the new file, never half of one.
     std::string err;
     if (!writeFileReplacing(path, text, err, true)) return err;  // forced to the disk: also after a power loss
+#if !defined(_WIN32)
+    // The remote control token lets other computers send commands: the file is
+    // then the user's alone (crosscheck #24 CC4). On Windows %APPDATA% is already.
+    if (!config.remote.token.empty()) {
+        std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::replace, ec);
+    }
+#endif
     return {};
 }
 

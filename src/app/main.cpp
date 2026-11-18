@@ -132,6 +132,7 @@ struct RemoteControl {
     minidaw::app::RemoteBridge bridge;
     std::unique_ptr<minidaw::app::RemoteServer> server;
     ScriptRun run;
+    std::uint64_t commandId = 0;  // the command being run (its request waits for the answer)
     std::string status;  // for the status line
 };
 
@@ -5154,7 +5155,7 @@ void scriptFinish(AppState& app, bool ok, const std::string& note)
         sr.logLines.clear();
         sr.pending = ScriptRun::Pending::None;
         sr.current = nullptr;
-        app.remote->bridge.commands.answer({200, minidaw::stateText(body)});
+        app.remote->bridge.commands.answer(app.remote->commandId, {200, minidaw::stateText(body)});
         return;
     }
     char head[64];
@@ -5242,7 +5243,7 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
     auto ok = [&](const std::string& note = {}) { scriptFinish(app, true, note); };
     if (sr.remote) {  // what the remote control may not do: already refused by the server, checked again here
         std::string no;
-        if (!minidaw::remoteCommandAllowed(cmd, sr.loopback, no)) {
+        if (!minidaw::remoteLineAllowed(w, sr.loopback, no)) {
             fail(no);
             return;
         }
@@ -5549,17 +5550,26 @@ void stepRemote(AppState& app)
 {
     if (!app.remote) return;
     RemoteControl& rc = *app.remote;
-    if (auto job = rc.bridge.states.take()) {
-        rc.bridge.states.answer({200, minidaw::stateText(nlohmann::json{{"ok", true}, {"state", scriptState(app)}})});
+    while (auto job = rc.bridge.states.take()) {  // every state request waiting (crosscheck #24 CC5)
+        rc.bridge.states.answer(job->id, {200, minidaw::stateText(nlohmann::json{{"ok", true}, {"state", scriptState(app)}})});
     }
     ScriptRun& sr = rc.run;
+    // POST /api/cancel, or the client went away: a wait / wait-for ends now (CC2).
+    if ((sr.pending == ScriptRun::Pending::Wait || sr.pending == ScriptRun::Pending::WaitFor) &&
+        rc.bridge.commands.cancelRequested(rc.commandId)) {
+        scriptFinish(app, false, "cancelled");
+        return;
+    }
     if (app.busy) return;  // its message is on screen; it runs next frame
     if (continueLine(app, sr)) return;
-    auto job = rc.bridge.commands.take();
-    if (!job) return;
+    auto taken = rc.bridge.commands.take();
+    if (!taken) return;
+    rc.commandId = taken->id;
+    const minidaw::app::RemoteJob* job = &taken->job;
     const minidaw::ScriptParse parsed = minidaw::parseScript(job->line);
     if (!parsed.errors.empty() || parsed.lines.empty()) {  // the server checked it; not expected
-        rc.bridge.commands.answer({400, minidaw::stateText(nlohmann::json{{"ok", false}, {"error", "not a command"}})});
+        rc.bridge.commands.answer(rc.commandId,
+                                  {400, minidaw::stateText(nlohmann::json{{"ok", false}, {"error", "not a command"}})});
         return;
     }
     sr.lines = parsed.lines;

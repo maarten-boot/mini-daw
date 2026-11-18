@@ -104,8 +104,8 @@ def main():
 
         status, body = c.request("GET", "/api/commands")
         allowed = {x["name"]: x["allowed"] for x in body.get("commands", [])}
-        check(status == 200 and allowed.get("export") is True and allowed.get("stay") is False,
-              "commands: export allowed from this computer, stay not")
+        check(status == 200 and allowed.get("export") is True and allowed.get("import") is True
+              and allowed.get("stay") is False, "commands: export and import allowed from this computer, stay not")
 
         status, body = c.run('open "%s"' % project)
         check(status == 200 and body["ok"], "open the project")
@@ -139,6 +139,56 @@ def main():
         t.join()
         check(result["wait"][0] == 200 and result["wait"][1].get("ok"), "the first one ends ok")
 
+        # Many state reads at once: all answered (crosscheck #24 CC5).
+        states = []
+
+        def read_state():
+            states.append(c.request("GET", "/api/state")[0])
+        readers = [threading.Thread(target=read_state) for _ in range(8)]
+        for r in readers:
+            r.start()
+        for r in readers:
+            r.join()
+        check(states == [200] * 8, "8 state reads at once: all 200 (%s)" % states)
+
+        # A long wait can be ended: POST /api/cancel (CC2).
+        def long_wait():
+            result["long"] = c.run("wait 30")
+        t = threading.Thread(target=long_wait)
+        t.start()
+        time.sleep(0.4)
+        began = time.monotonic()
+        status, body = c.request("POST", "/api/cancel")
+        check(status == 200 and "asked" in body.get("note", ""), "cancel while a wait runs")
+        t.join(10)
+        check(not t.is_alive() and result["long"][1].get("ok") is False and result["long"][1].get("note") == "cancelled"
+              and time.monotonic() - began < 3, "the wait ends at once: ok false, cancelled")
+        status, body = c.request("POST", "/api/cancel")
+        check(status == 200 and body.get("note") == "no command is running", "cancel with nothing running")
+
+        # A client that goes away: its wait ends, the next command is not refused (CC2).
+        raw = socket.create_connection(("127.0.0.1", port))
+        payload = json.dumps({"line": "wait 30"}).encode()
+        raw.sendall(b"POST /api/command HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: %d\r\n\r\n" % len(payload) + payload)
+        time.sleep(0.5)
+        raw.close()
+        free = False
+        for _ in range(30):
+            status, body = c.run("echo after")
+            if status == 200:
+                free = True
+                break
+            time.sleep(0.1)
+        check(free, "a client that went away: its wait ends, the next command runs")
+        check(c.run("wait 600.5")[0] == 403, "wait over 600 s: 403")
+        check(c.request("POST", "/api/command", body={"line": "echo x"},
+                        headers={"Content-Type": "Application/JSON; charset=utf-8"})[0] == 200,
+              "Content-Type in another case, with a charset: accepted")
+        check(c.request("POST", "/api/command", body={"line": "echo x"},
+                        headers={"Content-Type": "application/jsonx"})[0] == 415, "application/jsonx: 415")
+        check(c.run("echo \x1b[2J")[0] == 400, "a control character: 400")
+
         # What is refused.
         check(c.request("GET", "/api/state", headers={"Origin": "http://evil.example"})[0] == 403, "Origin: 403")
         check(c.request("GET", "/api/state", headers={"Host": "evil.example:%d" % port})[0] == 403, "a Host name: 403")
@@ -152,13 +202,19 @@ def main():
         check(c.request("GET", "/nothing")[0] == 404, "another address: 404")
         check(c.state().get("recording") is False, "nothing refused was run (not recording)")
 
+        # A connection left open (nothing sent) does not hold up closing for long (CC3).
+        idle = socket.create_connection(("127.0.0.1", port))
         status, body = c.run("quit")
         check(status == 200 and body.get("ok"), "quit")
+        began = time.monotonic()
         try:
             rc = proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             rc = None
+        took = time.monotonic() - began
+        idle.close()
         check(rc == 0, "mini-daw ended with 0 (was %s)" % rc)
+        check(took < 6, "closed within 6 s with a connection open (%.1f s)" % took)
     finally:
         if proc.poll() is None:
             proc.kill()

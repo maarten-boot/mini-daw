@@ -120,6 +120,37 @@ TEST_CASE("T-RUN-06: who may send what", "[remote][T-RUN-06]")
     CHECK_FALSE(remoteCommandAllowed("stay", true, why));
     CHECK_FALSE(remoteCommandAllowed("stop-on-failure", true, why));
     CHECK(remoteCommandAllowed("quit", false, why));
+    // Commands that write outside the open project: only from this computer (crosscheck #24 CC1).
+    CHECK(remoteCommandAllowed("import", true, why));
+    CHECK_FALSE(remoteCommandAllowed("import", false, why));
+    CHECK(why.find("only from this computer") != std::string::npos);
+
+    // The whole line: network paths from other computers, the longest wait.
+    using W = std::vector<std::string>;
+    for (const char* p : {"\\\\host\\share\\song", "//host/share/song", "\\\\?\\UNC\\host\\x", "\\\\.\\pipe\\x",
+                          "/\\host\\x", " \\\\host\\x"}) {
+        INFO(p);
+        CHECK(isNetworkPath(p));
+        CHECK_FALSE(remoteLineAllowed(W{"open", p}, false, why));
+        CHECK(why.find("network path") != std::string::npos);
+        CHECK(remoteLineAllowed(W{"open", p}, true, why));  // the user's own computer may
+    }
+    for (const char* p : {"C:\\Users\\me\\song", "/home/me/song", "song", "\\song", "/song", ""}) {
+        INFO(p);
+        CHECK_FALSE(isNetworkPath(p));
+        CHECK(remoteLineAllowed(W{"open", p}, false, why));
+    }
+    CHECK_FALSE(remoteLineAllowed(W{"echo", "//host/x"}, false, why));  // any word
+    CHECK_FALSE(remoteLineAllowed(W{"import", "a.dawproject", "b"}, false, why));
+    CHECK_FALSE(remoteLineAllowed(W{"export", "a.dawproject"}, false, why));
+    CHECK(remoteLineAllowed(W{"export", "a.dawproject"}, true, why));
+    CHECK(remoteLineAllowed(W{"wait", "600"}, true, why));
+    CHECK_FALSE(remoteLineAllowed(W{"wait", "600.5"}, true, why));
+    CHECK(why.find("600 s") != std::string::npos);
+    CHECK_FALSE(remoteLineAllowed(W{"wait-for", "3600", "playing", "true"}, false, why));
+    CHECK(remoteLineAllowed(W{"wait-for", "10", "playing", "true"}, false, why));
+    CHECK_FALSE(remoteLineAllowed(W{"stay"}, true, why));
+    CHECK_FALSE(remoteLineAllowed(W{}, true, why));
 
     std::string line;
     CHECK(parseRemoteCommandBody(R"({"line": "arm 1 on"})", line, why));
@@ -129,6 +160,26 @@ TEST_CASE("T-RUN-06: who may send what", "[remote][T-RUN-06]")
     CHECK_FALSE(parseRemoteCommandBody(R"({"line": 5})", line, why));
     CHECK_FALSE(parseRemoteCommandBody(R"({"line": "play\nrecord"})", line, why));
     CHECK(why == "one command per request");
+    CHECK_FALSE(parseRemoteCommandBody(R"({"line": "echo a\u001b[2Jb"})", line, why));  // an escape sequence
+    CHECK(why.find("control characters") != std::string::npos);
+    CHECK_FALSE(parseRemoteCommandBody(R"({"line": "echo a\u007fb"})", line, why));
+    CHECK(parseRemoteCommandBody(R"({"line": "echo a\tb"})", line, why));  // a tab is a space
+
+    // Content-Type (CC6).
+    for (const char* ok : {"application/json", "Application/JSON", "application/json; charset=utf-8", " application/json ;x"}) {
+        INFO(ok);
+        CHECK(remoteJsonContentType(ok));
+    }
+    for (const char* bad : {"", "text/plain", "application/jsonx", "application/json-patch+json", "application/x-www-form-urlencoded"}) {
+        INFO(bad);
+        CHECK_FALSE(remoteJsonContentType(bad));
+    }
+
+    // Text from a request in the log (CC7).
+    CHECK(remoteLogText("GET /a\nWARNING fake") == "GET /a?WARNING fake");
+    CHECK(remoteLogText(std::string("a\x1b[0m\x7f\tb")) == "a?[0m??b");
+    CHECK(remoteLogText(std::string(300, 'x')).size() == 203);
+    CHECK(remoteLogText("caf\xc3\xa9") == "caf\xc3\xa9");  // UTF-8 kept
 }
 
 TEST_CASE("T-RUN-06: [remote] in the config", "[remote][config][T-RUN-06]")

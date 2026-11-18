@@ -24,3 +24,18 @@ Scope: Spec v0.66, Plan, Tests, README, CLAUDE.md, `dist/TESTS.txt`, code at `83
 | CC8 | doc | Plan P25 row "P25a done, P25b planned"; the P25b result row in Tests.md says "T-UI-17 Terms" (T-UI-28); `dist/TESTS.txt` T-RUN-07 M lacks the `instrument`, `arm`, `record` steps of Tests.md; CLAUDE.md `src/app/` list without `remote_server.cpp`; Plan PX row #24; test gaps: a non-loopback `import` / `open`, two state reads at once, closing with a keep-alive client. | Fix the texts; tests with the fixes. |
 
 Not taken up: a slow sender from an allowed network can tie up cpp-httplib's worker threads for 10 s each (only when networks are allowed; the fix for CC3 shortens it). Checked and fine (reviewer and Claude): the access check runs before any route, an empty or missing Host is refused, a browser GET without Origin can only read the state and cannot see the answer (no CORS headers), the token is never in the log or the status line.
+
+## Actions taken (user: "yes fix CC1–CC8, CC1 first"; P25f, version 0.28.4)
+
+| # | Done |
+|---|------|
+| CC1 | `remoteCommandAllowed` refuses `import` from other computers; `remoteLineAllowed` refuses a network path (`isNetworkPath`: two slashes of either kind at the start, so also `\\?\UNC\` and `\\.\`) in any word from other computers; the server and the runner both use it. Spec SPEC-RUN-03 and README list what a token holder can still do. Not done: a projects base folder for `open` (it would change what the window may open). |
+| CC2 | `POST /api/cancel` marks the running command; the window ends a `wait` / `wait-for` at once with "cancelled". The request's thread asks cpp-httplib's `is_connection_closed` four times a second and marks its job the same way when the client has gone. `wait` / `wait-for` over remote control at most 600 s (`kMaxRemoteWaitSeconds`). |
+| CC3 | `set_keep_alive_max_count(1)`, read timeout 2 s, write timeout 5 s; T-RUN-07 closes with an idle connection open (0.2 s). |
+| CC4 | README "This computer" text; on Linux `saveConfig` makes `config.ini` 0600 when it holds a token. The optional token from this computer was not added (not asked for). |
+| CC5 | `RemoteChannel` rewritten as a list of slots (capacity: commands 1, states 16); the window answers every waiting state request each frame; 8 at once in T-RUN-07. |
+| CC6 | Spec: 413 (and 414 / 431 from the library); `remoteJsonContentType` compares in lower case up to `;`. |
+| CC7 | `parseRemoteCommandBody` refuses control characters but a tab (so no command line can carry them into the log or a reply); `remoteLogText` shows them as `?` in refusal lines and cuts at 200 bytes. |
+| CC8 | Plan P25 row, P25f row, PX row; Tests.md T-RUN-06 / T-RUN-07 rows and the T-UI-28 id; CLAUDE.md `remote_server.cpp`; `dist/TESTS.txt` T-RUN-07 M with instrument / arm / record and cancel. |
+
+Tests: Linux 254/254 (T-RUN-06 new cases, T-RUN-07 39 checks); MinGW under Wine 236/236; by hand through the VM's own address (import, `\\host`, `//host`, `wait 700` → 403; config.ini 600) and `mini-daw.exe --remote` under Wine (cancel, a client that gave up).

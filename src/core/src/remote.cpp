@@ -1,4 +1,5 @@
 #include "minidaw/remote.hpp"
+#include "minidaw/script.hpp"  // parseScriptSeconds
 
 #include <nlohmann/json.hpp>
 
@@ -216,7 +217,64 @@ bool remoteCommandAllowed(std::string_view command, bool loopback, std::string& 
         why = "export can replace a file: only from this computer";
         return false;
     }
+    if (!loopback && command == "import") {
+        why = "import makes a project in any folder: only from this computer";
+        return false;
+    }
     return true;
+}
+
+bool isNetworkPath(std::string_view path)
+{
+    path = trimView(path);
+    auto slash = [](char c) { return c == '\\' || c == '/'; };
+    return path.size() >= 2 && slash(path[0]) && slash(path[1]);
+}
+
+bool remoteLineAllowed(const std::vector<std::string>& words, bool loopback, std::string& why)
+{
+    if (words.empty()) {
+        why = "no command";
+        return false;
+    }
+    if (!remoteCommandAllowed(words[0], loopback, why)) return false;
+    if ((words[0] == "wait" || words[0] == "wait-for") && words.size() > 1) {
+        const auto s = parseScriptSeconds(words[1]);
+        if (s && *s > kMaxRemoteWaitSeconds) {
+            why = "over remote control, " + words[0] + " is at most 600 s";
+            return false;
+        }
+    }
+    if (!loopback) {
+        for (std::size_t i = 1; i < words.size(); ++i) {
+            if (isNetworkPath(words[i])) {
+                why = "a network path (\\\\host\\...) only from this computer";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool remoteJsonContentType(std::string_view contentType)
+{
+    std::string_view t = trimView(contentType);
+    if (const std::size_t semi = t.find(';'); semi != std::string_view::npos) t = trimView(t.substr(0, semi));
+    return lowerText(t) == "application/json";
+}
+
+std::string remoteLogText(std::string_view text, std::size_t max)
+{
+    std::string out;
+    for (const char ch : text) {
+        if (out.size() >= max) {
+            out += "...";
+            break;
+        }
+        const auto c = static_cast<unsigned char>(ch);
+        out += c < 0x20 || c == 0x7f ? '?' : ch;
+    }
+    return out;
 }
 
 bool parseRemoteCommandBody(std::string_view body, std::string& line, std::string& why)
@@ -235,6 +293,13 @@ bool parseRemoteCommandBody(std::string_view body, std::string& line, std::strin
     if (line.find('\n') != std::string::npos || line.find('\r') != std::string::npos) {
         why = "one command per request";
         return false;
+    }
+    for (const char ch : line) {
+        const auto c = static_cast<unsigned char>(ch);
+        if ((c < 0x20 && c != '\t') || c == 0x7f) {
+            why = "control characters are not allowed in a command";
+            return false;
+        }
     }
     return true;
 }
