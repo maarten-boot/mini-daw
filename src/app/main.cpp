@@ -3337,16 +3337,13 @@ void drawTransport(AppState& app)
         }
         minidaw::app::endDisabled();
     }
-    const float infoHeight = ImGui::GetTextLineHeightWithSpacing() * 8.0f;  // 8: room for the note line (Y7)
+    // 4 lines (P30a: the transport is above every tab now); the note line while recording is
+    // within the first three, the playback warnings come last, and the area scrolls for the rest.
+    const float infoHeight = ImGui::GetTextLineHeightWithSpacing() * 4.0f;
     if (!ImGui::BeginChild("transport-info", ImVec2(0, infoHeight))) {
         ImGui::EndChild();
         return;
     }
-    if (player.underrunFrames() > 0 && player.playing()) {
-        ImGui::TextWrapped("Note: the disk was too slow for playback (%llu frames played as silence).",
-                           static_cast<unsigned long long>(player.underrunFrames()));
-    }
-    for (const auto& w : app.playWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     if (autoOn) {
         const int pause = app.config.recording.autoPauseSeconds;
         if (app.session.autoInPart()) {
@@ -3401,6 +3398,11 @@ void drawTransport(AppState& app)
         ImGui::TextWrapped("Takes go to %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     }
     if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
+    if (player.underrunFrames() > 0 && player.playing()) {
+        ImGui::TextWrapped("Note: the disk was too slow for playback (%llu frames played as silence).",
+                           static_cast<unsigned long long>(player.underrunFrames()));
+    }
+    for (const auto& w : app.playWarnings) ImGui::TextWrapped("Note: %s", w.c_str());
     if (!rec && !app.markResult.empty()) ImGui::TextWrapped("%s", app.markResult.c_str());  // a note saved at the end (Y3)
     if (!app.lastTake.empty()) {
         ImGui::TextUnformatted("Last take:");
