@@ -3337,36 +3337,43 @@ void drawTransport(AppState& app)
         }
         minidaw::app::endDisabled();
     }
-    // 4 lines (P30a: the transport is above every tab now); the note line while recording is
-    // within the first three, the playback warnings come last, and the area scrolls for the rest.
+    // 4 lines (P30a: the transport is above every tab now). First what must not be missed: why
+    // recording did not start, the state line, errors and losses (crosscheck #25, CC3); then the
+    // note line while recording; the rest after it (the playback notes last), scrolling if needed.
     const float infoHeight = ImGui::GetTextLineHeightWithSpacing() * 4.0f;
     if (!ImGui::BeginChild("transport-info", ImVec2(0, infoHeight))) {
         ImGui::EndChild();
         return;
     }
+    if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
+    // The recorder's disk error: shown at once and logged once (crosscheck #5, K3).
+    const auto diskError = [&](const char* what) {
+        const std::string err = app.session.diskError();
+        if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
+        if (err != app.loggedRecordingError) {
+            if (!err.empty()) app.log.error(std::string(what) + ": " + err);
+            app.loggedRecordingError = err;
+        }
+    };
     if (autoOn) {
         const int pause = app.config.recording.autoPauseSeconds;
-        if (app.session.autoInPart()) {
+        const bool inPart = app.session.autoInPart();
+        if (inPart) {
             ImGui::Text("AUTO RECORD: recording a part, %s so far (quiet for %.1f s; it ends after %d s)",
                         clockText(app.session.autoPartSeconds()).c_str(), app.session.autoQuietSeconds(), pause);
-            drawNoteWhileRecording(app, app.livePart, app.session.autoPartSeconds());
         } else {
             ImGui::TextWrapped("AUTO RECORD: waiting. Play on an armed track to start a part; it ends after %d s "
                                "without playing.",
                                pause);
         }
-        ImGui::TextWrapped("Parts go to %s", minidaw::pathToUtf8(app.session.folder()).c_str());
+        diskError("Auto record");
         if (app.session.autoLostFrames() > 0 || app.session.midiLost() > 0) {
             ImGui::Text("Lost in parts: %llu audio frames, %llu MIDI messages",
                         static_cast<unsigned long long>(app.session.autoLostFrames()),
                         static_cast<unsigned long long>(app.session.midiLost()));
         }
-        const std::string err = app.session.diskError();
-        if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
-        if (err != app.loggedRecordingError) {
-            if (!err.empty()) app.log.error("Auto record: " + err);
-            app.loggedRecordingError = err;
-        }
+        if (inPart) drawNoteWhileRecording(app, app.livePart, app.session.autoPartSeconds());
+        ImGui::TextWrapped("Parts go to %s", minidaw::pathToUtf8(app.session.folder()).c_str());
         if (!app.autoParts.empty()) {
             ImGui::Text("Parts saved: %d. Last:", app.session.autoPartsDone());
             for (const auto& line : app.autoParts) {
@@ -3375,20 +3382,15 @@ void drawTransport(AppState& app)
             }
         }
     } else if (rec) {
-        if (app.overdub) ImGui::TextUnformatted("Overdub: the other takes play while the armed tracks record.");
         const double s = app.session.elapsedSeconds();
         const int m = static_cast<int>(s / 60);
         ImGui::Text("RECORDING  %02d:%04.1f   lost frames: %llu   MIDI messages: %zu (lost: %llu)", m, s - 60.0 * m,
                     static_cast<unsigned long long>(app.session.lostFrames()), app.session.midiMessages(),
                     static_cast<unsigned long long>(app.session.midiLost()));
+        diskError("Recording");
         drawNoteWhileRecording(app, app.session.folder(), s);
+        if (app.overdub) ImGui::TextUnformatted("Overdub: the other takes play while the armed tracks record.");
         ImGui::TextWrapped("Into: %s", minidaw::pathToUtf8(app.session.folder()).c_str());
-        const std::string err = app.session.diskError();
-        if (!err.empty()) ImGui::TextWrapped("Error: %s", err.c_str());
-        if (err != app.loggedRecordingError) {  // log it at once, not only at Stop (crosscheck #5, K3)
-            if (!err.empty()) app.log.error("Recording: " + err);
-            app.loggedRecordingError = err;
-        }
     } else {
         if (const int n = minidaw::overdubTrackCount(app.tracks); anyArmed && n > 0) {
             ImGui::TextWrapped("Overdub: Record also plays the takes of %d track%s that %s not armed, so you can "
@@ -3397,7 +3399,6 @@ void drawTransport(AppState& app)
         }
         ImGui::TextWrapped("Takes go to %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     }
-    if (!app.recordError.empty()) ImGui::TextWrapped("Not recording: %s", app.recordError.c_str());
     if (player.underrunFrames() > 0 && player.playing()) {
         ImGui::TextWrapped("Note: the disk was too slow for playback (%llu frames played as silence).",
                            static_cast<unsigned long long>(player.underrunFrames()));
@@ -3804,7 +3805,7 @@ void drawTimeline(AppState& app)
     ImGui::SetNextItemWidth(14 * em);
     ImGui::SliderFloat("Zoom (pixels per second)", &app.timelineZoom, 0.5f, 100.0f, "%.1f",
                        ImGuiSliderFlags_Logarithmic);
-    ImGui::SameLine();
+    // On its own line: beside the slider it became a tall narrow column in a small window.
     ImGui::TextWrapped("From %s. A = auto record part, R = Record take. Pauses longer than 10 s are drawn short, "
                        "with their real length.",
                        minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
@@ -3844,9 +3845,11 @@ void drawTimeline(AppState& app)
     const float height =
         std::max(3 * pitch + pad + 2 * ImGui::GetStyle().WindowPadding.y, ImGui::GetContentRegionAvail().y - detailsH);
     int doubleClicked = -1;
-    if (ImGui::BeginChild("timeline", ImVec2(0, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+    if (ImGui::BeginChild("timeline", ImVec2(0, height), ImGuiChildFlags_Borders,
+                          ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_HorizontalScrollbar)) {
         // The blocks in lines, as text is wrapped: at the right edge they go on in the next line (P30).
-        const float lineWidth = std::max(minWidth, ImGui::GetContentRegionAvail().x - 2 * pad);
+        // At least a block and a gap wide; in a narrower window the view scrolls sideways (CC4).
+        const float lineWidth = std::max({minWidth, gapWidth, ImGui::GetContentRegionAvail().x - 2 * pad});
         if (app.wrapStamp != app.layoutStamp || app.wrapWidth != lineWidth) {
             app.timelineWrap = minidaw::wrapTimeline(layout, lineWidth, minWidth);
             app.wrapStamp = app.layoutStamp;
@@ -3914,7 +3917,8 @@ void drawTimeline(AppState& app)
                 ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(piece.x), lineY(piece.line)));
                 // The first piece has the label; a piece on a following line says it goes on.
                 const std::string label = (k == first ? text : std::string("... ") + timeText) + "##" + std::to_string(k - first);
-                if (ImGui::Button(label.c_str(), ImVec2(static_cast<float>(piece.width) - 2, rowH))) {
+                // At least 1 px: ImGui reads a width <= 0 as "label width" or "to the right edge" (crosscheck #25, CC1).
+                if (ImGui::Button(label.c_str(), ImVec2(std::max(1.0f, static_cast<float>(piece.width) - 2), rowH))) {
                     app.selectedRecording = r.folder;
                 }
                 // Right-click: Rename, Notes, Delete (P21, SPEC-PLAY-08); one menu for all pieces.
@@ -3982,8 +3986,8 @@ void drawTimeline(AppState& app)
             }
         }
         // The height of all lines, so the view scrolls down to the last one.
-        ImGui::SetCursorPos(ImVec2(pad, lineY(std::max(wrap.lines, 1)) + pad * 0.5f));
-        ImGui::Dummy(ImVec2(1, 1));
+        ImGui::SetCursorPos(ImVec2(pad + lineWidth, lineY(std::max(wrap.lines, 1)) + pad * 0.5f));
+        ImGui::Dummy(ImVec2(pad, 1));  // and the line's width, for the sideways scrollbar of a narrow window
         // Follow new recordings: show the last line when one is added or one is being recorded.
         if (recs.size() != app.recordingsSeen || (anyLive && atEnd)) {
             ImGui::SetScrollHereY(1.0f);

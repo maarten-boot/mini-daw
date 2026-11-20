@@ -78,7 +78,10 @@ TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recordings, doub
 // a block or gap that does not fit in the rest of the line goes to the next
 // one; the short pause before it is left out at a line's start. A block wider
 // than a line starts where it is (if at least `minPiece` is left there) and
-// goes on at the start of the next line(s), in pieces. Gaps are never cut.
+// goes on at the start of the next line(s), in pieces; its last piece is at
+// least `minPiece` wide (the last cut moves back) and ends exactly at the
+// block's end (to = 1). Gaps are never cut, a line is at least as wide as the
+// widest gap, and a gap goes to the next line with the block after it.
 struct TimelinePiece {
     bool gap = false;       // a gap marker (layout.gaps) or a block (layout.blocks)
     std::size_t item = 0;   // its index there

@@ -10,6 +10,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -204,6 +205,71 @@ TEST_CASE("T-PLAY-21: a long recording goes on in the next lines; gaps are never
     CHECK(n.pieces[1].line == 1);
     CHECK(n.pieces[1].x == Catch::Approx(0));
     CHECK(n.pieces[1].width == Catch::Approx(200));
+}
+
+TEST_CASE("T-PLAY-21: the last piece of a cut recording is never tiny and ends at 1", "[timeline][T-PLAY-21]")
+{
+    // Crosscheck #25, CC1 / CC2: a block of 401 on lines of 200 would end with a piece of 1.
+    TimelineLayout l;
+    l.blocks.push_back({0, 0.0, 401.0});
+    l.width = 401.0;
+    const WrappedTimeline w = wrapTimeline(l, 200.0, 30.0);
+    REQUIRE(w.pieces.size() == 3);
+    CHECK(w.pieces[0].width == Catch::Approx(200));
+    CHECK(w.pieces[1].width == Catch::Approx(171));  // its cut moved back
+    CHECK(w.pieces[2].width == Catch::Approx(30));   // minPiece
+    CHECK(w.pieces[2].line == 2);
+    CHECK(w.pieces[2].to == 1.0);
+    for (std::size_t i = 1; i < w.pieces.size(); ++i) CHECK(w.pieces[i].from == w.pieces[i - 1].to);
+    // A line narrower than two minPiece: the piece before the last gets smaller, but keeps some width.
+    TimelineLayout m;
+    m.blocks.push_back({0, 0.0, 45.0});
+    const WrappedTimeline two = wrapTimeline(m, 40.0, 30.0);
+    REQUIRE(two.pieces.size() == 2);
+    CHECK(two.pieces[0].width == Catch::Approx(15));
+    CHECK(two.pieces[1].width == Catch::Approx(30));
+    CHECK(two.pieces[1].to == 1.0);
+
+    // Widths that do not add up exactly in floating point: no extra piece, the last ends at 1.
+    for (double width : {1000.1, 333.3 * 3, 0.1 * 7001, 12345.678}) {
+        INFO(width);
+        TimelineLayout f;
+        f.blocks.push_back({0, 0.0, width});
+        const WrappedTimeline v = wrapTimeline(f, 100.1, 20.0);
+        REQUIRE(!v.pieces.empty());
+        CHECK(v.pieces.back().to == 1.0);
+        double sum = 0.0;
+        for (const auto& p : v.pieces) {
+            CHECK(p.width >= 20.0 - 1e-9);
+            CHECK(p.x + p.width <= 100.1 + 1e-9);
+            sum += p.width;
+        }
+        CHECK(sum == Catch::Approx(width));
+        CHECK(v.lines == v.pieces.back().line + 1);
+    }
+}
+
+TEST_CASE("T-PLAY-21: a gap goes to the next line with the block after it", "[timeline][T-PLAY-21]")
+{
+    // Crosscheck #25, CC4: block 0..100, a gap 100..140, block 140..240, lines of 180.
+    TimelineLayout l;
+    l.blocks.push_back({0, 0.0, 100.0});
+    l.gaps.push_back({100.0, 40.0, "+1 h 00 min"});
+    l.blocks.push_back({1, 140.0, 100.0});
+    const WrappedTimeline w = wrapTimeline(l, 180.0, 20.0);
+    REQUIRE(w.pieces.size() == 3);
+    CHECK(w.pieces[1].gap);
+    CHECK(w.pieces[1].line == 1);  // the gap would fit after block 0, but block 1 would not
+    CHECK(w.pieces[1].x == Catch::Approx(0));
+    CHECK(w.pieces[2].line == 1);
+    CHECK(w.pieces[2].x == Catch::Approx(40));
+    // A line narrower than a gap: the line is made as wide as the gap, so the gap is never clipped.
+    const WrappedTimeline n = wrapTimeline(l, 10.0, 5.0);
+    for (const auto& p : n.pieces) CHECK(p.x + p.width <= 40.0 + 1e-9);  // lines of 40 (the gap); blocks cut
+    const auto gap = std::find_if(n.pieces.begin(), n.pieces.end(), [](const TimelinePiece& p) { return p.gap; });
+    REQUIRE(gap != n.pieces.end());
+    CHECK(gap->x == Catch::Approx(0));
+    CHECK(gap->width == Catch::Approx(40));
 }
 
 TEST_CASE("T-PLAY-18: the recordings in a takes folder, oldest first", "[timeline][T-PLAY-18]")

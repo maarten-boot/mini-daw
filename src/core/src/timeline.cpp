@@ -283,7 +283,9 @@ TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recs, double pps
 WrappedTimeline wrapTimeline(const TimelineLayout& layout, double lineWidth, double minPiece)
 {
     WrappedTimeline out;
+    minPiece = std::max(minPiece, 0.0);
     lineWidth = std::max({lineWidth, minPiece, 1.0});
+    for (const TimelineGap& g : layout.gaps) lineWidth = std::max(lineWidth, g.width);  // a gap always fits a line (CC4)
     // Gaps and blocks in the order they are drawn (a gap comes before the block after it).
     struct Item {
         bool gap;
@@ -300,39 +302,66 @@ WrappedTimeline wrapTimeline(const TimelineLayout& layout, double lineWidth, dou
     std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
         return a.x < b.x || (a.x == b.x && a.gap && !b.gap);
     });
+    // Whether an item starting at `at` on a line that already holds something goes to the next line:
+    // it does not fit, and it fits a line of its own or too little of the line is left to start it there.
+    const auto breaks = [&](double at, double width, bool gap) {
+        return at + width > lineWidth && (width <= lineWidth || gap || lineWidth - at < minPiece);
+    };
     int line = 0;
     double lineX = 0.0;    // where the line's content ends
     double prevEnd = 0.0;  // where the item before ends, in the layout
     bool any = false;
-    for (const Item& it : items) {
+    for (std::size_t n = 0; n < items.size(); ++n) {
+        const Item& it = items[n];
         const double space = std::max(0.0, it.x - prevEnd);  // a short pause, to scale
         prevEnd = it.x + it.width;
         // At the start of a line the space before an item is left out, as between words.
         double at = lineX > 0.0 ? lineX + space : 0.0;
-        const bool fits = at + it.width <= lineWidth;
-        if (!fits && (it.width <= lineWidth || it.gap || lineWidth - at < minPiece) && lineX > 0.0) {
-            ++line;  // on the next line, whole if it fits there
+        bool newLine = lineX > 0.0 && breaks(at, it.width, it.gap);
+        // A gap stays with the block after it: if that block would go to the next line, so does the gap (CC4).
+        if (!newLine && lineX > 0.0 && it.gap && n + 1 < items.size() && !items[n + 1].gap) {
+            const Item& next = items[n + 1];
+            const double nextAt = at + it.width + std::max(0.0, next.x - prevEnd);
+            newLine = breaks(nextAt, next.width, false);
+        }
+        if (newLine) {
+            ++line;
             at = 0.0;
         }
+        any = true;
         if (it.gap || at + it.width <= lineWidth) {
             out.pieces.push_back({it.gap, it.index, line, at, it.width, 0.0, 1.0});
             lineX = at + it.width;
-            any = true;
             continue;
         }
-        // Wider than what is left of the line: cut where the line ends and go on in the next one.
-        double done = 0.0;
-        while (done < it.width) {
-            const double w = std::min(it.width - done, lineWidth - at);
-            if (w > 0.0) out.pieces.push_back({false, it.index, line, at, w, done / it.width, (done + w) / it.width});
-            done += w;
-            lineX = at + w;
-            if (done < it.width) {
+        // Wider than what is left of the line: cut where each line ends and go on at the start of the next.
+        // `at` leaves at least minPiece (or is a line's start), so the first piece is never too small.
+        std::vector<double> cuts;  // places in the block where a new line starts
+        for (double c = lineWidth - at; c < it.width; c += lineWidth) cuts.push_back(c);
+        // The last piece at least minPiece wide: its cut moves back (CC1). The piece before keeps some
+        // width, since it was at least minPiece wide itself (less than minPiece only on lines narrower
+        // than two minPiece); `moved > before` always holds, the else is a safeguard.
+        if (!cuts.empty() && it.width - cuts.back() < minPiece) {
+            const double before = cuts.size() > 1 ? cuts[cuts.size() - 2] : 0.0;
+            const double moved = it.width - minPiece;
+            if (moved > before) {
+                cuts.back() = moved;
+            } else {
+                cuts.pop_back();
+            }
+        }
+        double from = 0.0;
+        for (std::size_t k = 0; k <= cuts.size(); ++k) {
+            const bool last = k == cuts.size();
+            const double to = last ? it.width : cuts[k];  // the last piece ends exactly at the block's end (CC2)
+            if (k > 0) {
                 ++line;
                 at = 0.0;
             }
+            out.pieces.push_back({false, it.index, line, at, to - from, from / it.width, last ? 1.0 : to / it.width});
+            lineX = at + (to - from);
+            from = to;
         }
-        any = true;
     }
     out.lines = any ? line + 1 : 0;
     return out;
