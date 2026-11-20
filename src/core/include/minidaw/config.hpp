@@ -159,9 +159,12 @@ std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const 
 // Ids: "recording", "timeline", "audio" (Audio setup), "terms" (P23).
 std::vector<std::string> defaultTabOrder();
 // Every known id once, in the order given; unknown ids and repeats left out,
-// missing ones added at the end in the default order.
+// missing ones added at the end in the default order. A pinned tab (Terms,
+// P30) is always last, wherever it was given.
 std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order);
 bool isTabId(std::string_view id);
+// Pinned at the right end of the tab bar, not movable (P30): "terms".
+bool isPinnedTab(std::string_view id);
 
 struct TabSettings {
     std::vector<std::string> order = defaultTabOrder();

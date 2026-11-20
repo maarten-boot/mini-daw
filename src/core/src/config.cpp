@@ -276,10 +276,17 @@ std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order
     const auto add = [&](const std::string& id) {
         if (isTabId(id) && std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
     };
-    for (const auto& id : order) add(id);
-    for (const auto& id : defaultTabOrder()) add(id);
+    for (const auto& id : order) {
+        if (!isPinnedTab(id)) add(id);
+    }
+    for (const auto& id : defaultTabOrder()) {
+        if (!isPinnedTab(id)) add(id);
+    }
+    add("terms");  // pinned at the right end (P30)
     return out;
 }
+
+bool isPinnedTab(std::string_view id) { return id == "terms"; }
 
 ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
 {

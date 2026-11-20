@@ -410,7 +410,8 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     REQUIRE(saveConfigFile(dir.path / "c.ini", cfg).empty());
     const auto back = loadConfigFile(dir.path / "c.ini");
     CHECK(back.warnings.empty());
-    CHECK(back.config.tabs.order == cfg.tabs.order);
+    // Terms is pinned at the right end since P30 (T-UI-33).
+    CHECK(back.config.tabs.order == std::vector<std::string>{"timeline", "audio", "recording", "terms"});
     CHECK(back.config.tabs.last == "audio");
     CHECK(back.config.fontSize == 18.0f);
     // Saved again with another order: the values are replaced, not added (U6).

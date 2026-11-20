@@ -102,7 +102,7 @@ TEST_CASE("T-PLAY-18: short gaps to scale, long gaps as a marker", "[timeline][T
 TEST_CASE("T-PLAY-18: recordings in the same second do not hide each other", "[timeline][T-PLAY-18]")
 {
     // Crosscheck #12, T10: a "-2" part in the same second as a short one, then a take
-    // (another row) that overlaps both.
+    // that overlaps both. One stream since P30: nothing is drawn on top of anything.
     std::vector<RecordingInfo> r(4);
     r[0].autoPart = true;
     r[0].start = 100;
@@ -119,9 +119,91 @@ TEST_CASE("T-PLAY-18: recordings in the same second do not hide each other", "[t
     REQUIRE(l.blocks.size() == 4);
     CHECK(l.blocks[0].x == Catch::Approx(0));
     CHECK(l.blocks[1].x >= l.blocks[0].x + l.blocks[0].width);  // not on top of it
-    CHECK(l.blocks[2].x < l.blocks[1].x + l.blocks[1].width);   // the other row may overlap
-    CHECK(l.blocks[3].x >= l.blocks[1].x + l.blocks[1].width);  // after the row's last block
+    CHECK(l.blocks[2].x >= l.blocks[1].x + l.blocks[1].width);  // right after it (P30: one stream)
+    CHECK(l.blocks[3].x >= l.blocks[2].x + l.blocks[2].width);
     CHECK(l.width >= l.blocks[3].x + l.blocks[3].width);
+}
+
+TEST_CASE("T-PLAY-21: the timeline wraps into lines like text", "[timeline][T-PLAY-21]")
+{
+    // Blocks of 100 with pauses of 20 (to scale), a line of 250: two blocks per line.
+    std::vector<RecordingInfo> r(5);
+    for (std::size_t i = 0; i < r.size(); ++i) {
+        r[i].start = static_cast<std::int64_t>(i) * 12;  // 10 s long, 2 s apart
+        r[i].seconds = 10;
+        r[i].autoPart = i % 2 == 0;  // auto parts and takes in one stream
+    }
+    const TimelineLayout l = layoutTimeline(r, 10.0, 10.0, 40.0, 20.0);
+    REQUIRE(l.blocks.size() == 5);
+    CHECK(l.blocks[1].x == Catch::Approx(120));
+    const WrappedTimeline w = wrapTimeline(l, 250.0, 20.0);
+    REQUIRE(w.pieces.size() == 5);
+    CHECK(w.lines == 3);
+    CHECK(w.pieces[0].line == 0);
+    CHECK(w.pieces[0].x == Catch::Approx(0));
+    CHECK(w.pieces[1].line == 0);
+    CHECK(w.pieces[1].x == Catch::Approx(120));  // the pause before it, to scale
+    CHECK(w.pieces[2].line == 1);
+    CHECK(w.pieces[2].x == Catch::Approx(0));    // no pause at a line's start
+    CHECK(w.pieces[3].line == 1);
+    CHECK(w.pieces[3].x == Catch::Approx(120));
+    CHECK(w.pieces[4].line == 2);
+    for (const auto& p : w.pieces) {
+        CHECK_FALSE(p.gap);
+        CHECK(p.from == 0.0);
+        CHECK(p.to == 1.0);
+        CHECK(p.x + p.width <= 250.0);
+    }
+    // Wide enough for everything: one line, as the layout.
+    const WrappedTimeline one = wrapTimeline(l, 1000.0, 20.0);
+    CHECK(one.lines == 1);
+    CHECK(one.pieces[4].x == Catch::Approx(l.blocks[4].x));
+    CHECK(wrapTimeline({}, 100.0, 20.0).lines == 0);
+}
+
+TEST_CASE("T-PLAY-21: a long recording goes on in the next lines; gaps are never cut", "[timeline][T-PLAY-21]")
+{
+    std::vector<RecordingInfo> r(3);
+    r[0].start = 0;
+    r[0].seconds = 5;   // 50 wide
+    r[1].start = 7;     // 20 after it
+    r[1].seconds = 50;  // 500 wide: more than two lines of 200
+    r[2].start = 7 + 50 + 3600;  // an hour later: a gap marker of 40, then 50
+    r[2].seconds = 5;
+    const TimelineLayout l = layoutTimeline(r, 10.0, 10.0, 40.0, 20.0);
+    REQUIRE(l.gaps.size() == 1);
+    const WrappedTimeline w = wrapTimeline(l, 200.0, 20.0);
+    // Block 0 (0..50), block 1 from 70: 130 on line 0, 200 on line 1, 170 on line 2.
+    REQUIRE(w.pieces.size() == 6);
+    CHECK(w.pieces[1].item == 1);
+    CHECK(w.pieces[1].line == 0);
+    CHECK(w.pieces[1].x == Catch::Approx(70));
+    CHECK(w.pieces[1].width == Catch::Approx(130));
+    CHECK(w.pieces[1].from == Catch::Approx(0.0));
+    CHECK(w.pieces[1].to == Catch::Approx(130.0 / 500.0));
+    CHECK(w.pieces[2].item == 1);
+    CHECK(w.pieces[2].line == 1);
+    CHECK(w.pieces[2].x == Catch::Approx(0));
+    CHECK(w.pieces[2].width == Catch::Approx(200));
+    CHECK(w.pieces[3].item == 1);
+    CHECK(w.pieces[3].line == 2);
+    CHECK(w.pieces[3].width == Catch::Approx(170));
+    CHECK(w.pieces[3].to == Catch::Approx(1.0));
+    // The gap does not fit after it (170 + 40 > 200): whole, on the next line; then the last block.
+    CHECK(w.pieces[4].gap);
+    CHECK(w.pieces[4].line == 3);
+    CHECK(w.pieces[4].x == Catch::Approx(0));
+    CHECK(w.pieces[4].width == Catch::Approx(40));
+    CHECK_FALSE(w.pieces[5].gap);
+    CHECK(w.pieces[5].line == 3);
+    CHECK(w.pieces[5].x == Catch::Approx(40));
+    CHECK(w.lines == 4);
+
+    // Less than minPiece left on the line: the long block starts on the next line.
+    const WrappedTimeline n = wrapTimeline(l, 200.0, 140.0);
+    CHECK(n.pieces[1].line == 1);
+    CHECK(n.pieces[1].x == Catch::Approx(0));
+    CHECK(n.pieces[1].width == Catch::Approx(200));
 }
 
 TEST_CASE("T-PLAY-18: the recordings in a takes folder, oldest first", "[timeline][T-PLAY-18]")

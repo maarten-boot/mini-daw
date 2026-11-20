@@ -104,16 +104,17 @@ std::vector<Term> makeTerms()
         // --- Playing --------------------------------------------------------
         {"Transport", kPlaying,
          "The buttons that start and stop: Play, Stop, Record, Auto record and |< Start (back to the beginning; the "
-         "Home key), with the song position and what is going on. It is on the Recording and Timeline tabs.",
-         "Recording and Timeline tabs, at the top", {"Song position", "Record", "Auto record"}},
+         "Home key), with the song position and what is going on. It is above the tabs, the same on every tab.",
+         "Above the tabs", {"Song position", "Record", "Auto record"}},
         {"Song position", kPlaying,
          "Where in time playing starts: |< Start (or the Home key) sets it to the beginning; Stop keeps the place "
          "where it stopped.",
          "The transport", {"Transport", "Overdub"}},
         {"Timeline", kPlaying,
-         "The Timeline tab shows every recording in the takes folder in time order: auto record parts on one row, "
-         "Record takes on the other. Long pauses are drawn short, with their length. Click a recording to hear it; "
-         "\"Load onto the tracks\" puts its takes on the tracks; right-click for Rename, Notes and Delete.",
+         "The Timeline tab shows every recording in the takes folder in time order, in lines like text: A is an "
+         "auto record part, R a Record take. Long pauses are drawn short, with their length. Double-click a "
+         "recording to hear it; \"Load onto the tracks\" puts its takes on the tracks; right-click for Rename, "
+         "Notes and Delete.",
          "Timeline tab", {"Recording", "Takes folder", "Mark"}},
         {"Mute and solo", kPlaying,
          "M (mute) silences a track. S (solo) plays only the soloed tracks; mute wins over solo. Both work while "

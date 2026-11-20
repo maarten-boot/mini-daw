@@ -265,6 +265,9 @@ struct AppState {
     minidaw::TimelineLayout timelineLayout;           // T4: laid out again only when something changed
     std::uint64_t layoutVersion = ~0ull;
     float layoutPps = 0.0f, layoutMinWidth = 0.0f, layoutGapWidth = 0.0f;
+    minidaw::WrappedTimeline timelineWrap;            // P30: the layout in lines, cut again when it or the width changes
+    std::uint64_t wrapStamp = 0, layoutStamp = 1;
+    float wrapWidth = 0.0f;
     float timelineZoom = 4.0f;                        // pixels per second, at 16 px text
     std::filesystem::path previewFolder;              // a recording played on its own (not the tracks)
     std::uint64_t previewLength = 0;
@@ -1093,7 +1096,7 @@ void drawTabsWindow(AppState& app)
     minidaw::app::placeNewWindow("Tabs");
     if (ImGui::Begin("Tabs", &app.showTabsWindow, ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextWrapped("The order of the tabs, left to right. You can also drag a tab to another place. "
-                           "At start the tab used last is shown.");
+                           "Terms stays at the right end. At start the tab used last is shown.");
         // Rows are keyed by tab, so the keyboard focus moves with the tab that was
         // moved. When it reaches the top or bottom (that button is then disabled)
         // the focus goes to its other button (crosscheck #13, U4).
@@ -1107,8 +1110,15 @@ void drawTabsWindow(AppState& app)
         // row would come again in this frame and its button act twice.
         std::size_t moveFrom = order.size();
         std::size_t moveTo = order.size();
+        // Pinned tabs (Terms, P30) are last in the order and have no buttons.
+        const auto movable = static_cast<std::size_t>(
+            std::count_if(order.begin(), order.end(), [](const std::string& id) { return !minidaw::isPinnedTab(id); }));
         for (std::size_t i = 0; i < order.size(); ++i) {
             const std::string id = order[i];
+            if (i >= movable) {
+                ImGui::Text("%zu. %s (always at the right end)", i + 1, tabTitle(id));
+                continue;
+            }
             ImGui::PushID(id.c_str());
             minidaw::app::beginDisabled(i == 0);
             if (keyboard && focusTab == id && focusUp) ImGui::SetKeyboardFocusHere();
@@ -1118,9 +1128,9 @@ void drawTabsWindow(AppState& app)
             }
             minidaw::app::endDisabled();
             ImGui::SameLine();
-            minidaw::app::beginDisabled(i + 1 == order.size());
+            minidaw::app::beginDisabled(i + 1 == movable);
             if (keyboard && focusTab == id && !focusUp) ImGui::SetKeyboardFocusHere();
-            if (ImGui::Button("Down") && i + 1 < order.size()) {
+            if (ImGui::Button("Down") && i + 1 < movable) {
                 moveFrom = i;
                 moveTo = i + 1;
             }
@@ -1132,7 +1142,7 @@ void drawTabsWindow(AppState& app)
         if (moveFrom < order.size()) {
             const std::string id = order[moveFrom];
             std::swap(order[moveFrom], order[moveTo]);
-            if (moveTo == 0 || moveTo + 1 == order.size()) {  // its button there is disabled: focus the other one
+            if (moveTo == 0 || moveTo + 1 == movable) {  // its button there is disabled: focus the other one
                 app.tabsFocus = id;
                 app.tabsFocusUp = moveTo != 0;
             }
@@ -3793,7 +3803,8 @@ void drawTimeline(AppState& app)
     ImGui::SliderFloat("Zoom (pixels per second)", &app.timelineZoom, 0.5f, 100.0f, "%.1f",
                        ImGuiSliderFlags_Logarithmic);
     ImGui::SameLine();
-    ImGui::TextWrapped("From %s. Pauses longer than 10 s are drawn short, with their real length.",
+    ImGui::TextWrapped("From %s. A = auto record part, R = Record take. Pauses longer than 10 s are drawn short, "
+                       "with their real length.",
                        minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     if (recs.empty()) {
         ImGui::TextWrapped("No recordings yet. Record (Ctrl+R) or switch on Auto record and play: they appear here.");
@@ -3801,15 +3812,17 @@ void drawTimeline(AppState& app)
     }
     const float scale = em / 16.0f;
     const float pps = app.timelineZoom * scale;
-    const float minWidth = ImGui::CalcTextSize("> 00:00 00:00 REC").x + 2 * ImGui::GetStyle().FramePadding.x;
-    const float gapWidth = 6.0f * em;
+    const float minWidth = ImGui::CalcTextSize("> A 00:00 00:00 REC").x + 2 * ImGui::GetStyle().FramePadding.x;
+    // As wide as its longest label, which is drawn inside it (P30: the blocks follow on the same line).
+    const float gapWidth = std::max({6.0f * em, ImGui::CalcTextSize("+23 h 59 min").x + 0.8f * em,
+                                     ImGui::CalcTextSize("+9999 days").x + 0.8f * em});
     if (anyLive || app.layoutVersion != app.recordingsVersion || app.layoutPps != pps ||
         app.layoutMinWidth != minWidth || app.layoutGapWidth != gapWidth) {
         // A block with a name is as wide as its label (P21).
         std::vector<double> widths(recs.size(), 0.0);
         for (std::size_t i = 0; i < recs.size(); ++i) {
             if (recs[i].notes.name.empty()) continue;
-            widths[i] = ImGui::CalcTextSize(("> " + blockName(recs[i].notes.name) + " 00:00 00:00 REC").c_str()).x +
+            widths[i] = ImGui::CalcTextSize(("> A " + blockName(recs[i].notes.name) + " 00:00 00:00 REC").c_str()).x +
                         2 * ImGui::GetStyle().FramePadding.x;
         }
         app.timelineLayout = minidaw::layoutTimeline(recs, pps, 10.0, gapWidth, minWidth, &widths);
@@ -3817,59 +3830,121 @@ void drawTimeline(AppState& app)
         app.layoutPps = pps;
         app.layoutMinWidth = minWidth;
         app.layoutGapWidth = gapWidth;
+        ++app.layoutStamp;
     }
     const minidaw::TimelineLayout& layout = app.timelineLayout;
     const float rowH = ImGui::GetFrameHeight() * 1.6f;
-    const float labelH = ImGui::GetTextLineHeightWithSpacing();
+    const float pitch = rowH + em * 0.4f;  // one line of blocks
     const float pad = em;
-    const float height = 2 * (labelH + rowH) + labelH + ImGui::GetStyle().ScrollbarSize + 2 * ImGui::GetStyle().WindowPadding.y;
+    // The view fills the tab down to the details of the selected recording (P30).
+    // At least three lines; in a small window the tab scrolls to the details.
+    const float detailsH = ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetFrameHeightWithSpacing();
+    const float height =
+        std::max(3 * pitch + pad + 2 * ImGui::GetStyle().WindowPadding.y, ImGui::GetContentRegionAvail().y - detailsH);
     int doubleClicked = -1;
-    if (ImGui::BeginChild("timeline", ImVec2(0, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar)) {
-        const float scrollX = ImGui::GetScrollX();
-        // At the end in the last frame: keep following while a recording grows (T3).
-        const bool atEnd = scrollX >= ImGui::GetScrollMaxX() - 1.0f;
-        // Only what is in view is drawn (T4).
-        const float viewLeft = scrollX - pad;
-        const float viewRight = scrollX + ImGui::GetWindowWidth();
-        const auto inView = [&](double x, double w) {
-            return pad + static_cast<float>(x + w) >= viewLeft && pad + static_cast<float>(x) <= viewRight;
-        };
-        const float yAuto = labelH;
-        const float yTakes = 2 * labelH + rowH;
-        ImGui::SetCursorPos(ImVec2(scrollX + pad, 0));
-        ImGui::TextUnformatted("Auto record parts");
-        ImGui::SetCursorPos(ImVec2(scrollX + pad, labelH + rowH));
-        ImGui::TextUnformatted("Record takes");
-        for (const auto& g : layout.gaps) {
-            if (!inView(g.x, g.width)) continue;
-            ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(g.x) + em * 0.3f, labelH + rowH * 0.5f));
-            ImGui::TextUnformatted(g.label.c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A pause of %s, drawn short", g.label.c_str() + 1);
+    if (ImGui::BeginChild("timeline", ImVec2(0, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+        // The blocks in lines, as text is wrapped: at the right edge they go on in the next line (P30).
+        const float lineWidth = std::max(minWidth, ImGui::GetContentRegionAvail().x - 2 * pad);
+        if (app.wrapStamp != app.layoutStamp || app.wrapWidth != lineWidth) {
+            app.timelineWrap = minidaw::wrapTimeline(layout, lineWidth, minWidth);
+            app.wrapStamp = app.layoutStamp;
+            app.wrapWidth = lineWidth;
         }
-        for (const auto& b : layout.blocks) {
-            if (!inView(b.x, b.width)) continue;
+        const minidaw::WrappedTimeline& wrap = app.timelineWrap;
+        const float scrollY = ImGui::GetScrollY();
+        // At the bottom in the last frame: keep following while a recording grows (T3).
+        const bool atEnd = scrollY >= ImGui::GetScrollMaxY() - 1.0f;
+        // Only what is in view is drawn (T4).
+        const float viewTop = scrollY - pitch;
+        const float viewBottom = scrollY + ImGui::GetWindowHeight();
+        const auto lineY = [&](int line) { return pad * 0.5f + static_cast<float>(line) * pitch; };
+        const auto inView = [&](const minidaw::TimelinePiece& p) {
+            const float y = lineY(p.line);
+            return y + pitch >= viewTop && y <= viewBottom;
+        };
+        std::size_t p = 0;
+        while (p < wrap.pieces.size()) {
+            // One block (all its pieces) or one gap at a time.
+            std::size_t q = p + 1;
+            while (q < wrap.pieces.size() && !wrap.pieces[p].gap && !wrap.pieces[q].gap &&
+                   wrap.pieces[q].item == wrap.pieces[p].item) {
+                ++q;
+            }
+            const std::size_t first = p;
+            p = q;
+            if (std::none_of(wrap.pieces.begin() + static_cast<std::ptrdiff_t>(first),
+                             wrap.pieces.begin() + static_cast<std::ptrdiff_t>(q), inView)) {
+                continue;
+            }
+            const minidaw::TimelinePiece& head = wrap.pieces[first];
+            if (head.gap) {
+                const minidaw::TimelineGap& g = layout.gaps[head.item];
+                ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(head.x) + em * 0.3f,
+                                           lineY(head.line) + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
+                ImGui::TextUnformatted(g.label.c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A pause of %s, drawn short", g.label.c_str() + 1);
+                continue;
+            }
+            const minidaw::TimelineBlock& b = layout.blocks[head.item];
             const minidaw::RecordingInfo& r = recs[b.index];
             const bool selected = r.folder == app.selectedRecording;
             const bool live = (!app.livePart.empty() && r.folder == app.livePart) ||
                               (recNormal && r.folder == app.session.folder());
             const bool playing = !app.previewFolder.empty() && r.folder == app.previewFolder;
-            // "Chorus 21:50 0:07": its name (P21), start and length (minutes:seconds).
+            // "A Chorus 21:50 0:07": auto part or take, its name (P21), start and length (minutes:seconds).
             const auto len = static_cast<int>(r.seconds + 0.5);
             char timeText[48];
             std::snprintf(timeText, sizeof timeText, "%s %d:%02d%s", minidaw::clockLabel(r.clock, false).c_str(), len / 60,
                           len % 60, live ? " REC" : playing ? " PLAY" : "");
-            const std::string label = std::string(selected ? "> " : "") +
-                                      (r.notes.name.empty() ? std::string() : blockName(r.notes.name) + " ") + timeText + "##" +
-                                      minidaw::pathToUtf8(r.folder);
-            ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(b.x), r.autoPart ? yAuto : yTakes));
-            if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
-            if (ImGui::Button(label.c_str(), ImVec2(static_cast<float>(b.width) - 2, rowH))) {
-                app.selectedRecording = r.folder;
+            const std::string text = std::string(selected ? "> " : "") + (r.autoPart ? "A " : "R ") +
+                                     (r.notes.name.empty() ? std::string() : blockName(r.notes.name) + " ") + timeText;
+            const std::string id = minidaw::pathToUtf8(r.folder);
+            ImGui::PushID(id.c_str());  // not the label: it changes when selected
+            // Takes on another background than auto parts (the letter says it too).
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(selected     ? ImGuiCol_Header
+                                                                             : r.autoPart ? ImGuiCol_Button
+                                                                                          : ImGuiCol_TableHeaderBg));
+            bool hovered = false;
+            const minidaw::RecordingMark* hoveredMark = nullptr;
+            const float tick = std::max(3.0f, em * 0.3f);
+            for (std::size_t k = first; k < q; ++k) {
+                const minidaw::TimelinePiece& piece = wrap.pieces[k];
+                ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(piece.x), lineY(piece.line)));
+                // The first piece has the label; a piece on a following line says it goes on.
+                const std::string label = (k == first ? text : std::string("... ") + timeText) + "##" + std::to_string(k - first);
+                if (ImGui::Button(label.c_str(), ImVec2(static_cast<float>(piece.width) - 2, rowH))) {
+                    app.selectedRecording = r.folder;
+                }
+                // Right-click: Rename, Notes, Delete (P21, SPEC-PLAY-08); one menu for all pieces.
+                ImGui::OpenPopupOnItemClick("recording-menu", ImGuiPopupFlags_MouseButtonRight);
+                if (ImGui::IsItemHovered()) {
+                    hovered = true;
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) doubleClicked = static_cast<int>(b.index);
+                }
+                // Notes made while recording (P22): a tick at their moment, in the piece that holds it.
+                const ImVec2 bmin = ImGui::GetItemRectMin();
+                const ImVec2 bmax = ImGui::GetItemRectMax();
+                for (const auto& m : r.notes.marks) {
+                    const double share = r.seconds > 0 ? std::clamp(m.seconds / r.seconds, 0.0, 1.0) : 0.0;
+                    if (share < piece.from || share > piece.to || (share == piece.to && piece.to < 1.0)) continue;
+                    const double in = piece.to > piece.from ? (share - piece.from) / (piece.to - piece.from) : 0.0;
+                    const float mx = bmin.x + 1.0f + static_cast<float>(in) * (bmax.x - bmin.x - 2.0f);
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddTriangleFilled(ImVec2(mx - tick, bmin.y), ImVec2(mx + tick, bmin.y),
+                                          ImVec2(mx, bmin.y + 1.6f * tick),
+                                          ImGui::GetColorU32(ImGuiCol_CheckMark));  // Accent
+                    // A short line (the top third), so the label below stays readable.
+                    dl->AddLine(ImVec2(mx, bmin.y), ImVec2(mx, bmin.y + (bmax.y - bmin.y) * 0.35f),
+                                ImGui::GetColorU32(ImGuiCol_CheckMark), 1.0f);
+                    const ImVec2 mouse = ImGui::GetIO().MousePos;
+                    if (std::fabs(mouse.x - mx) <= tick && mouse.y >= bmin.y && mouse.y <= bmax.y &&
+                        ImGui::IsWindowHovered()) {
+                        hoveredMark = &m;
+                    }
+                }
             }
-            if (selected) ImGui::PopStyleColor();
-            // Right-click: Rename, Notes, Delete (P21, SPEC-PLAY-08).
-            ImGui::PushID(minidaw::pathToUtf8(r.folder).c_str());  // not the label: it changes when selected
-            if (ImGui::BeginPopupContextItem("recording-menu")) {
+            ImGui::PopStyleColor();
+            if (ImGui::BeginPopup("recording-menu")) {
                 app.selectedRecording = r.folder;
                 ImGui::TextUnformatted(timeText);
                 ImGui::Separator();
@@ -3886,39 +3961,17 @@ void drawTimeline(AppState& app)
                 ImGui::EndPopup();
             }
             ImGui::PopID();
-            // Notes made while recording (P22): a tick at their moment; pointing at one shows it.
-            const ImVec2 bmin = ImGui::GetItemRectMin();
-            const ImVec2 bmax = ImGui::GetItemRectMax();
-            const minidaw::RecordingMark* hoveredMark = nullptr;
-            const float tick = std::max(3.0f, em * 0.3f);
-            for (const auto& m : r.notes.marks) {
-                const double share = r.seconds > 0 ? std::clamp(m.seconds / r.seconds, 0.0, 1.0) : 0.0;
-                const float mx = bmin.x + 1.0f + static_cast<float>(share) * (bmax.x - bmin.x - 2.0f);
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddTriangleFilled(ImVec2(mx - tick, bmin.y), ImVec2(mx + tick, bmin.y), ImVec2(mx, bmin.y + 1.6f * tick),
-                                      ImGui::GetColorU32(ImGuiCol_CheckMark));  // Accent
-                // A short line (the top third), so the label below stays readable.
-                dl->AddLine(ImVec2(mx, bmin.y), ImVec2(mx, bmin.y + (bmax.y - bmin.y) * 0.35f),
-                            ImGui::GetColorU32(ImGuiCol_CheckMark), 1.0f);
-                const ImVec2 mouse = ImGui::GetIO().MousePos;
-                if (std::fabs(mouse.x - mx) <= tick && mouse.y >= bmin.y && mouse.y <= bmax.y &&
-                    ImGui::IsWindowHovered()) {
-                    hoveredMark = &m;
-                }
-            }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                doubleClicked = static_cast<int>(b.index);
-            }
-            if (ImGui::IsItemHovered()) {
+            if (hovered) {
                 std::string problems;  // files whose length could not be read (T11)
                 for (const auto& pr : r.problems) problems += "\nNot readable: " + pr;
                 const std::string named = r.notes.name.empty() ? std::string() : r.notes.name + "\n";
                 std::string note = r.notes.note.substr(0, r.notes.note.find('\n'));  // the first line
                 if (note.size() > 80) note = note.substr(0, 80) + "...";
                 if (!note.empty()) note = "\nNote: " + note;
-                ImGui::SetTooltip("%s%s\n%s, %.1f s, %zu file(s)%s%s%s\nClick: select. Double-click: play it. "
+                ImGui::SetTooltip("%s%s\n%s, %s, %.1f s, %zu file(s)%s%s%s\nClick: select. Double-click: play it. "
                                   "Right-click: rename, notes, delete.",
                                   named.c_str(), minidaw::pathToUtf8(r.folder.filename()).c_str(),
+                                  r.autoPart ? "Auto record part" : "Record take",
                                   minidaw::clockLabel(r.clock, true).c_str(), r.seconds, r.files.size(),
                                   live ? " (being recorded)" : "", problems.c_str(), note.c_str());
             }
@@ -3926,11 +3979,12 @@ void drawTimeline(AppState& app)
                 ImGui::SetTooltip("Note at %s: %s", clockText(hoveredMark->seconds).c_str(), hoveredMark->text.c_str());
             }
         }
-        ImGui::SetCursorPos(ImVec2(pad + static_cast<float>(layout.width) + pad, yTakes + rowH));
+        // The height of all lines, so the view scrolls down to the last one.
+        ImGui::SetCursorPos(ImVec2(pad, lineY(std::max(wrap.lines, 1)) + pad * 0.5f));
         ImGui::Dummy(ImVec2(1, 1));
-        // Follow new recordings: show the end when one is added or one is being recorded.
+        // Follow new recordings: show the last line when one is added or one is being recorded.
         if (recs.size() != app.recordingsSeen || (anyLive && atEnd)) {
-            ImGui::SetScrollX(ImGui::GetScrollMaxX());
+            ImGui::SetScrollHereY(1.0f);
             app.recordingsSeen = recs.size();
         }
     }
@@ -6001,6 +6055,8 @@ int runGui(AppState& app)
         if (ImGui::BeginChild("content", ImVec2(0, -statusHeight))) {
             // Tabs (SPEC-UI-11, SPEC-UI-12): in the user's order, draggable; the last one used comes back.
             pollAudioMessages(app);
+            // The transport (P30): once, above the tabs, the same on every tab.
+            drawTransport(app);
             if (!app.tabsStarted) {
                 app.selectTab = app.config.tabs.last;
                 app.tabsStarted = true;
@@ -6009,9 +6065,17 @@ int runGui(AppState& app)
             const std::string requested = app.selectTab;
             app.selectTab.clear();
             bool timelineOpen = false;
+            // Room left of the pinned tab (Terms, P30): ImGui keeps a trailing tab in view but
+            // does not move it to the right end, so an invisible spacer fills the room before it.
+            float spacer = ImGui::GetContentRegionAvail().x;
+            for (const std::string& id : app.config.tabs.order) {
+                spacer -= ImGui::TabItemCalcSize(tabLabel(id).c_str(), false).x + ImGui::GetStyle().ItemInnerSpacing.x;
+            }
             if (ImGui::BeginTabBar(barId.c_str(), ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_DrawSelectedOverline)) {
                 for (const std::string& id : app.config.tabs.order) {
-                    const ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
+                    if (minidaw::isPinnedTab(id) && spacer >= 1.0f) ImGui::TabItemSpacing("##tab-spacer", 0, spacer);
+                    ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
+                    if (minidaw::isPinnedTab(id)) flags |= ImGuiTabItemFlags_Trailing;  // Terms at the right end (P30)
                     if (!ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags)) continue;
                     // A tab being selected shows at the next frame; on a new tab bar's first
                     // frame ImGui shows the first tab meanwhile: not drawn, not saved as the
@@ -6026,12 +6090,10 @@ int runGui(AppState& app)
                     }
                     if (id == "recording") {
                         drawAudioStatusLine(app);
-                        drawTransport(app);
                         drawTracksPanel(app);
                     } else if (id == "timeline") {
                         if (!app.timelineShown) app.recordingsDirty = true;  // read them again when the tab opens
                         timelineOpen = true;
-                        drawTransport(app);
                         drawTimeline(app);
                     } else if (id == "audio") {
                         drawAudioStatus(app);

@@ -62,16 +62,37 @@ struct TimelineLayout {
     double width = 0.0;     // the whole timeline
 };
 
-// Recordings side by side in time order (they must be sorted by start):
+// Recordings one after another in time order, in one stream (they must be
+// sorted by start; auto parts and takes never overlap, P30):
 // `pixelsPerSecond` for the recordings and for gaps up to `maxRealGap`
 // seconds; a longer gap becomes a marker of `gapWidth` pixels labelled with
 // its real length. Blocks are at least `minWidth` wide; a block never starts
-// before the end of the one before it in the same row (auto parts / takes).
+// before the end of the one before it.
 // `minWidths` (optional, one per recording): a wider minimum for that block
 // (its label with a name, P21).
 TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recordings, double pixelsPerSecond,
                               double maxRealGap, double gapWidth, double minWidth,
                               const std::vector<double>* minWidths = nullptr);
+
+// The stream cut into lines of `lineWidth` pixels, as text is wrapped (P30):
+// a block or gap that does not fit in the rest of the line goes to the next
+// one; the short pause before it is left out at a line's start. A block wider
+// than a line starts where it is (if at least `minPiece` is left there) and
+// goes on at the start of the next line(s), in pieces. Gaps are never cut.
+struct TimelinePiece {
+    bool gap = false;       // a gap marker (layout.gaps) or a block (layout.blocks)
+    std::size_t item = 0;   // its index there
+    int line = 0;
+    double x = 0.0;         // from the line's start
+    double width = 0.0;
+    double from = 0.0;      // the share of the block in this piece: from .. to (0 .. 1)
+    double to = 1.0;
+};
+struct WrappedTimeline {
+    std::vector<TimelinePiece> pieces;  // in drawing order; a block's pieces one after another
+    int lines = 0;
+};
+WrappedTimeline wrapTimeline(const TimelineLayout& layout, double lineWidth, double minPiece);
 
 // "+45 s", "+12 min", "+2 h 05 min", "+3 days".
 std::string gapLabel(double seconds);

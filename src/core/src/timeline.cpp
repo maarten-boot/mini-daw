@@ -254,10 +254,8 @@ TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recs, double pps
                               double minWidth, const std::vector<double>* minWidths)
 {
     TimelineLayout l;
-    double x = 0.0;          // the end of what is drawn so far (both rows)
+    double x = 0.0;          // the end of what is drawn so far
     double prevEnd = 0.0;    // seconds (as RecordingInfo::start) where the recordings so far end
-    double lastX = 0.0;      // where the last block starts
-    double rowEnd[2] = {0.0, 0.0};  // per row (takes, auto parts): where its last block ends (T10)
     for (std::size_t i = 0; i < recs.size(); ++i) {
         const RecordingInfo& r = recs[i];
         const auto start = static_cast<double>(r.start);
@@ -269,23 +267,75 @@ TimelineLayout layoutTimeline(const std::vector<RecordingInfo>& recs, double pps
                 bx = x + gapWidth;
             } else if (gap > 0) {
                 bx = x + gap * pps;
-            } else {
-                // Overlaps the one before (another row, or the same second): from its own start.
-                bx = std::max(lastX + (start - static_cast<double>(recs[i - 1].start)) * pps, lastX);
             }
+            // Overlapping the one before (the same second): right after it, one stream (P30, T10).
         }
         const double least = minWidths != nullptr && i < minWidths->size() ? std::max(minWidth, (*minWidths)[i]) : minWidth;
         const double w = std::max(least, r.seconds * pps);
-        double& row = rowEnd[r.autoPart ? 1 : 0];
-        bx = std::max(bx, row);  // never on top of the row's block before it (T10)
         l.blocks.push_back({i, bx, w});
-        lastX = bx;
-        row = bx + w;
-        x = std::max(x, bx + w);
+        x = bx + w;
         prevEnd = std::max(prevEnd, start + r.seconds);  // the real end: gap labels give the real pause
         l.width = std::max(l.width, x);
     }
     return l;
+}
+
+WrappedTimeline wrapTimeline(const TimelineLayout& layout, double lineWidth, double minPiece)
+{
+    WrappedTimeline out;
+    lineWidth = std::max({lineWidth, minPiece, 1.0});
+    // Gaps and blocks in the order they are drawn (a gap comes before the block after it).
+    struct Item {
+        bool gap;
+        std::size_t index;
+        double x;
+        double width;
+    };
+    std::vector<Item> items;
+    items.reserve(layout.blocks.size() + layout.gaps.size());
+    for (std::size_t i = 0; i < layout.gaps.size(); ++i) items.push_back({true, i, layout.gaps[i].x, layout.gaps[i].width});
+    for (std::size_t i = 0; i < layout.blocks.size(); ++i) {
+        items.push_back({false, i, layout.blocks[i].x, layout.blocks[i].width});
+    }
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+        return a.x < b.x || (a.x == b.x && a.gap && !b.gap);
+    });
+    int line = 0;
+    double lineX = 0.0;    // where the line's content ends
+    double prevEnd = 0.0;  // where the item before ends, in the layout
+    bool any = false;
+    for (const Item& it : items) {
+        const double space = std::max(0.0, it.x - prevEnd);  // a short pause, to scale
+        prevEnd = it.x + it.width;
+        // At the start of a line the space before an item is left out, as between words.
+        double at = lineX > 0.0 ? lineX + space : 0.0;
+        const bool fits = at + it.width <= lineWidth;
+        if (!fits && (it.width <= lineWidth || it.gap || lineWidth - at < minPiece) && lineX > 0.0) {
+            ++line;  // on the next line, whole if it fits there
+            at = 0.0;
+        }
+        if (it.gap || at + it.width <= lineWidth) {
+            out.pieces.push_back({it.gap, it.index, line, at, it.width, 0.0, 1.0});
+            lineX = at + it.width;
+            any = true;
+            continue;
+        }
+        // Wider than what is left of the line: cut where the line ends and go on in the next one.
+        double done = 0.0;
+        while (done < it.width) {
+            const double w = std::min(it.width - done, lineWidth - at);
+            if (w > 0.0) out.pieces.push_back({false, it.index, line, at, w, done / it.width, (done + w) / it.width});
+            done += w;
+            lineX = at + w;
+            if (done < it.width) {
+                ++line;
+                at = 0.0;
+            }
+        }
+        any = true;
+    }
+    out.lines = any ? line + 1 : 0;
+    return out;
 }
 
 int assignTakeFolder(std::vector<Track>& tracks, const std::filesystem::path& folder, std::string& error)
