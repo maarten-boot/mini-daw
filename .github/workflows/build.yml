@@ -158,12 +158,12 @@ jobs:
           w="mini-daw-$v-windows-x64"
           mkdir -p "$w"
           cp artifacts/mini-daw-windows-x64/mini-daw.exe artifacts/mini-daw-windows-x64/mini-daw.com \
-             LICENSE THIRD_PARTY.md README.md "$w/"
+             LICENSE THIRD_PARTY.md README.md CHANGELOG.md "$w/"
           zip -r -q "out/$w.zip" "$w"
           # Linux: the program (the download loses its x bit) with the same texts.
           l="mini-daw-$v-linux-x64"
           mkdir -p "$l"
-          cp artifacts/mini-daw-linux-x64/mini-daw LICENSE THIRD_PARTY.md README.md "$l/"
+          cp artifacts/mini-daw-linux-x64/mini-daw LICENSE THIRD_PARTY.md README.md CHANGELOG.md "$l/"
           chmod 755 "$l/mini-daw"
           tar -czf "out/$l.tar.gz" --owner=0 --group=0 "$l"
           (cd out && sha256sum * > SHA256SUMS.txt)

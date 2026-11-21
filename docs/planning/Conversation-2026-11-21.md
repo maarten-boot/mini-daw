@@ -286,3 +286,18 @@ User: "pushed it, check the CI run", "meanwhile start P32".
   - Render and Edit are on the MIDI track's Output column, and the lesson text says so.
   - `docs/Demo-checklist.md` removed. The README links the guide.
   - Tests: Linux 280/280, Wine 260/260. GUI checked on Xvfb.
+
+User: "pushed it, check the CI run", "meanwhile write the release docs".
+
+- Release docs written for P33:
+  - `CHANGELOG.md`: its `## 1.0.0 — not released yet` section becomes the release notes, so the links in it are full URLs.
+  - README **Installing**: the Releases page, checksums, Windows installer and zip, and the Linux tar.gz with its packages and folders.
+  - README **Known limits**.
+  - The intro now says Windows 10 / 11 and Linux.
+- The release job also packs `CHANGELOG.md`.
+- The release-day steps are in the P33 row.
+- CI run 44935373008 (`63de5da`) green:
+  - Linux 280/280, Windows 263/263; installer `mini-daw-0.32.0-setup.exe`.
+  - `release` skipped; C4996 warnings: 15.
+- `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
+- `dist/TESTS.txt`: T-UI-35 M first, then T-REC-36 and the rest.
