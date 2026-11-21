@@ -94,3 +94,11 @@ User: "continue".
   - A note that P30c (T-PLAY-22) comes with the next build.
   - Recording steps on Linux (the Windows VM has no audio input).
   - Then the earlier still-open tests, from P25b on.
+
+## 7. CI run for P30c; dist/ with 0.30.3
+
+User: "pushed it, check the CI run".
+
+- CI run 44901738118 (`a9f37cd`, with P30c): windows, linux, licence green; Linux 259/259, Windows 244/244; installer `mini-daw-0.30.3-setup.exe`.
+- `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
+- `dist/TESTS.txt`: T-PLAY-22 added at the top; the "not in this build yet" note removed.
