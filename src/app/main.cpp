@@ -24,6 +24,7 @@
 
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
+#include "minidaw/audio_export.hpp"
 #include "minidaw/dawproject.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/folder_browse.hpp"
@@ -113,7 +114,7 @@ struct ScriptRun {
     int commands = 0;
     int failures = 0;
     // The line that is running over several frames: slow work, a scan, wait or wait-for.
-    enum class Pending { None, Busy, Scan, Wait, WaitFor } pending = Pending::None;
+    enum class Pending { None, Busy, Scan, Wait, WaitFor, Export } pending = Pending::None;
     const minidaw::ScriptLine* current = nullptr;
     std::chrono::steady_clock::time_point started{};   // of the current line
     std::chrono::steady_clock::time_point deadline{};  // wait / wait-for
@@ -322,7 +323,8 @@ struct AppState {
     // instruments are unloaded.
     minidaw::app::PluginWindows pluginWindows;
     // Browse... buttons (P19, SPEC-UI-14): one folder chooser; what it fills in.
-    enum class BrowseFor { None, InstrumentFolder, ProjectFolder, RecordingFolder, TakeFolder, ExportFolder, ImportFile, ImportFolder };
+    enum class BrowseFor { None, InstrumentFolder, ProjectFolder, RecordingFolder, TakeFolder, ExportFolder, ImportFile, ImportFolder,
+                           AudioExportFolder };
     minidaw::app::FolderChooser folderChooser;
     BrowseFor browseFor = BrowseFor::None;
     GLFWwindow* mainWindow = nullptr;
@@ -345,6 +347,18 @@ struct AppState {
     std::string dawExportName;
     std::string dawExportFolder;
     std::vector<std::string> dawExportReport;  // what the last export wrote and left out
+    // File > Export audio (P29, SPEC-PRJ-06).
+    bool showAudioExport = false;
+    bool audioExportSong = true;                          // the song (as Play plays it)
+    std::set<std::filesystem::path> audioExportRecordings; // recordings ticked on the list
+    minidaw::ExportFormat audioExportFormat = minidaw::ExportFormat::Ogg;
+    minidaw::ExportQuality audioExportQuality;
+    bool audioExportStems = false;
+    bool audioExportZip = false;
+    std::string audioExportZipName;
+    std::string audioExportFolder;
+    std::unique_ptr<minidaw::AudioExport> audioExport;    // the export running, if any
+    std::vector<std::string> audioExportReport;           // what the last export wrote and left out
     // File > Import DAWproject (P28, SPEC-PRJ-05).
     bool showDawImport = false;
     std::string dawImportFile;
@@ -872,6 +886,7 @@ void openAudioSettings(AppState& app)
 // Projects (defined further down, with the playback code they use).
 void showProjectDialog(AppState& app, AppState::ProjectDialog kind);
 void showDawExport(AppState& app);
+void showAudioExport(AppState& app);
 void showDawImport(AppState& app);
 bool openProject(AppState& app, const std::filesystem::path& folder);
 void closeProject(AppState& app);
@@ -906,6 +921,7 @@ void drawMenuBar(AppState& app, bool& quit)
             app.showProjectNote = true;
         }
         if (ImGui::MenuItem("Export DAWproject...", nullptr, false, !rec)) showDawExport(app);  // P27
+        if (ImGui::MenuItem("Export audio...", nullptr, false, !rec)) showAudioExport(app);     // P29
         if (ImGui::MenuItem("Import DAWproject...", nullptr, false, !rec)) showDawImport(app);  // P28
         ImGui::Separator();
         if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
@@ -2007,9 +2023,12 @@ void syncRack(AppState& app, bool force)
 
 // Every frame: idle the plugins (controller updates), keep the rack in step,
 // and keep the saved states fresh for the project (every 5 s).
+void stepAudioExport(AppState& app);
+
 void updateInstruments(AppState& app)
 {
     pollRender(app);
+    stepAudioExport(app);
     for (auto& [n, inst] : app.instruments) inst->idle();
     // restartComponent requests (Q5). Parameter value / title changes need
     // nothing here (mini-daw shows no plugin parameters); new busses or a
@@ -2600,6 +2619,294 @@ void drawDawExportWindow(AppState& app)
     }
     ImGui::End();
     if (!open) app.showDawExport = false;
+}
+
+// --- Export audio (P29, SPEC-PRJ-06) ----------------------------------------------
+
+std::string projectTitle(const AppState& app)
+{
+    return app.projectFolder.empty() ? std::string("mini-daw session") : minidaw::pathToUtf8(app.projectFolder.filename());
+}
+
+std::string recordingTitle(const minidaw::RecordingInfo& r)
+{
+    return r.notes.name.empty() ? minidaw::pathToUtf8(r.folder.filename()) : r.notes.name;
+}
+
+void showAudioExport(AppState& app)
+{
+    if (!app.showAudioExport) {
+        if (app.audioExportFolder.empty()) {
+            // Beside the project folder, as the DAWproject export.
+            app.audioExportFolder = minidaw::pathToUtf8(app.projectFolder.empty() ? projectsBase(app)
+                                                                                 : app.projectFolder.parent_path());
+        }
+        if (app.audioExportZipName.empty()) app.audioExportZipName = projectTitle(app);
+        if (!app.audioExport) app.audioExportReport.clear();
+        app.recordingsDirty = true;  // the Timeline's list as it is now
+    }
+    app.showAudioExport = true;
+}
+
+bool anyTake(const AppState& app)
+{
+    return std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return !t.take.empty(); });
+}
+
+// The chosen items, from the tracks and the Timeline's recordings.
+std::vector<minidaw::ExportItem> audioExportItems(AppState& app)
+{
+    refreshInstrumentStates(app);  // the instruments' settings as they are now
+    minidaw::ExportInstruments inst;
+    for (const auto& [n, i] : app.instruments) {
+        if (i->loaded()) inst[n] = {i->modulePath(), i->classId()};
+    }
+    const unsigned int rate = instrumentRate(app);
+    std::vector<minidaw::ExportItem> items;
+    if (app.audioExportSong && anyTake(app)) {
+        items.push_back(minidaw::songExportItem(app.tracks, inst, rate, app.audioExportStems, projectTitle(app) + " song"));
+    }
+    refreshRecordings(app);
+    for (const auto& r : app.recordings) {
+        if (app.audioExportRecordings.count(r.folder) == 0) continue;
+        items.push_back(minidaw::recordingExportItem(r, app.tracks, inst, rate, app.audioExportStems, recordingTitle(r)));
+    }
+    return items;
+}
+
+minidaw::AudioExportSettings audioExportSettings(const AppState& app)
+{
+    minidaw::AudioExportSettings s;
+    s.format = app.audioExportFormat;
+    s.quality = app.audioExportQuality;
+    s.stems = app.audioExportStems;
+    s.zip = app.audioExportZip;
+    s.zipName = app.audioExportZipName.empty() ? projectTitle(app) : app.audioExportZipName;
+    s.folder = minidaw::pathFromUtf8(minidaw::cleanPathText(app.audioExportFolder));
+    s.sampleRate = instrumentRate(app);
+    return s;
+}
+
+// Starts the export of what is chosen; false with `why` when it cannot.
+bool startAudioExport(AppState& app, std::string& why)
+{
+    if (app.audioExport) {
+        why = "an export is already running";
+        return false;
+    }
+    if (app.session.recording()) {
+        why = "not while recording";
+        return false;
+    }
+    std::vector<minidaw::ExportItem> items = audioExportItems(app);
+    const minidaw::AudioExportSettings s = audioExportSettings(app);
+    if (items.empty()) {
+        why = "nothing chosen to export";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(s.folder, ec);  // a folder typed that is not there yet
+    app.audioExportReport.clear();
+    auto ex = std::make_unique<minidaw::AudioExport>();
+    if (!ex->start(items, s, why)) {
+        // Everything left out: say why, not only "nothing to export".
+        for (const auto& i : items) {
+            for (const auto& l : i.leftOut) app.audioExportReport.push_back("Left out: " + l);
+        }
+        app.log.warning("Export audio: " + why);
+        return false;
+    }
+    std::string what;
+    for (const auto& i : items) what += (what.empty() ? "" : ", ") + i.name;
+    app.log.info("Export audio started (" + std::string(minidaw::exportFormatName(s.format)) +
+                 (s.stems ? ", stems" : ", mix") + (s.zip ? ", zip" : "") + "): " + what + " into " +
+                 minidaw::pathToUtf8(s.folder));
+    app.audioExport = std::move(ex);
+    return true;
+}
+
+// Every frame: the export goes on; when it is done its result is shown and logged.
+void stepAudioExport(AppState& app)
+{
+    if (!app.audioExport) return;
+    app.audioExport->step();
+    if (!app.audioExport->done()) return;
+    const minidaw::AudioExportResult r = app.audioExport->finish();
+    app.audioExport.reset();
+    auto& rep = app.audioExportReport;
+    rep.clear();
+    if (r.cancelled) {
+        rep.push_back("Cancelled: nothing was written.");
+    } else if (!r.ok) {
+        rep.push_back("Not written: " + r.error);
+    } else {
+        for (const auto& f : r.files) rep.push_back("Written: " + minidaw::pathToUtf8(f));
+    }
+    for (const auto& c : r.clipped) rep.push_back("Too loud: " + c + " (lower the track volumes and export again)");
+    for (const auto& l : r.leftOut) rep.push_back("Left out: " + l);
+    for (const auto& l : rep) {
+        if (!r.ok && !r.cancelled && l.rfind("Not written", 0) == 0) {
+            app.log.error("Export audio: " + l);
+        } else {
+            app.log.info("Export audio: " + l);
+        }
+    }
+}
+
+void drawAudioExportWindow(AppState& app)
+{
+    if (!app.showAudioExport) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(46 * em, 0), ImVec2(46 * em, FLT_MAX));
+    minidaw::app::placeNewWindow("Export audio###audioexport");
+    bool open = true;
+    if (ImGui::Begin("Export audio###audioexport", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool running = app.audioExport != nullptr;
+        ImGui::TextWrapped("Renders the song or recordings to audio files (instruments as Render does). "
+                           "The project is not changed.");
+        minidaw::app::beginDisabled(running);
+        ImGui::SeparatorText("What");
+        minidaw::app::beginDisabled(!anyTake(app));
+        ImGui::Checkbox("The song (as Play plays it)", &app.audioExportSong);
+        minidaw::app::endDisabled();
+        refreshRecordings(app);
+        // Recordings no longer there are not kept as chosen.
+        for (auto it = app.audioExportRecordings.begin(); it != app.audioExportRecordings.end();) {
+            const bool there = std::any_of(app.recordings.begin(), app.recordings.end(),
+                                           [&](const minidaw::RecordingInfo& r) { return r.folder == *it; });
+            it = there ? std::next(it) : app.audioExportRecordings.erase(it);
+        }
+        ImGui::Text("Recordings on the Timeline (%zu of %zu chosen):", app.audioExportRecordings.size(),
+                    app.recordings.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("All")) {
+            for (const auto& r : app.recordings) app.audioExportRecordings.insert(r.folder);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("None")) app.audioExportRecordings.clear();
+        const float rows = std::min<float>(8.0f, std::max<float>(2.0f, static_cast<float>(app.recordings.size())));
+        if (ImGui::BeginChild("export-recordings", ImVec2(0, rows * ImGui::GetFrameHeightWithSpacing()),
+                              ImGuiChildFlags_Borders)) {
+            if (app.recordings.empty()) ImGui::TextUnformatted("No recordings yet.");
+            for (auto it = app.recordings.rbegin(); it != app.recordings.rend(); ++it) {  // newest first
+                const auto& r = *it;
+                bool on = app.audioExportRecordings.count(r.folder) != 0;
+                const auto len = static_cast<int>(r.seconds + 0.5);
+                const std::string label = std::string(r.autoPart ? "A " : "R ") + recordingTitle(r) + "  " +
+                                          minidaw::clockLabel(r.clock, true) + "  " + std::to_string(len / 60) + ":" +
+                                          (len % 60 < 10 ? "0" : "") + std::to_string(len % 60) + "##" +
+                                          minidaw::pathToUtf8(r.folder);
+                if (ImGui::Checkbox(label.c_str(), &on)) {
+                    if (on) app.audioExportRecordings.insert(r.folder);
+                    else app.audioExportRecordings.erase(r.folder);
+                }
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::SeparatorText("How");
+        int stems = app.audioExportStems ? 1 : 0;
+        ImGui::RadioButton("One mix per item", &stems, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Stems: a file per track", &stems, 1);
+        app.audioExportStems = stems == 1;
+        if (app.audioExportStems) {
+            ImGui::TextWrapped("Each stem is as long as its song or recording, so they line up; the track "
+                               "volumes count, mute and solo do not.");
+        }
+        ImGui::SetNextItemWidth(12 * em);
+        if (ImGui::BeginCombo("Format", std::string(minidaw::exportFormatName(app.audioExportFormat)).c_str())) {
+            for (auto f : {minidaw::ExportFormat::Ogg, minidaw::ExportFormat::Opus, minidaw::ExportFormat::Flac,
+                           minidaw::ExportFormat::Wav}) {
+                if (ImGui::Selectable(std::string(minidaw::exportFormatName(f)).c_str(), f == app.audioExportFormat)) {
+                    app.audioExportFormat = f;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(14 * em);
+        switch (app.audioExportFormat) {
+        case minidaw::ExportFormat::Ogg:
+            ImGui::SliderInt("Quality (6: about 192 kbit/s)", &app.audioExportQuality.vorbisQuality,
+                             minidaw::kMinVorbisQuality, minidaw::kMaxVorbisQuality);
+            break;
+        case minidaw::ExportFormat::Opus:
+            ImGui::SliderInt("kbit/s", &app.audioExportQuality.opusKbps, minidaw::kMinOpusKbps, minidaw::kMaxOpusKbps);
+            break;
+        case minidaw::ExportFormat::Flac: ImGui::TextUnformatted("lossless, 24-bit"); break;
+        case minidaw::ExportFormat::Wav: ImGui::TextUnformatted("24-bit, not compressed"); break;
+        }
+        ImGui::Checkbox("Everything in one .zip, with the MIDI files", &app.audioExportZip);
+        if (app.audioExportZip) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(14 * em);
+            ImGui::InputText("Zip name", &app.audioExportZipName);
+        }
+        ImGui::SetNextItemWidth(30 * em);
+        ImGui::InputText("In folder", &app.audioExportFolder);
+        browseButton(app, AppState::BrowseFor::AudioExportFolder, app.audioExportFolder, projectsBase(app),
+                     "Choose the folder for the exported files");
+        minidaw::app::endDisabled();  // running
+
+        // What will be written, and what is there already.
+        const bool chosen = (app.audioExportSong && anyTake(app)) || !app.audioExportRecordings.empty();
+        const bool folderTyped = !minidaw::cleanPathText(app.audioExportFolder).empty();
+        std::size_t existing = 0, targets = 0;
+        if (chosen && folderTyped && !running) {
+            // Only names are needed here: items without reading files (parts are filled in at Export).
+            std::vector<minidaw::ExportItem> named;
+            if (app.audioExportSong && anyTake(app)) {
+                minidaw::ExportItem i;
+                i.name = projectTitle(app) + " song";
+                for (const auto& t : app.tracks) {
+                    if (t.take.empty()) continue;
+                    minidaw::ExportPart p;
+                    p.track = t.number;
+                    p.trackName = t.name;
+                    i.parts.push_back(p);
+                }
+                named.push_back(i);
+            }
+            for (const auto& r : app.recordings) {
+                if (app.audioExportRecordings.count(r.folder) == 0) continue;
+                minidaw::ExportItem i;
+                i.name = recordingTitle(r);
+                i.parts.emplace_back();
+                named.push_back(i);
+            }
+            const auto files = minidaw::exportTargets(named, audioExportSettings(app));
+            targets = files.size();
+            std::error_code ec;
+            for (const auto& f : files) existing += std::filesystem::exists(f, ec) ? 1 : 0;
+        }
+        const bool rec = app.session.recording();
+        if (!chosen) ImGui::TextUnformatted("Choose the song or recordings to export.");
+        else if (!folderTyped) ImGui::TextUnformatted("Choose a folder.");
+        else if (app.audioExportZip) ImGui::TextWrapped("One file: %s.zip", minidaw::exportSafeName(app.audioExportZipName).c_str());
+        else if (!app.audioExportStems) ImGui::Text("%zu file(s), one per song or recording.", targets);
+        else ImGui::TextUnformatted("A file per track of each song or recording.");
+        if (existing > 0) ImGui::TextWrapped("%zu file(s) of these names are there: Export replaces them.", existing);
+        if (rec) ImGui::TextUnformatted("Recording: stop it first.");
+        if (running) {
+            ImGui::ProgressBar(static_cast<float>(app.audioExport->progress()), ImVec2(30 * em, 0),
+                               app.audioExport->stage().c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) app.audioExport->cancel();
+        } else {
+            minidaw::app::beginDisabled(rec || !chosen || !folderTyped);
+            if (ImGui::Button(existing > 0 ? "Replace" : "Export")) {
+                std::string why;
+                if (!startAudioExport(app, why)) app.audioExportReport.insert(app.audioExportReport.begin(), "Not started: " + why);
+            }
+            minidaw::app::endDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Close")) app.showAudioExport = false;
+        }
+        for (const auto& l : app.audioExportReport) ImGui::TextWrapped("%s", l.c_str());
+    }
+    ImGui::End();
+    if (!open) app.showAudioExport = false;  // an export goes on; its result is in the log
 }
 
 // --- DAWproject import (P28, SPEC-PRJ-05) ------------------------------------
@@ -5049,6 +5356,7 @@ void updateFolderChooser(AppState& app)
     case AppState::BrowseFor::RecordingFolder: app.pendingRecording.folder = text; break;
     case AppState::BrowseFor::TakeFolder: app.takeFolderInput = text; break;
     case AppState::BrowseFor::ExportFolder: app.dawExportFolder = text; break;
+    case AppState::BrowseFor::AudioExportFolder: app.audioExportFolder = text; break;
     case AppState::BrowseFor::ImportFile: app.dawImportFile = text; break;
     case AppState::BrowseFor::ImportFolder: app.dawImportFolder = text; break;
     case AppState::BrowseFor::None: break;
@@ -5401,6 +5709,52 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         } else {
             fail(app.dawExportReport.empty() ? std::string("not written") : app.dawExportReport[0]);
         }
+    } else if (cmd == "export-audio") {  // P29
+        // export-audio <folder> <what> [format] [stems] [zip <name>]
+        app.audioExportFolder = minidaw::cleanPathText(w[1]);
+        app.audioExportSong = false;
+        app.audioExportRecordings.clear();
+        app.audioExportFormat = minidaw::ExportFormat::Ogg;
+        app.audioExportStems = false;
+        app.audioExportZip = false;
+        app.recordingsDirty = true;
+        refreshRecordings(app);
+        const std::string what = w[2];
+        if (what == "song" || what == "all") app.audioExportSong = true;
+        if (what == "recordings" || what == "all") {
+            for (const auto& r : app.recordings) app.audioExportRecordings.insert(r.folder);
+        }
+        if (what != "song" && what != "all" && what != "recordings") {
+            for (const auto& r : app.recordings) {
+                if (recordingTitle(r) == what || minidaw::pathToUtf8(r.folder.filename()) == what) {
+                    app.audioExportRecordings.insert(r.folder);
+                }
+            }
+            if (app.audioExportRecordings.empty()) {
+                fail("no recording called \"" + what + "\" (song, recordings, all or a recording's name)");
+                return;
+            }
+        }
+        for (std::size_t i = 3; i < w.size(); ++i) {
+            if (const auto f = minidaw::parseExportFormat(w[i])) {
+                app.audioExportFormat = *f;
+            } else if (w[i] == "stems") {
+                app.audioExportStems = true;
+            } else if (w[i] == "mix") {
+                app.audioExportStems = false;
+            } else if (w[i] == "zip" && i + 1 < w.size()) {
+                app.audioExportZip = true;
+                app.audioExportZipName = w[++i];
+            } else {
+                fail("unknown option \"" + w[i] + "\" (ogg, opus, flac, wav, mix, stems, zip <name>)");
+                return;
+            }
+        }
+        if (!startAudioExport(app, why)) {
+            fail(why);
+            return;
+        }
+        sr.pending = ScriptRun::Pending::Export;
     } else if (cmd == "import") {  // P28
         why.clear();
         const std::filesystem::path folder = minidaw::pathFromUtf8(minidaw::cleanPathText(w[2]));
@@ -5565,6 +5919,22 @@ bool continueLine(AppState& app, ScriptRun& sr)
             } else {
                 scriptFinish(app, false, "not loaded (see the log)");
             }
+        }
+        return true;
+    }
+    case ScriptRun::Pending::Export: {  // P29: done when stepAudioExport has shown the result
+        if (app.audioExport) return true;
+        const auto& rep = app.audioExportReport;
+        const bool written = !rep.empty() && rep[0].rfind("Written: ", 0) == 0;
+        std::size_t files = 0, left = 0;
+        for (const auto& l : rep) {
+            files += l.rfind("Written: ", 0) == 0 ? 1 : 0;
+            left += l.rfind("Left out: ", 0) == 0 ? 1 : 0;
+        }
+        if (written) {
+            scriptFinish(app, true, std::to_string(files) + " file(s)" + (left ? ", " + std::to_string(left) + " left out" : ""));
+        } else {
+            scriptFinish(app, false, rep.empty() ? std::string("not written") : rep[0]);
         }
         return true;
     }
@@ -6147,6 +6517,7 @@ int runGui(AppState& app)
         drawTakeBrowser(app);
         drawProjectDialog(app);
         drawDawExportWindow(app);
+        drawAudioExportWindow(app);
         drawDawImportWindow(app);
         drawInstrumentsWindow(app);
         drawSavePresetWindow(app);

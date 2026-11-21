@@ -15,6 +15,11 @@ mini-daw itself is MIT-licensed (see `LICENSE`). It uses the components below, w
 | pugixml | v1.16 | MIT | https://github.com/zeux/pugixml | DAWproject files (XML), P27 |
 | miniz | 3.1.2 | MIT | https://github.com/richgel999/miniz | DAWproject files (ZIP), P27 |
 | cpp_httplib | v0.67.0 | MIT | https://github.com/yhirose/cpp-httplib | Remote control over HTTP (P25b), header-only, without TLS |
+| ogg | v1.3.6 | BSD-3-Clause | https://github.com/xiph/ogg | Ogg container for Vorbis export (P29) |
+| vorbis | v1.3.7 | BSD-3-Clause | https://github.com/xiph/vorbis | Ogg Vorbis encoder, audio export (P29); only libvorbis / libvorbisenc |
+| flac | 1.5.0 | BSD-3-Clause | https://github.com/xiph/flac | FLAC encoder, audio export (P29); only libFLAC (its programs are GPL and not built) |
+| opus | v1.6.1 | BSD-3-Clause | https://github.com/xiph/opus | Opus encoder, audio export (P29) |
+| libopusenc | v0.3 | BSD-3-Clause | https://github.com/xiph/libopusenc | Opus files (Ogg Opus), audio export (P29) |
 | catch2 | v3.16.1 | BSL-1.0 | https://github.com/catchorg/Catch2 | Unit tests (not part of the program) |
 
 RtAudio and RtMidi use the MIT licence text with one extra non-binding request: that changes be sent back to the author.

@@ -29,10 +29,13 @@ add_executable(minidaw_tests
     test_dawproject.cpp
     test_dawproject_import.cpp
     test_remote.cpp
-    test_instrument.cpp)
+    test_instrument.cpp
+    test_audio_export.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # DAWproject (P27): the export is read back with the same libraries.
 target_link_libraries(minidaw_tests PRIVATE minidaw_pugixml minidaw_miniz)
+# Audio export (P29): FLAC files are decoded again to check they are lossless.
+target_link_libraries(minidaw_tests PRIVATE FLAC)
 # The SDK's own .vstpreset code, for the compatibility test only (crosscheck #16, X12):
 # mini-daw reads and writes the format itself.
 # (with the SDK's base library it needs, the same files the test synth builds)
@@ -164,6 +167,9 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "2 track(s), 0 audio clip(s), 0 MIDI clip(s) with 0 note(s), 1 instrument(s), 0 marker(s)."
         "Result: 5 command(s), 0 failed")
     minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
+    minidaw_script_test(exportaudio 1 IN "Export audio: Written: " "project song.flac" "Final.zip"
+        "take-20261121-120000.opus" "no recording called \"no such take\"" "unknown option \"mp3\""
+        "Result: 8 command(s), 2 failed")
     minidaw_script_test(import 1 IN "Import DAWproject: Imported into " "1 instrument(s)"
         "already holds a project" "choose a folder outside the open project" "Result: 16 command(s), 3 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"

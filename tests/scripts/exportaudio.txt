@@ -1,0 +1,8 @@
+open "@WORK@/project"
+scan
+instrument 1 "mini-daw test synth"
+export-audio "@WORK@/out" song flac
+export-audio "@WORK@/out" song wav stems zip "Final"
+export-audio "@WORK@/out" recordings opus
+export-audio "@WORK@/out" "no such take"
+export-audio "@WORK@/out" song mp3

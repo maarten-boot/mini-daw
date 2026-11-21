@@ -117,6 +117,9 @@ TEST_CASE("T-RUN-06: who may send what", "[remote][T-RUN-06]")
     CHECK(remoteCommandAllowed("export", true, why));
     CHECK_FALSE(remoteCommandAllowed("export", false, why));
     CHECK(why.find("only from this computer") != std::string::npos);
+    CHECK(remoteCommandAllowed("export-audio", true, why));  // P29: it replaces files too
+    CHECK_FALSE(remoteCommandAllowed("export-audio", false, why));
+    CHECK(why.find("only from this computer") != std::string::npos);
     CHECK_FALSE(remoteCommandAllowed("stay", true, why));
     CHECK_FALSE(remoteCommandAllowed("stop-on-failure", true, why));
     CHECK(remoteCommandAllowed("quit", false, why));

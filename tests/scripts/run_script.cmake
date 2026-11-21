@@ -35,6 +35,12 @@ file(WRITE "${WORK}/project/project.json"
    \"midiOutput\": \"\", \"armed\": false, \"volumeDb\": 0, \"mute\": false, \"solo\": false,
    \"take\": \"\", \"takeStart\": 0}]}
 ")
+# A case's own project (<name>.setup.cmake beside the script), if any.
+get_filename_component(setupDir "${SCRIPT}" DIRECTORY)
+get_filename_component(setupName "${SCRIPT}" NAME_WE)
+if(EXISTS "${setupDir}/${setupName}.setup.cmake")
+    include("${setupDir}/${setupName}.setup.cmake")
+endif()
 file(READ "${SCRIPT}" text)
 string(REPLACE "@WORK@" "${WORK}" text "${text}")
 get_filename_component(name "${SCRIPT}" NAME_WE)

@@ -21,6 +21,7 @@ add_library(minidaw_core STATIC
     ${MINIDAW_BUILD_INFO}
     core/src/color.cpp
     core/src/config.cpp
+    core/src/audio_export.cpp
     core/src/dawproject.cpp
     core/src/dawproject_import.cpp
     core/src/devices.cpp
@@ -60,7 +61,8 @@ target_include_directories(minidaw_core PUBLIC
 target_link_libraries(minidaw_core
     PUBLIC  minidaw_rtaudio minidaw_rtmidi minidaw_vst3host
             nlohmann_json::nlohmann_json  # script.hpp uses it (P25a)
-    PRIVATE minidaw_warnings minidaw_pugixml minidaw_miniz)  # DAWproject (P27)
+    PRIVATE minidaw_warnings minidaw_pugixml minidaw_miniz  # DAWproject (P27)
+            minidaw_vorbis minidaw_opusenc FLAC)                  # audio export (P29)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
 endif()

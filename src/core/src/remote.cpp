@@ -213,8 +213,8 @@ bool remoteCommandAllowed(std::string_view command, bool loopback, std::string& 
         why = "\"" + std::string(command) + "\" is for script files only";
         return false;
     }
-    if (!loopback && command == "export") {
-        why = "export can replace a file: only from this computer";
+    if (!loopback && (command == "export" || command == "export-audio")) {
+        why = std::string(command) + " can replace files: only from this computer";
         return false;
     }
     if (!loopback && command == "import") {

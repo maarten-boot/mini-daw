@@ -180,6 +180,15 @@ std::vector<Term> makeTerms()
          "new project from one, with what mini-daw can hold (effects, automation, pan and the like are listed as "
          "left out). Controllers and other MIDI messages are left out.",
          "File > Export DAWproject... / Import DAWproject...", {"Project", "Take", "Instrument"}},
+        {"Export audio", kProjects,
+         "Makes ordinary audio files to listen to or hand on: the song as Play plays it, or recordings from the "
+         "Timeline, as Ogg Vorbis, Opus, FLAC or WAV. Instruments are rendered as Render does. One mix each, or "
+         "stems; optionally one .zip with the MIDI files too.",
+         "File > Export audio...", {"Stem", "Render", "Take"}},
+        {"Stem", kProjects,
+         "One track of a song on its own, as an audio file. Stems of one song are all as long as the song, so "
+         "another program can line them up and mix them again. The track volume counts, mute and solo do not.",
+         "File > Export audio...: Stems", {"Export audio", "Track"}},
         {"Deleted", kProjects,
          "Delete on the Timeline tab does not throw a recording away: it moves its folder to \"deleted\" in the takes "
          "folder. Move it back to get it again.",

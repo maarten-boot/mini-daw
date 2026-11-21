@@ -59,6 +59,31 @@ FetchContent_Declare(cpp_httplib
     GIT_TAG        7800c3dc5b33285cbb18baa5998de4ff7ef63515  # v0.67.0
     SOURCE_SUBDIR  _not_a_cmake_project)
 
+# Audio export (P29): Xiph encoders, BSD-3-Clause. libogg, libFLAC and libopus
+# are built with their own CMake (static, no programs / tests / docs);
+# libvorbis and libopusenc are compiled from their sources below.
+FetchContent_Declare(ogg
+    GIT_REPOSITORY https://github.com/xiph/ogg.git
+    GIT_TAG        be05b13e98b048f0b5a0f5fa8ce514d56db5f822)  # v1.3.6
+
+FetchContent_Declare(vorbis
+    GIT_REPOSITORY https://github.com/xiph/vorbis.git
+    GIT_TAG        0657aee69dec8508a0011f47f3b69d7538e9d262  # v1.3.7
+    SOURCE_SUBDIR  _not_a_cmake_project)
+
+FetchContent_Declare(flac
+    GIT_REPOSITORY https://github.com/xiph/flac.git
+    GIT_TAG        1507800de4b70e21be71f38caa0d9079d0bc6e45)  # 1.5.0
+
+FetchContent_Declare(opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        22244de5a79bd1d6d623c32e72bf1954b56235be)  # v1.6.1
+
+FetchContent_Declare(libopusenc
+    GIT_REPOSITORY https://github.com/xiph/libopusenc.git
+    GIT_TAG        0dba1bea736ab8bb811409dce80c994a00a2ced9  # v0.3
+    SOURCE_SUBDIR  _not_a_cmake_project)
+
 FetchContent_Declare(catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        08092139210881f01a34e60c5f2fd6afa0ea4024)  # v3.16.1
@@ -89,6 +114,89 @@ target_include_directories(minidaw_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR} ${CMA
 target_compile_definitions(minidaw_miniz PRIVATE _FILE_OFFSET_BITS=64 _LARGEFILE64_SOURCE)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(minidaw_miniz PRIVATE -w)  # not our code
+endif()
+
+# ---------------------------------------------------------------------------
+# Audio export encoders (P29). Static, position-independent, no warnings
+# shown (not our code).
+# ---------------------------------------------------------------------------
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+set(INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(INSTALL_CMAKE_PACKAGE_MODULE OFF CACHE BOOL "" FORCE)
+set(BUILD_CXXLIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(INSTALL_MANPAGES OFF CACHE BOOL "" FORCE)
+set(INSTALL_PKGCONFIG_MODULES OFF CACHE BOOL "" FORCE)
+set(INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(WITH_OGG OFF CACHE BOOL "" FORCE)                 # FLAC in .flac files only
+set(ENABLE_MULTITHREADING OFF CACHE BOOL "" FORCE)    # one encoder thread is enough
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+# MinGW: the stack protector / FORTIFY_SOURCE options link libssp as a DLL
+# (Opus adds "ssp" to its libraries), so the program would no longer be one
+# self-contained .exe. Off there; MSVC and Linux keep them.
+if(MINGW)
+    set(OPUS_FORTIFY_SOURCE OFF CACHE BOOL "" FORCE)
+    set(OPUS_STACK_PROTECTOR OFF CACHE BOOL "" FORCE)
+    set(WITH_FORTIFY_SOURCE OFF CACHE BOOL "" FORCE)
+    set(WITH_STACK_PROTECTOR OFF CACHE BOOL "" FORCE)
+endif()
+# FLAC's tests are switched by BUILD_TESTING; only for its own directory.
+set(BUILD_TESTING OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+FetchContent_MakeAvailable(ogg flac opus vorbis libopusenc)
+unset(BUILD_TESTING)
+# FLAC's helper libraries are for its command-line programs (some GPL / LGPL):
+# not built, not linked.
+foreach(t getopt grabbag utf8 replaygain_analysis replaygain_synthesis)
+    if(TARGET ${t})
+        set_target_properties(${t} PROPERTIES EXCLUDE_FROM_ALL ON)
+    endif()
+endforeach()
+foreach(t ogg FLAC opus)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${t} PRIVATE -w)
+    elseif(MSVC)
+        target_compile_options(${t} PRIVATE /w)
+    endif()
+endforeach()
+
+set(vorbis_lib ${vorbis_SOURCE_DIR}/lib)
+add_library(minidaw_vorbis STATIC
+    ${vorbis_lib}/analysis.c ${vorbis_lib}/bitrate.c ${vorbis_lib}/block.c ${vorbis_lib}/codebook.c
+    ${vorbis_lib}/envelope.c ${vorbis_lib}/floor0.c ${vorbis_lib}/floor1.c ${vorbis_lib}/info.c
+    ${vorbis_lib}/lookup.c ${vorbis_lib}/lpc.c ${vorbis_lib}/lsp.c ${vorbis_lib}/mapping0.c
+    ${vorbis_lib}/mdct.c ${vorbis_lib}/psy.c ${vorbis_lib}/registry.c ${vorbis_lib}/res0.c
+    ${vorbis_lib}/sharedbook.c ${vorbis_lib}/smallft.c ${vorbis_lib}/synthesis.c
+    ${vorbis_lib}/vorbisenc.c ${vorbis_lib}/window.c)
+target_include_directories(minidaw_vorbis SYSTEM PUBLIC ${vorbis_SOURCE_DIR}/include PRIVATE ${vorbis_lib})
+target_link_libraries(minidaw_vorbis PUBLIC Ogg::ogg)
+
+set(ope_src ${libopusenc_SOURCE_DIR}/src)
+add_library(minidaw_opusenc STATIC
+    ${ope_src}/ogg_packer.c ${ope_src}/opus_header.c ${ope_src}/opusenc.c ${ope_src}/picture.c
+    ${ope_src}/resample.c ${ope_src}/unicode_support.c)
+target_include_directories(minidaw_opusenc SYSTEM PUBLIC ${libopusenc_SOURCE_DIR}/include)
+target_compile_definitions(minidaw_opusenc PRIVATE OUTSIDE_SPEEX RANDOM_PREFIX=libopusenc OPE_BUILD
+    PACKAGE_NAME="libopusenc" PACKAGE_VERSION="0.3" RESAMPLE_FULL_SINC_TABLE=1)
+target_link_libraries(minidaw_opusenc PUBLIC opus)
+
+foreach(t minidaw_vorbis minidaw_opusenc)
+    set_target_properties(${t} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${t} PRIVATE -w)
+    elseif(MSVC)
+        target_compile_options(${t} PRIVATE /w)
+    endif()
+endforeach()
+if(UNIX)
+    target_link_libraries(minidaw_vorbis PUBLIC m)
+    target_link_libraries(minidaw_opusenc PUBLIC m)
 endif()
 
 # cpp-httplib (P25b): header-only, used by the app's remote server only.
