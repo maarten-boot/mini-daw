@@ -191,3 +191,12 @@ User: "yes fix CC1–CC12, CC1 first".
 - Also: `zip_writer.hpp` without the calls MSVC warns about.
 - While testing: a `git stash` / `stash pop` to build the old code was not needed; everything checked back in place, the stash empty.
 - Linux 268/268; export tests under Wine 8/8 (with Replace). Version 0.30.5.
+
+## 12. CI run for P29a; dist/ with 0.30.5
+
+User: "pushed it, check the CI run", "continue".
+
+- CI run 44908680287 (`0603de3`): windows, linux, licence green; Linux 268/268, Windows 252/252; installer `mini-daw-0.30.5-setup.exe`.
+- MSVC C4996 warnings now 15 (19 before P29, 25 in P29): `zip_writer.hpp` no longer has them, also not in the DAWproject code.
+- `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
+- `dist/TESTS.txt`: T-PRJ-12 first (8 steps with real instruments on Windows), then P30–P30c and the earlier open tests.
