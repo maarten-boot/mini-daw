@@ -80,3 +80,17 @@ User: "continue".
 - Linux 259/259. P30c committed (version 0.30.3).
 - Next: the user pushes P30b + P30c; check CI; `dist/` with that run's builds and `TESTS.txt` (T-PLAY-21, T-PLAY-22, T-UI-33, T-UI-34).
 - CI run 44839364429 (`46d8e2e`, P30b): windows, linux, licence green; Linux 259/259, Windows 244/244.
+
+## 6. dist/ with the P30b build
+
+User: "continue".
+
+- P30c was not pushed yet (GitHub could not be reached from this session), so there is no CI build for it.
+- `dist/` now holds CI run 44839364429 (`46d8e2e`, P30b, version 0.30.2), both builds from that run:
+  - `windows/`: `mini-daw-0.30.2-setup.exe`, `mini-daw.exe`, `mini-daw.com`, plus `instrument-switch.txt` kept for T-RUN-05.
+  - `linux/`: `mini-daw`.
+- `dist/TESTS.txt` new:
+  - T-UI-33, T-UI-34, T-PLAY-21 first.
+  - A note that P30c (T-PLAY-22) comes with the next build.
+  - Recording steps on Linux (the Windows VM has no audio input).
+  - Then the earlier still-open tests, from P25b on.
