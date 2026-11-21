@@ -34,6 +34,7 @@ add_library(minidaw_core STATIC
     core/src/render.cpp
     core/src/log.cpp
     core/src/meter.cpp
+    core/src/number_text.cpp
     core/src/monitor.cpp
     core/src/player.cpp
     core/src/plugin_scan.cpp

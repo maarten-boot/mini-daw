@@ -1,6 +1,7 @@
 #include "minidaw/dawproject.hpp"
 
 #include "minidaw/path_util.hpp"
+#include "minidaw/number_text.hpp"
 #include "minidaw/presets.hpp"
 #include "minidaw/recording_notes.hpp"
 #include "minidaw/smf.hpp"
@@ -15,7 +16,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -53,9 +53,7 @@ std::string xmlNumber(double value)
 {
     if (!std::isfinite(value)) value = 0.0;
     if (value == 0.0) value = 0.0;  // no "-0"
-    char buf[64];
-    const auto r = std::to_chars(buf, buf + sizeof buf, value);
-    return std::string(buf, r.ptr);
+    return formatDouble(value);
 }
 
 namespace {

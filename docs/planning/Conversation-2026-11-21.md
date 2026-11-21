@@ -375,3 +375,14 @@ User: "pushed it, check the CI run" (run 44954198465). Linux, Windows and the li
 - Linux 280/280 again; the MinGW build is fine.
 - `dist/` now holds the Windows and Linux builds of 24da29b (the same program as 1.0.0).
 - The user meanwhile installed the Windows build with the setup exe (the zip has no installer): it works.
+
+### 16.2 The second macOS run (2026-11-22)
+
+User: "pushed it, check the CI run" (run 44959348477). Linux, Windows and the licence check passed; `macos` failed again, now after 2 minutes instead of 50.
+
+- Three files did not compile, all for decimal numbers as text:
+  - `dawproject.cpp`: `std::to_chars(double)` is only there from macOS 13.3 (we build for 12).
+  - `script.cpp`, `theme.cpp`: Apple's libc++ has no floating-point `std::from_chars` at all.
+- Fix: `minidaw/number_text.hpp`, `formatDouble` / `parseDouble`. They use the standard functions where the library has them (Linux, Windows) and a portable fallback elsewhere (stream in the "C" locale, shortest digits that read back, the same choice between fixed and scientific as `to_chars`).
+- New test T-MAC-05: the fallback gives the same results as the standard on 4000+ values (it found one difference first: `to_chars` writes large whole numbers with their exact digits; fixed).
+- Linux 281/281 (with Xvfb; the XSD check skipped as before); the MinGW build is fine.

@@ -1,8 +1,8 @@
 #include "minidaw/theme.hpp"
+#include "minidaw/number_text.hpp"
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <cstdio>
 
 namespace minidaw {
@@ -199,14 +199,12 @@ ContrastParseResult parseContrastSetting(std::string_view text)
     if (key == "aaa") return {ContrastSetting{ContrastPreset::AAA, kMinContrastAA}, {}};
     if (key == "max") return {ContrastSetting{ContrastPreset::Max, kMinContrastAA}, {}};
 
-    double value = 0.0;
-    const char* first = text.data();
-    const char* last = text.data() + text.size();
-    auto [ptr, ec] = std::from_chars(first, last, value);
-    if (text.empty() || ec != std::errc() || ptr != last) {
+    const std::optional<double> parsed = parseDouble(text);
+    if (!parsed) {
         return {std::nullopt, "'" + std::string(text) +
                                   "' is not a contrast setting. Use AA, AAA, Max or a number from 4.5 to 21."};
     }
+    const double value = *parsed;
     if (std::string err = validateCustomContrast(value); !err.empty()) {
         return {std::nullopt, err};
     }

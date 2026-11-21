@@ -1,6 +1,6 @@
 #include "minidaw/script.hpp"
+#include "minidaw/number_text.hpp"
 
-#include <charconv>
 #include <cmath>
 
 namespace minidaw {
@@ -17,12 +17,7 @@ std::string lowerAscii(std::string s)
 
 std::optional<double> parseNumber(std::string_view text)
 {
-    if (text.empty()) return std::nullopt;
-    double v = 0.0;
-    const char* end = text.data() + text.size();
-    const auto r = std::from_chars(text.data(), end, v);
-    if (r.ec != std::errc() || r.ptr != end || !std::isfinite(v)) return std::nullopt;
-    return v;
+    return parseDouble(text);
 }
 
 } // namespace

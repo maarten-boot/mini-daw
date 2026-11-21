@@ -251,6 +251,7 @@ Status column in the Results section at the end.
 | T-MAC-02 | SPEC-TECH-07 | M (when there is a Mac) | Open the unsigned `.dmg`, drag mini-daw to Applications, open it the first time as the README says; allow the microphone | mini-daw starts; Getting started opens; refusing the microphone gives a clear line |
 | T-MAC-03 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 1 of Getting started: audio devices, record an audio track, play; a USB MIDI keyboard on a MIDI track | Recorded and played as on Windows; MIDI reconnects after unplugging |
 | T-MAC-04 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 2: scan VST3 instruments (e.g. a free one in `~/Library/Audio/Plug-Ins/VST3`), Edit opens its window, Render | As on Windows |
+| T-MAC-05 | SPEC-TECH-07 | A | Decimal numbers as text (`formatDouble` / `parseDouble`, used by the DAWproject export, scripts and the contrast setting): the fallback for Apple's libc++ (no floating-point `from_chars`, `to_chars` only from macOS 13.3) gives the same text and values as `std::to_chars` / `from_chars` for 4000+ doubles; the whole text or nothing, no '+', spaces, hex, inf, nan | Pass on Linux and Windows (they have both); on macOS the fallback is what runs |
 
 
 ## Results
