@@ -247,6 +247,10 @@ Status column in the Results section at the end.
 | T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass; both smoke runs succeed; both program downloads are present |
 | T-CI-03 | SPEC-CI-03 | M | Cross-compile with the MinGW toolchain file | `mini-daw.exe` and `minidaw_tests.exe` build without errors |
 | T-CI-04 | SPEC-CI-05 | A+M | A: `tools/release_notes.py` with `v<CMake version>-rc1` (notes printed), `v<CMake version>` without a CHANGELOG section, another version, `v0.31` (all three refused with a reason). M: push tag `v<CMake version>-rc1`; afterwards delete the draft and the tag | The rc tag: all jobs green, a draft pre-release with the 4 files; the zip holds both programs and the texts; the tar's `mini-daw` is executable and starts (`--version`); the checksums match. A wrong tag fails in the licence job |
+| T-MAC-01 | SPEC-TECH-07 | A | CI job `macos`: build (universal), the automatic tests, `lipo -archs` lists arm64 and x86_64, the `.dmg` holds `mini-daw.app` with `Info.plist` (version, `NSMicrophoneUsageDescription`) | Green on every push; the download `mini-daw-macos` |
+| T-MAC-02 | SPEC-TECH-07 | M (when there is a Mac) | Open the unsigned `.dmg`, drag mini-daw to Applications, open it the first time as the README says; allow the microphone | mini-daw starts; Getting started opens; refusing the microphone gives a clear line |
+| T-MAC-03 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 1 of Getting started: audio devices, record an audio track, play; a USB MIDI keyboard on a MIDI track | Recorded and played as on Windows; MIDI reconnects after unplugging |
+| T-MAC-04 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 2: scan VST3 instruments (e.g. a free one in `~/Library/Audio/Plug-Ins/VST3`), Edit opens its window, Render | As on Windows |
 
 
 ## Results

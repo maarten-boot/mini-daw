@@ -318,3 +318,34 @@ User: "yes prepare 1.0.0 with today's date".
 - README status line: "version 1.0.0, the first release".
 - The version rule from now on is `<major>.<minor>.<patch>`: a step that adds something raises the minor number, fixes raise the patch number. This is written in Spec SPEC-UI-18, `CLAUDE.md`, `version.hpp.in`, the CHANGELOG intro and T-UI-32, whose pattern also allows the 0.x numbers before the release.
 - Spec v0.79.
+
+User: "pushed it, check the CI run", "pushed the v1.0.0 tag, check the release run".
+
+- CI run 44941956581 (`4f9a9a5`, main) green.
+- Release run 44942212889 (tag `v1.0.0`): every job green, `release` included.
+  - Linux 280/280, Windows 263/263.
+  - The draft "mini-daw 1.0.0" was made with setup 1.7 MB, zip 4.1 MB, tar.gz 3.2 MB and `SHA256SUMS.txt`; the notes are the CHANGELOG 1.0.0 section.
+  - The user checks the draft and publishes it.
+- `dist/` replaced with that run's builds (`mini-daw-1.0.0-setup.exe` under its build name), plus `instrument-switch.txt`; `TESTS.txt` header updated.
+- User: "the release is missing the windows and linux assets".
+  - The published `v1.0.0` release had been made by hand on GitHub at 19:34 (notes "a first", no files). The job's draft "mini-daw 1.0.0" stayed a draft, because a tag can hold only one published release.
+  - The user deleted the hand-made release and published the draft.
+  - Checked through the public release information: "mini-daw 1.0.0" with 4 files and the CHANGELOG notes; it is the only release. P33 done.
+- User: "what about the mac version did we drop that along the way ?"
+  - Not dropped: macOS was "later" from the start (Spec "Windows 10 first; Linux and macOS later"; Plan P12, which also holds JACK and Wayland).
+  - Never built and not in CI. The README says "macOS later".
+- User: "yes plan P34, no mac yet, unsigned is fine".
+  - SPEC-TECH-07, macOS:
+    - a universal `.app` (arm64 + x86_64) in a `.dmg`, macOS 12 or newer;
+    - CoreAudio / CoreMIDI, the VST3 editor in an NSView;
+    - the microphone permission;
+    - unsigned, with how to open it the first time.
+  - Plan:
+    - P34a: a CI job on a macOS runner;
+    - P34b: audio and MIDI;
+    - P34c: VST3 and the editor;
+    - P34d: packaging, the `.dmg` in the release, README;
+    - P34e: a crosscheck, then release 1.1.0.
+  - P12 now holds only JACK and Wayland.
+  - Tests T-MAC-01 (automatic in CI) and T-MAC-02 to -04 (manual, once there is a Mac).
+  - Without a Mac, a part counts as done when it builds and its automatic tests pass on the CI runner.
