@@ -79,3 +79,4 @@ User: "continue".
 - Seen: the refusal line stayed after arming. Now it is cleared as soon as a track is armed. The text is a shared constant, `kNoArmedTrackError` in `recording_session.hpp`.
 - Linux 259/259. P30c committed (version 0.30.3).
 - Next: the user pushes P30b + P30c; check CI; `dist/` with that run's builds and `TESTS.txt` (T-PLAY-21, T-PLAY-22, T-UI-33, T-UI-34).
+- CI run 44839364429 (`46d8e2e`, P30b): windows, linux, licence green; Linux 259/259, Windows 244/244.
