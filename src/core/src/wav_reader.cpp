@@ -54,7 +54,30 @@ void WavReader::close()
 {
     if (file_) std::fclose(file_);
     file_ = nullptr;
+    // Nothing of the last file stays (crosscheck #27 CC9).
+    sampleRate_ = channels_ = bits_ = 0;
+    float_ = false;
+    dataStart_ = frames_ = position_ = 0;
 }
+
+namespace {
+// True when the bytes from `pos` to the end are RIFF chunks (a 4-character
+// id of printable ASCII and a size that fits), ending at the end of the file.
+bool chunksToEnd(std::FILE* f, std::uint64_t pos, std::uint64_t fileSize)
+{
+    while (pos < fileSize) {
+        unsigned char hdr[8];
+        if (pos + 8 > fileSize || !seekTo(f, pos) || std::fread(hdr, 1, 8, f) != 8) return false;
+        for (int i = 0; i < 4; ++i) {
+            if (hdr[i] < 0x20 || hdr[i] > 0x7e) return false;
+        }
+        const std::uint64_t size = le32(hdr + 4);
+        if (pos + 8 + size > fileSize) return false;
+        pos += 8 + size + (size & 1u);
+    }
+    return true;  // also a missing pad byte at the very end
+}
+} // namespace
 
 bool WavReader::open(const std::filesystem::path& path, std::string& error)
 {
@@ -122,6 +145,13 @@ bool WavReader::open(const std::filesystem::path& path, std::string& error)
             std::uint64_t bytes = size;
             const std::uint64_t rest = fileSize - dataStart_;
             if (bytes == 0 || bytes > rest) bytes = rest;  // header not refreshed (crash): use the file
+            // A size smaller than the file is fine when other chunks follow
+            // (LIST, ...). If what follows is no chunk chain, it is sound the
+            // header was not refreshed for (a take cut short by a crash or power
+            // loss after the last refresh): use the file (crosscheck #27 CC1).
+            else if (bytes + (bytes & 1u) < rest && !chunksToEnd(file_, dataStart_ + bytes + (bytes & 1u), fileSize)) {
+                bytes = rest;
+            }
             frames_ = bytes / blockAlign;
             buffer_.resize(static_cast<std::size_t>(blockAlign) * 4096);
             return seek(0);

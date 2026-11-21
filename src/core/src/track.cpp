@@ -56,9 +56,12 @@ std::filesystem::path newRenderPath(const std::filesystem::path& folder, const T
     base = base.substr(0, base.size() - 4) + "-render";  // without ".wav"
     std::error_code ec;
     for (int n = 1;; ++n) {
-        const std::string name = base + (n == 1 ? std::string() : "-" + std::to_string(n)) + ".wav";
-        const std::filesystem::path p = folder / pathFromUtf8(name);
-        if (!std::filesystem::exists(p, ec)) return p;
+        const std::string name = base + (n == 1 ? std::string() : "-" + std::to_string(n));
+        const std::filesystem::path p = folder / pathFromUtf8(name + ".wav");
+        // Also not the name of an earlier render compacted to FLAC (crosscheck #27 CC2).
+        if (!std::filesystem::exists(p, ec) && !std::filesystem::exists(folder / pathFromUtf8(name + ".flac"), ec)) {
+            return p;
+        }
     }
 }
 
@@ -280,7 +283,7 @@ std::vector<Track> tracksFromTakeFolder(const std::filesystem::path& folder, std
         if (tracks[i].number <= tracks[i - 1].number) tracks[i].number = tracks[i - 1].number + 1;
     }
     if (tracks.empty()) {
-        error = "No takes (NN-name.wav or .mid) found in " + pathToUtf8(folder) + ".";
+        error = "No takes (NN-name.wav, .flac or .mid) found in " + pathToUtf8(folder) + ".";
     }
     return tracks;
 }

@@ -6,6 +6,7 @@
 #include "minidaw/config.hpp"
 #include "minidaw/path_util.hpp"
 #include "minidaw/timeline.hpp"
+#include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
 #include "minidaw/wav_reader.hpp"
 #include "test_support.hpp"
@@ -254,4 +255,187 @@ TEST_CASE("T-REC-36: compact in [recording], default on", "[compact][config][T-R
     c.recording.compact = false;
     REQUIRE(saveConfigFile(dir.path() / "c.ini", c).empty());
     CHECK_FALSE(loadConfigFile(dir.path() / "c.ini").config.recording.compact);
+}
+
+// --- Crosscheck #27 fixes (P31a) ------------------------------------------------------
+
+TEST_CASE("T-REC-36: a WAV whose header is shorter than its data keeps all of it (CC1)", "[compact][T-REC-36]")
+{
+    test::TempDir dir;
+    const auto s = testSamples(20000, 2, 24);
+    // A crashed take: the header was last refreshed at 12000 frames.
+    const fs::path cut = rawWav(dir.path() / "01-Cut.wav", 48000, 2, 24, s);
+    {
+        std::fstream f(cut, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(40);
+        const std::uint32_t d = 12000 * 6;
+        for (int b = 0; b < 4; ++b) f.put(static_cast<char>((d >> (8 * b)) & 0xff));
+    }
+    {
+        AudioReader r;
+        std::string err;
+        REQUIRE(r.open(cut, err));
+        CHECK(r.frames() == 20000);  // the file, not the stale header
+    }
+    const CompactFileResult r = compactFile(cut);
+    INFO(r.error);
+    REQUIRE(r.ok);
+    AudioReader f;
+    std::string err;
+    REQUIRE(f.open(r.flac, err));
+    REQUIRE(f.frames() == 20000);
+    std::vector<std::int32_t> back(s.size());
+    REQUIRE(f.readPcm(back.data(), 20000) == 20000);
+    CHECK(back == s);
+
+    // A WAV with a chunk after its data (LIST, as other programs write): the
+    // header's size counts, the chunk is no sound.
+    const auto t = testSamples(1000, 1, 16);
+    const fs::path listed = rawWav(dir.path() / "02-Listed.wav", 48000, 1, 16, t);
+    {
+        std::ofstream o(listed, std::ios::binary | std::ios::app);
+        o.write("LIST", 4);
+        put32(o, 4);
+        o.write("INFO", 4);
+    }
+    AudioReader l;
+    REQUIRE(l.open(listed, err));
+    CHECK(l.frames() == 1000);
+}
+
+TEST_CASE("T-REC-36: render again after compaction gets a new name (CC2)", "[compact][T-REC-36]")
+{
+    test::TempDir dir;
+    Track linked;
+    linked.number = 2;
+    linked.name = "Keys sound";
+    linked.kind = TrackKind::Audio;
+    std::ofstream(dir.path() / "02-Keys sound-render.flac") << "x";
+    CHECK(newRenderPath(dir.path(), linked).filename() == "02-Keys sound-render-2.wav");
+    std::ofstream(dir.path() / "02-Keys sound-render-2.wav") << "x";
+    CHECK(newRenderPath(dir.path(), linked).filename() == "02-Keys sound-render-3.wav");
+}
+
+TEST_CASE("T-REC-36: FLAC reading as the Player does it, and its edges (CC3, CC5, CC9, CC12)", "[compact][T-REC-36]")
+{
+    test::TempDir dir;
+    const auto s = testSamples(40000, 2, 24);
+    const fs::path wav = rawWav(dir.path() / "01-Play.wav", 48000, 2, 24, s);
+    const std::vector<float> before = readAll(wav);
+    const CompactFileResult c = compactFile(wav);
+    REQUIRE(c.ok);
+
+    // CC3: a seek to where it is before every block, and short skips forward.
+    AudioReader f;
+    std::string err;
+    REQUIRE(f.open(c.flac, err));
+    std::vector<float> got;
+    std::vector<float> block(4096 * 2);
+    std::uint64_t pos = 0;
+    while (pos < 40000) {
+        REQUIRE(f.seek(pos));
+        const std::size_t n = f.read(block.data(), 4096);
+        REQUIRE(n > 0);
+        got.insert(got.end(), block.begin(), block.begin() + static_cast<std::ptrdiff_t>(n * 2));
+        pos += n;
+    }
+    CHECK(got == before);
+    REQUIRE(f.seek(100));
+    REQUIRE(f.read(block.data(), 10) == 10);
+    REQUIRE(f.seek(150));  // inside what is decoded already
+    REQUIRE(f.read(block.data(), 10) == 10);
+    CHECK(std::equal(block.begin(), block.begin() + 20, before.begin() + 150 * 2));
+    REQUIRE(f.seek(30000));  // further on, and back
+    REQUIRE(f.read(block.data(), 10) == 10);
+    CHECK(std::equal(block.begin(), block.begin() + 20, before.begin() + 30000 * 2));
+    REQUIRE(f.seek(5));
+    REQUIRE(f.read(block.data(), 10) == 10);
+    CHECK(std::equal(block.begin(), block.begin() + 20, before.begin() + 5 * 2));
+
+    // CC9: nothing of the file after close().
+    f.close();
+    CHECK(f.frames() == 0);
+    CHECK(f.channels() == 0);
+    std::int32_t pcm[8];
+    CHECK(f.readPcm(pcm, 4) == 0);
+
+    // CC5: the take's old WAV path opens the FLAC.
+    REQUIRE(f.open(wav, err));
+    CHECK(f.frames() == 40000);
+    f.close();
+    CHECK(sameTakePath(dir.path() / "x" / ".." / "01-Play.wav", dir.path() / "01-Play.wav"));
+    CHECK_FALSE(sameTakePath(dir.path() / "01-Play.wav", dir.path() / "02-Play.wav"));
+
+    // CC12: a FLAC whose header has no length (total samples 0).
+    const fs::path nolen = dir.path() / "02-NoLength.flac";
+    fs::copy_file(c.flac, nolen);
+    {
+        std::fstream b(nolen, std::ios::in | std::ios::out | std::ios::binary);
+        b.seekg(21);
+        const int v = b.get();
+        b.seekp(21);
+        b.put(static_cast<char>(v & 0xf0));  // the high 4 bits of the 36-bit count
+        for (int i = 0; i < 4; ++i) b.put(0);
+    }
+    REQUIRE(f.open(nolen, err));
+    CHECK(f.frames() == 40000);
+    std::vector<float> all(40000 * 2);
+    REQUIRE(f.read(all.data(), 40000) == 40000);
+    CHECK(all == before);
+}
+
+TEST_CASE("T-REC-36: left-over work files, unreadable WAV formats, same names (CC7, CC10, CC11)", "[compact][T-REC-36]")
+{
+    test::TempDir dir;
+    // CC10: a ".part" left by a crash goes with the next compaction there.
+    std::ofstream(dir.path() / ".09-Old.flac.part") << "half";
+    rawWav(dir.path() / "01-A.wav", 48000, 1, 16, testSamples(500, 1, 16));
+    CHECK(compactFile(dir.path() / "01-A.wav").ok);
+    CHECK_FALSE(fs::exists(dir.path() / ".09-Old.flac.part"));
+
+    // CC11: an 8-bit WAV is skipped, not a failure.
+    {
+        std::ofstream f(dir.path() / "02-Eight.wav", std::ios::binary);
+        f.write("RIFF", 4);
+        put32(f, 36 + 4);
+        f.write("WAVEfmt ", 8);
+        put32(f, 16);
+        put16(f, 1);
+        put16(f, 1);
+        put32(f, 8000);
+        put32(f, 8000);
+        put16(f, 1);
+        put16(f, 8);
+        f.write("data", 4);
+        put32(f, 4);
+        f.write("\x80\x81\x82\x83", 4);
+    }
+    const CompactFileResult e = compactFile(dir.path() / "02-Eight.wav");
+    CHECK_FALSE(e.ok);
+    CHECK(e.skipped);
+    CHECK(fs::exists(dir.path() / "02-Eight.wav"));
+
+    // CC7: files of one name in two folders are both queued.
+    fs::create_directories(dir.path() / "t1");
+    fs::create_directories(dir.path() / "t2");
+    const auto s = testSamples(60000, 2, 24);
+    const fs::path a = rawWav(dir.path() / "t1" / "01-Vocal.wav", 48000, 2, 24, s);
+    const fs::path b = rawWav(dir.path() / "t2" / "01-Vocal.wav", 48000, 2, 24, s);
+    Compactor c;
+    c.add({a});
+    c.add({b});
+    c.add({a});  // queued or being done already
+    std::vector<CompactFileResult> done;
+    for (int i = 0; i < 500 && done.size() < 2; ++i) {
+        for (auto& r : c.takeResults()) done.push_back(std::move(r));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (auto& r : c.takeResults()) done.push_back(std::move(r));
+    c.stop();
+    CHECK(fs::exists(dir.path() / "t1" / "01-Vocal.flac"));
+    CHECK(fs::exists(dir.path() / "t2" / "01-Vocal.flac"));
+    // The third add either found it queued (2 results) or done (then it was
+    // skipped: no WAV any more, an error line) — never converted twice.
+    CHECK(done.size() >= 2);
 }

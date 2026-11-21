@@ -22,7 +22,9 @@ public:
 
     enum class Kind { ByExtension, Wav, Flac };
     // By the extension: ".flac" with libFLAC, anything else as WAV (or as told,
-    // e.g. a FLAC file still under a temporary name).
+    // e.g. a FLAC file still under a temporary name). By the extension, a
+    // ".wav" that is gone while the ".flac" of that name is there opens the
+    // FLAC (a compacted take).
     bool open(const std::filesystem::path& path, std::string& error, Kind kind = Kind::ByExtension);
     void close();
     bool isOpen() const;

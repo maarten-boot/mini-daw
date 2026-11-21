@@ -20,7 +20,7 @@ Note anything that goes wrong. **View → Log (Ctrl+L)** shows what mini-daw did
 3. [ ] **Edit**: the instrument's own window opens above mini-daw. Pick a preset and play: you hear it at once. Close the window; **Edit** opens it again with the same preset.
 4. [ ] **Arm** the track, then **Record (Ctrl+R)**, play a few bars, then **Stop recording (Ctrl+R)**. The "… sound" track now holds the instrument's recording.
 5. [ ] **Home**, then **Play (Space)**: you hear what you played.
-6. [ ] **Render**: the percentage runs, then the "… sound" track gets its `-render.wav`.
+6. [ ] **Render**: the percentage runs, then the "… sound" track gets its `-render.wav` (a `-render.flac` soon after, with Compact on in Settings → Recording…).
 7. [ ] Switch **Sound from** to "this recording", then play: it sounds the same, and only once (not doubled). Switch it back.
 8. [ ] Overdub: **disarm** the MIDI track, **Add audio track** with the input, tick **Monitor** and **Arm** it. The line under the transport says Record also plays the other track. **Home**, **Record**: play along with the MIDI track; **Stop recording**, **Home**, **Play**: both play.
 9. [ ] Quit mini-daw while the instrument window is open, then start it again: the "Demo" project comes back with the instrument, its preset and the takes.

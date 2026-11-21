@@ -33,3 +33,23 @@ Scope: Spec v0.76, Plan, Tests, README, Terms, CLAUDE.md, code at `e2f2f0d` (P31
 Not taken up: the reviewer's doubt about the decoder's FILE after a failed `init_FILE` (it cannot fail with valid callbacks and an open file; the encoder side is as in the audio export, crosscheck #26 CC1).
 
 Test coverage the reviewer misses (with the fixes above): a 32-bit WAV, WAVE_FORMAT_EXTENSIBLE, 3–8 and more than 8 channels, a 0-frame WAV, a WAV with a short header (CC1), Render after compaction (CC2), reads with `seek(position)` between them (CC3), a damaged FLAC.
+
+## Actions taken (user: "yes commit, then fix CC1–CC13, CC1 first"; P31a, version 0.31.1)
+
+| # | Done |
+|---|------|
+| CC1 | `WavReader`: a data size smaller than the file counts only when RIFF chunks follow it to the end (`chunksToEnd`); otherwise the data runs to the end of the file. A crashed take therefore plays and compacts with its last second. Test: header at 12 000 of 20 000 frames, so 20 000 read and compacted exactly; a WAV with a LIST chunk after the data is read by its header. |
+| CC2 | `newRenderPath` also skips a name whose `.flac` is there. Test: `-render.flac` present gives `-render-2.wav`. |
+| CC3 | `FlacSource::seek`: nothing to do when already at the frame; a frame inside the decoded buffer only moves ahead. Test: reads in 4096-frame blocks with a seek before each match the WAV; seeks inside the buffer, forward and back. |
+| CC4 | The `.part` file is reopened and synced (`syncToDisk`) before the rename, and on Linux the folder is synced before the WAV is removed. A failed sync keeps the WAV. |
+| CC5 | `AudioReader::open` (by the extension) opens the FLAC of a missing `.wav`, so a take works in the frame before the track is moved. `sameTakePath` (absolute, normalized, and on Windows any case and either slash) is used by `stepCompactor`. |
+| CC6 | `queueCompact`: the pause is set (`compactorShouldWait`) before every `add`, from the recording / Render hooks, the window and the script. |
+| CC7 | The Compactor keeps the whole path of the file it works on; "already queued" compares paths. Test: `01-Vocal.wav` in two folders, both compacted. |
+| CC8 | A failed FLAC seek resets the decoder to the start (`position_ = 0`) and returns false. |
+| CC9 | `close()` resets every field (FLAC and WAV); `readPcm` returns 0 when not open. Tested. |
+| CC10 | `compactFile` removes `.*.flac.part` files in its folder first: only one file is converted at a time, so any found are left over. Tested. |
+| CC11 | Script `compact` stops after 600 s ("it goes on in the background"). A WAV format mini-daw does not read (8-bit) is skipped, not failed. Tested. |
+| CC12 | A FLAC whose header gives 0 samples is decoded once to count its frames. Test: a FLAC with its count zeroed reads all 40 000 frames. |
+| CC13 | Terms "WAV file" (".wav, or .flac once compacted"), the "No takes (NN-name.wav, .flac or .mid)" message, the `timeline.hpp` comment, and `docs/Demo-checklist.md` step 6. |
+
+Tests: Linux 277/277, Wine 257/257 (6159 assertions).

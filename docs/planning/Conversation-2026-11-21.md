@@ -255,3 +255,12 @@ Crosscheck #27 done: `Crosscheck-2026-11-21c.md`, CC1–CC13. Claude confirmed C
 - CC1 (high): a crashed take, whose WAV header is shorter than its data, loses its tail when it is compacted.
 - CC2: Render again after compaction reuses the old name.
 - Fixes planned as P31a.
+
+User: "yes commit, then fix CC1–CC13, CC1 first".
+
+- Committed as `ac7ad57` (release job and crosscheck #27).
+- P31a done, CC1–CC13. See the actions table in `Crosscheck-2026-11-21c.md`.
+  - CC1: a WAV whose header is too short, with no chunk after the data, is read to the end of the file.
+  - The other fixes are as planned.
+- 4 new test cases. Linux 277/277, Wine 257/257.
+- Version 0.31.1, Spec v0.77.

@@ -2926,6 +2926,22 @@ void drawAudioExportWindow(AppState& app)
 
 // --- Compact recordings (P31, SPEC-REC-10) -------------------------------------------
 
+// Files in use: the compactor waits (a file already started is finished; on
+// Windows a WAV that is open cannot be removed, so it would stay a WAV).
+bool compactorShouldWait(const AppState& app)
+{
+    return app.session.recording() || app.session.autoMode() || app.audio.player().playing() ||
+           !app.previewFolder.empty() || app.renderTrack != 0 || app.audioExport != nullptr || app.busy;
+}
+
+// Queues files, paused first when files are in use: the thread must not
+// start one in the frame where Record or Play was just pressed (crosscheck #27 CC6).
+void queueCompact(AppState& app, const std::vector<std::filesystem::path>& files)
+{
+    app.compactor.setPaused(compactorShouldWait(app));
+    app.compactor.add(files);
+}
+
 // After a recording, an auto record part or a Render: its WAV files to the
 // compactor, if the setting is on.
 void compactAfter(AppState& app, const std::filesystem::path& folderOrFile)
@@ -2933,18 +2949,10 @@ void compactAfter(AppState& app, const std::filesystem::path& folderOrFile)
     if (!app.config.recording.compact || folderOrFile.empty()) return;
     std::error_code ec;
     if (std::filesystem::is_directory(folderOrFile, ec)) {
-        app.compactor.add(minidaw::wavTakeFiles(folderOrFile, false));
+        queueCompact(app, minidaw::wavTakeFiles(folderOrFile, false));
     } else if (std::filesystem::is_regular_file(folderOrFile, ec)) {
-        app.compactor.add({folderOrFile});
+        queueCompact(app, {folderOrFile});
     }
-}
-
-// Files in use: the compactor waits (a file already started is finished; on
-// Windows a WAV that is open cannot be removed, so it would stay a WAV).
-bool compactorShouldWait(const AppState& app)
-{
-    return app.session.recording() || app.session.autoMode() || app.audio.player().playing() ||
-           !app.previewFolder.empty() || app.renderTrack != 0 || app.audioExport != nullptr || app.busy;
 }
 
 void countWavTakes(AppState& app)
@@ -2983,7 +2991,7 @@ void stepCompactor(AppState& app)
             ++app.compactDone;
             app.compactSaved += r.before > r.after ? r.before - r.after : 0;
             for (auto& t : app.tracks) {
-                if (t.take == r.wav) {
+                if (minidaw::sameTakePath(t.take, r.wav)) {  // also when written another way (CC5)
                     t.take = r.flac;
                     changed = true;
                 }
@@ -3020,7 +3028,7 @@ void drawCompactWindow(AppState& app)
         const bool working = app.compactor.working() || app.compactor.pending() > 0;
         minidaw::app::beginDisabled(working || app.compactWavFiles == 0);
         if (ImGui::Button("Compact them now")) {
-            app.compactor.add(minidaw::wavTakeFiles(activeTakesFolder(app), true));
+            queueCompact(app, minidaw::wavTakeFiles(activeTakesFolder(app), true));
             app.log.info("Compact recordings: " + std::to_string(app.compactWavFiles) + " WAV file(s) queued");
         }
         minidaw::app::endDisabled();
@@ -5920,7 +5928,9 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
         }
         sr.compactDoneAtStart = app.compactDone;
         sr.compactFailedAtStart = app.compactFailed;
-        app.compactor.add(files);
+        queueCompact(app, files);
+        // Waits while files are in use, but not for ever (as wait-for; crosscheck #27 CC11).
+        sr.deadline = sr.started + std::chrono::seconds(600);
         sr.pending = ScriptRun::Pending::Compact;
     } else if (cmd == "import") {  // P28
         why.clear();
@@ -6106,7 +6116,11 @@ bool continueLine(AppState& app, ScriptRun& sr)
         return true;
     }
     case ScriptRun::Pending::Compact: {  // P31: until the queue is empty and its results are in
-        if (app.compactor.working() || app.compactor.pending() > 0) return true;
+        if (app.compactor.working() || app.compactor.pending() > 0) {
+            if (now < sr.deadline) return true;
+            scriptFinish(app, false, "compact: not done after 600 s (files in use?); it goes on in the background");
+            return true;
+        }
         stepCompactor(app);
         const std::size_t done = app.compactDone - sr.compactDoneAtStart;
         const std::size_t failed = app.compactFailed - sr.compactFailedAtStart;

@@ -65,6 +65,11 @@ public:
             close();
             return false;
         }
+        if (frames_ == 0 && !countFrames()) {  // length not in the header (crosscheck #27 CC12)
+            error = name + ": not a FLAC file mini-daw can read.";
+            close();
+            return false;
+        }
         return true;
     }
 
@@ -77,7 +82,10 @@ public:
         buf_.clear();
         bufPos_ = 0;
         position_ = 0;
-        channels_ = 0;
+        rate_ = channels_ = bits_ = 0;  // nothing of the last file stays (crosscheck #27 CC9)
+        frames_ = 0;
+        counting_ = false;
+        error_.clear();
     }
 
     bool isOpen() const { return dec_ != nullptr; }
@@ -89,6 +97,16 @@ public:
     bool seek(std::uint64_t frame)
     {
         if (dec_ == nullptr) return false;
+        // The Player seeks before every block, mostly to where it is already:
+        // no decoder seek for that, nor for a frame still in the buffer
+        // (crosscheck #27 CC3).
+        if (frame == position_ && frame < frames_) return true;
+        if (frame > position_ && frame < frames_ && channels_ > 0 &&
+            frame - position_ < (buf_.size() - bufPos_) / channels_) {
+            bufPos_ += static_cast<std::size_t>(frame - position_) * channels_;
+            position_ = frame;
+            return true;
+        }
         buf_.clear();
         bufPos_ = 0;
         if (frame >= frames_) {
@@ -96,8 +114,16 @@ public:
             return true;
         }
         if (!FLAC__stream_decoder_seek_absolute(dec_, frame)) {
-            // After a failed seek the decoder must be flushed before it is used again.
+            // Where the decoder is now is unknown: back to the start, so the
+            // position is right again (crosscheck #27 CC8).
             FLAC__stream_decoder_flush(dec_);
+            const std::uint64_t frames = frames_;
+            FLAC__stream_decoder_reset(dec_);
+            FLAC__stream_decoder_process_until_end_of_metadata(dec_);
+            frames_ = frames;
+            buf_.clear();
+            bufPos_ = 0;
+            position_ = 0;
             error_ = "Cannot seek in " + pathToUtf8(path_.filename()) + ".";
             return false;
         }
@@ -108,6 +134,7 @@ public:
     std::size_t readPcm(std::int32_t* out, std::size_t count)
     {
         std::size_t done = 0;
+        if (dec_ == nullptr || channels_ == 0) return 0;
         while (done < count && position_ < frames_) {
             if (bufPos_ >= buf_.size()) {
                 buf_.clear();
@@ -135,11 +162,32 @@ public:
     const std::string& error() const { return error_; }
 
 private:
+    // Decodes the whole file once to count its frames, then goes back to the start.
+    bool countFrames()
+    {
+        counting_ = true;
+        const bool ok = FLAC__stream_decoder_process_until_end_of_stream(dec_) != 0;
+        counting_ = false;
+        const std::uint64_t counted = frames_;
+        if (!ok || !FLAC__stream_decoder_reset(dec_) || !FLAC__stream_decoder_process_until_end_of_metadata(dec_)) {
+            return false;
+        }
+        frames_ = counted;  // the header read again says 0
+        buf_.clear();
+        bufPos_ = 0;
+        position_ = 0;
+        return true;
+    }
+
     static FLAC__StreamDecoderWriteStatus onWrite(const FLAC__StreamDecoder*, const FLAC__Frame* frame,
                                                   const FLAC__int32* const buffer[], void* user)
     {
         auto* self = static_cast<FlacSource*>(user);
         const unsigned n = frame->header.blocksize;
+        if (self->counting_) {
+            self->frames_ += n;
+            return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+        }
         const unsigned ch = std::min(frame->header.channels, self->channels_);
         self->buf_.resize(self->buf_.size() + static_cast<std::size_t>(n) * self->channels_);
         std::int32_t* o = self->buf_.data() + self->buf_.size() - static_cast<std::size_t>(n) * self->channels_;
@@ -168,6 +216,7 @@ private:
     unsigned int rate_ = 0, channels_ = 0, bits_ = 0;
     std::uint64_t frames_ = 0;
     std::uint64_t position_ = 0;
+    bool counting_ = false;
     std::vector<std::int32_t> buf_;
     std::size_t bufPos_ = 0;
     std::string error_;
@@ -197,6 +246,16 @@ AudioReader::~AudioReader() = default;
 bool AudioReader::open(const fs::path& path, std::string& error, Kind kind)
 {
     close();
+    if (kind == Kind::ByExtension && lowerExtension(path) == ".wav") {
+        // A take compacted meanwhile: its WAV is gone, the FLAC of that name is
+        // there (also in the moment before a track is moved to it; crosscheck #27 CC5).
+        std::error_code ec;
+        const fs::path flac = fs::path(path).replace_extension(".flac");
+        if (!fs::exists(path, ec) && fs::exists(flac, ec)) {
+            impl_->flac = true;
+            return impl_->fl.open(flac, error);
+        }
+    }
     impl_->flac = kind == Kind::Flac || (kind == Kind::ByExtension && isFlacFile(path));
     return impl_->flac ? impl_->fl.open(path, error) : impl_->wav.open(path, error);
 }

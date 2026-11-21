@@ -21,7 +21,7 @@ struct RecordingInfo {
     std::int64_t start = 0;                  // when it started, in real seconds: order and pauses (continuousTime)
     std::int64_t clock = 0;                  // the local clock time in its name (recordingTime): the labels
     double seconds = 0.0;                    // the longest file in it
-    std::vector<std::filesystem::path> files;  // "NN-name.wav" / ".mid", by name
+    std::vector<std::filesystem::path> files;  // "NN-name.wav" / ".flac" / ".mid", by name
     std::vector<std::uintmax_t> fileSizes;     // with `files`: a folder read before is reused if unchanged
     std::vector<std::string> problems;         // files whose length could not be read
     RecordingNotes notes;                      // name, note, marks (recording.json; P21, P22)

@@ -18,6 +18,10 @@ namespace minidaw {
 // its auto record parts and subfolders when `recursive` (not in "deleted").
 std::vector<std::filesystem::path> wavTakeFiles(const std::filesystem::path& folder, bool recursive);
 
+// The same file named two ways (relative / absolute, "..", on Windows in
+// another case)? Also when the file is gone (crosscheck #27 CC5).
+bool sameTakePath(const std::filesystem::path& a, const std::filesystem::path& b);
+
 struct CompactFileResult {
     bool ok = false;           // the FLAC is there and the WAV removed
     bool skipped = false;      // nothing done (float WAV, a FLAC of that name is there already, ...)
@@ -31,8 +35,10 @@ struct CompactFileResult {
 // Converts `wav` into "<stem>.flac" beside it: written as ".<stem>.flac.part",
 // decoded again and compared with the WAV sample by sample, renamed, then the
 // WAV removed. If the WAV cannot be removed (in use), the FLAC goes again and
-// the WAV stays. A float WAV is skipped (FLAC holds integers only). `cancel`
-// stops it (nothing changed).
+// the WAV stays. A float WAV is skipped (FLAC holds integers only), as is a
+// WAV format mini-daw does not read. `cancel` stops it (nothing changed). A
+// ".*.flac.part" left in the folder by an earlier crash is removed first.
+// The FLAC is on the disk (synced) before the WAV is removed.
 CompactFileResult compactFile(const std::filesystem::path& wav, const std::atomic<bool>* cancel = nullptr);
 
 // Converts queued files one after another in its own thread. The GUI pauses
@@ -64,7 +70,8 @@ private:
     std::condition_variable wake_;
     std::deque<std::filesystem::path> queue_;
     std::vector<CompactFileResult> results_;
-    std::string current_;
+    std::string current_;           // its name, shown
+    std::filesystem::path currentPath_;  // the whole path, for "already queued" (crosscheck #27 CC7)
     bool paused_ = false;
     bool working_ = false;
     bool stopping_ = false;

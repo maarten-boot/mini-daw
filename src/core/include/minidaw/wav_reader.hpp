@@ -4,9 +4,9 @@
 // reader thread, never by the audio thread.
 //
 // Reads PCM 16/24/32-bit and 32-bit float, also WAVE_FORMAT_EXTENSIBLE. If
-// the data size in the header is 0 or larger than the file (a take cut short
-// by a crash before its header was refreshed), the data runs to the end of
-// the file. Other programs may keep writing the file while it is read.
+// the data size in the header is 0 or larger than the file, or smaller with
+// no chunks after it (a take cut short by a crash before its header was
+// refreshed), the data runs to the end of the file. Other programs may keep writing the file while it is read.
 
 #include <cstdint>
 #include <cstdio>

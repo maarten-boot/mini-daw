@@ -11,6 +11,11 @@
 #include <cctype>
 #include <cstdio>
 
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace minidaw {
@@ -34,7 +39,53 @@ void removeQuietly(const fs::path& p)
     fs::remove(p, ec);
 }
 
+// The folder's entries onto the disk (Linux; Windows has no such call for a
+// folder and keeps its metadata journal itself).
+void syncFolder(const fs::path& folder)
+{
+#if !defined(_WIN32)
+    const int fd = ::open(folder.c_str(), O_RDONLY | O_DIRECTORY);
+    if (fd >= 0) {
+        ::fsync(fd);
+        ::close(fd);
+    }
+#else
+    (void)folder;
+#endif
+}
+
+// Work files of a compaction that never ended (crash, kill): only one file is
+// converted at a time, so any ".*.flac.part" there now is left over (CC10).
+void removeStaleParts(const fs::path& folder)
+{
+    std::error_code ec;
+    for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = pathToUtf8(it->path().filename());
+        if (n.size() > 11 && n[0] == '.' && n.compare(n.size() - 10, 10, ".flac.part") == 0) removeQuietly(it->path());
+    }
+}
+
+std::string comparable(const fs::path& p)
+{
+    std::error_code ec;
+    fs::path a = fs::absolute(p, ec);
+    if (ec) a = p;
+    std::string s = pathToUtf8(a.lexically_normal());
+#if defined(_WIN32)
+    for (char& c : s) {  // Windows names: any case (ASCII), either slash
+        c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+#endif
+    return s;
+}
+
 } // namespace
+
+bool sameTakePath(const fs::path& a, const fs::path& b)
+{
+    if (a == b) return true;
+    return comparable(a) == comparable(b);
+}
 
 std::vector<fs::path> wavTakeFiles(const fs::path& folder, bool recursive)
 {
@@ -72,7 +123,11 @@ CompactFileResult compactFile(const fs::path& wav, const std::atomic<bool>* canc
         return r;
     }
     AudioReader in;
-    if (!in.open(wav, r.error)) return r;
+    if (!in.open(wav, r.error, AudioReader::Kind::Wav)) {
+        // A format mini-daw does not read (8-bit, ...): kept as it is, not an error (CC11).
+        if (r.error.find("not supported") != std::string::npos) r.skipped = true;
+        return r;
+    }
     if (in.isFloat()) {
         r.skipped = true;
         r.error = name + ": a float WAV, which FLAC cannot hold exactly; kept as WAV";
@@ -85,6 +140,7 @@ CompactFileResult compactFile(const fs::path& wav, const std::atomic<bool>* canc
     }
     r.before = fs::file_size(wav, ec);
     const fs::path part = wav.parent_path() / ("." + pathToUtf8(r.flac.filename()) + ".part");
+    removeStaleParts(wav.parent_path());
     const unsigned ch = in.channels();
     const std::size_t block = 8192;
     std::vector<std::int32_t> a(block * ch), b(block * ch);
@@ -140,7 +196,7 @@ CompactFileResult compactFile(const fs::path& wav, const std::atomic<bool>* canc
     {
         AudioReader wavIn, flacIn;
         std::string err;
-        bool same = wavIn.open(wav, err) && flacIn.open(part, err, AudioReader::Kind::Flac);
+        bool same = wavIn.open(wav, err, AudioReader::Kind::Wav) && flacIn.open(part, err, AudioReader::Kind::Flac);
         if (same) {
             same = flacIn.frames() == wavIn.frames() && flacIn.channels() == wavIn.channels() &&
                    flacIn.sampleRate() == wavIn.sampleRate();
@@ -165,13 +221,26 @@ CompactFileResult compactFile(const fs::path& wav, const std::atomic<bool>* canc
             return r;
         }
     }
-    // 3. Into place, then the WAV goes. If it cannot (in use), the FLAC goes again.
+    // 3. On the disk for sure before the WAV goes (takes survive a power loss;
+    //    crosscheck #27 CC4).
+    {
+        std::FILE* f = detail::openForAppending(part);
+        const bool synced = f != nullptr && detail::syncToDisk(f);
+        if (f != nullptr) std::fclose(f);
+        if (!synced) {
+            removeQuietly(part);
+            r.error = "cannot write " + pathToUtf8(part) + " to the disk; kept as WAV";
+            return r;
+        }
+    }
+    // 4. Into place, then the WAV goes. If it cannot (in use), the FLAC goes again.
     fs::rename(part, r.flac, ec);
     if (ec) {
         removeQuietly(part);
         r.error = "cannot name " + pathToUtf8(r.flac) + ": " + ec.message();
         return r;
     }
+    syncFolder(wav.parent_path());  // the new name, before the WAV's goes
     fs::remove(wav, ec);
     if (ec) {
         removeQuietly(r.flac);
@@ -192,7 +261,8 @@ void Compactor::add(const std::vector<fs::path>& wavFiles)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& f : wavFiles) {
-            if (std::find(queue_.begin(), queue_.end(), f) == queue_.end() && pathToUtf8(f.filename()) != current_) {
+            const auto same = [&](const fs::path& q) { return sameTakePath(q, f); };
+            if (std::none_of(queue_.begin(), queue_.end(), same) && !(working_ && same(currentPath_))) {
                 queue_.push_back(f);
             }
         }
@@ -267,11 +337,13 @@ void Compactor::run()
             queue_.pop_front();
             working_ = true;
             current_ = pathToUtf8(next.filename());
+            currentPath_ = next;
         }
         CompactFileResult r = compactFile(next, &cancel_);
         std::lock_guard<std::mutex> lock(mutex_);
         working_ = false;
         current_.clear();
+        currentPath_.clear();
         if (!stopping_) results_.push_back(std::move(r));
     }
 }
