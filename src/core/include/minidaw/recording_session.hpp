@@ -33,6 +33,9 @@
 
 namespace minidaw {
 
+// Why Record did nothing with no armed track (the GUI clears it once a track is armed, P30c).
+inline constexpr const char* kNoArmedTrackError = "No track is armed. Arm at least one track to record.";
+
 struct MidiTakeResult {
     std::filesystem::path path;
     std::string port;

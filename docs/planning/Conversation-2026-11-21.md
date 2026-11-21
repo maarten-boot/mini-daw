@@ -41,3 +41,41 @@ User: "yes fix CC1–CC5, CC1 first".
 - CC5: Tests T-UI-17 / T-PLAY-18, CLAUDE.md's version example.
 - Version 0.30.2.
 - Linux 259/259; GUI checked on Xvfb at 700 px.
+- P30b committed as `46d8e2e` (with Crosscheck #25); not yet pushed at the end of the day.
+
+## 4. P30c: Record disabled until a track is armed
+
+User: "one note: thw transport can only become active after at least one track is armed , right ?"
+
+- Read as "the". Answer: only Auto record needed an armed track.
+  - Record was usable without one; it then refused with "No track is armed".
+  - Play, Home and the position slider need a running stream and a take, not an armed track.
+- User: "yes disable Record until a track is armed".
+- Done (P30c, version 0.30.3, not committed):
+  - The Record button is disabled until a track is armed, with the tooltip "Arm a track first".
+  - Ctrl+R and the script command `record` keep their refusal line.
+  - The Terms text "Arm" mentions it.
+  - Spec SPEC-PLAY-01a, Plan P30c, Tests T-PLAY-22, README.
+- Linux 259/259. Not yet checked in the GUI on Xvfb (user stopped for the day).
+
+## Handover (end of 2026-11-21)
+
+User: "we stop for today; tomorrow we continue".
+
+- On `main`: P30 `a918e0d`, P30a `ed4703f` (pushed, CI 44834769758 green), P30b `46d8e2e` (committed, not pushed).
+- P30c is in the working tree, not committed.
+- Next:
+  1. Check P30c on Xvfb: Record greyed out with its tooltip, enabled after Arm, Ctrl+R's refusal line.
+  2. Commit P30c.
+  3. The user pushes P30b + P30c; check the CI run.
+  4. Empty `dist/` and put that run's Windows and Linux builds there, with `dist/TESTS.txt` for T-PLAY-21, T-PLAY-22, T-UI-33, T-UI-34. `dist/` still holds 0.28.4.
+- Planned afterwards: P29 (export audio; open questions in the Plan). When done after P30 it gets version 0.30.<next round>.
+
+## 5. Continued: P30c checked and committed
+
+User: "continue".
+
+- GUI on Xvfb: with no track armed, Record is greyed out with the tooltip "Arm a track first (tick Arm in the track list)."; Ctrl+R gives the refusal line; after Arm, Record and Auto record are enabled.
+- Seen: the refusal line stayed after arming. Now it is cleared as soon as a track is armed. The text is a shared constant, `kNoArmedTrackError` in `recording_session.hpp`.
+- Linux 259/259. P30c committed (version 0.30.3).
+- Next: the user pushes P30b + P30c; check CI; `dist/` with that run's builds and `TESTS.txt` (T-PLAY-21, T-PLAY-22, T-UI-33, T-UI-34).

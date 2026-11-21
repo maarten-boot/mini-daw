@@ -48,7 +48,7 @@ bool RecordingSession::begin(const std::vector<Track>& tracks, const RecordingSe
         if (t.armed && !(t.kind == TrackKind::Audio && t.instrumentOf > 0)) armed.push_back(&t);
     }
     if (armed.empty()) {
-        error = "No track is armed. Arm at least one track to record.";
+        error = kNoArmedTrackError;
         return false;
     }
     if (!audio.streamRunning() || audio.streamSampleRate() == 0) {

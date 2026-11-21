@@ -47,7 +47,8 @@ std::vector<Term> makeTerms()
 
         // --- Recording ------------------------------------------------------
         {"Arm", kRecording,
-         "Ticking a track's Arm box gets it ready to record: Record then records every armed track. An armed track "
+         "Ticking a track's Arm box gets it ready to record: Record then records every armed track (Record and Auto "
+         "record stay greyed out until a track is armed). An armed track "
          "shows its input level and can be monitored; a MIDI track's input port is opened only while it is armed. "
          "Tracks that are not armed play their takes during a recording (overdub).",
          "Recording tab: the Arm column", {"Record", "Monitor", "Overdub"}},

@@ -3287,16 +3287,23 @@ void drawTransport(AppState& app)
     minidaw::app::endDisabled();
     minidaw::app::endDisabled();
     ImGui::SameLine();
-    minidaw::app::beginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0)));  // not while rendering (R5)
+    const bool anyArmed =
+        std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
+    if (anyArmed && app.recordError == minidaw::kNoArmedTrackError) app.recordError.clear();  // no longer true
+    // Record needs an armed track, like Auto record (P30c); Ctrl+R and the script command
+    // still say why nothing was recorded.
+    minidaw::app::beginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0 || !anyArmed)));  // R5
     if (ImGui::Button(recNormal ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
-    if (!rec && app.renderTrack != 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
+    if (!rec && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (app.renderTrack != 0) {
+            ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
+        } else if (!anyArmed) {
+            ImGui::SetTooltip("Arm a track first (tick Arm in the track list).");
+        }
     }
     minidaw::app::endDisabled();
     ImGui::SameLine();
     // Auto record (SPEC-REC-08).
-    const bool anyArmed =
-        std::any_of(app.tracks.begin(), app.tracks.end(), [](const minidaw::Track& t) { return t.armed; });
     minidaw::app::beginDisabled(recNormal || (!autoOn && (!running || app.renderTrack != 0 || !anyArmed)));
     if (ImGui::Button(autoOn ? "Stop auto record" : "Auto record")) toggleAuto(app);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
