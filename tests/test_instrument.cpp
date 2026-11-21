@@ -668,8 +668,8 @@ TEST_CASE("T-VST-38: the editor gets the host's run loop on Linux; its handlers 
         ed.onResizeRequest = [](InstrumentEditor::Size) { return true; };
         REQUIRE(ed.create(inst, "minidaw-test", err));
         REQUIRE(ed.attach(nullptr, err));
-#if defined(_WIN32)
-        // Windows editors have their own message loop: no IRunLoop.
+#if !defined(__linux__)
+        // Windows and macOS editors have their own message loop: no IRunLoop.
         CHECK(loop.timerCount() == 0);
         CHECK(loop.readerCount() == 0);
 #else
@@ -689,7 +689,7 @@ TEST_CASE("T-VST-38: the editor gets the host's run loop on Linux; its handlers 
         CHECK(loop.timerCount() == 0);
         CHECK(loop.readerCount() == 0);
     }
-#if !defined(_WIN32)
+#if defined(__linux__)
     // Unloading the instrument with the editor open removes them too.
     {
         InstrumentEditor ed;

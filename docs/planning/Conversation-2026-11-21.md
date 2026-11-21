@@ -363,3 +363,15 @@ User: "start P34a".
   - The test synth as a Mac bundle: `macmain.cpp`, `Contents/MacOS`, an `Info.plist`.
   - The script / remote tests stay Linux-only (they need Xvfb).
 - Linux 280/280; the MinGW build is unchanged.
+
+### 16.1 The first macOS run
+
+User: "pushed it, check the CI run" (run 44954198465). Linux, Windows and the licence check passed; the job `macos` failed, the run stayed green (`continue-on-error`).
+
+- Configure worked on the Mac.
+- The test synth did not link: `Steinberg::Linux::IEventHandler::iid`, `ITimerHandler::iid`, `IRunLoop::iid` undefined. The SDK defines them only on Linux (`SMTG_OS_LINUX` in `commoniids.cpp`), and the code used them on every system but Windows.
+  - Fix: the editor run loop code is `__linux__` only, in the host (`PlugFrameImpl`), the test synth, and T-VST-38 (macOS editors have their own message loop, as on Windows).
+- The build took 50 minutes: `cmake --build --parallel` with Make and no number is a bare `-j`, every job at once on a 3-core runner. Now one job per core (`sysctl -n hw.ncpu`), and Make's `-k`: the first run stopped at the first error, so most of the code was never compiled; now one run shows every file that does not compile yet.
+- Linux 280/280 again; the MinGW build is fine.
+- `dist/` now holds the Windows and Linux builds of 24da29b (the same program as 1.0.0).
+- The user meanwhile installed the Windows build with the setup exe (the zip has no installer): it works.

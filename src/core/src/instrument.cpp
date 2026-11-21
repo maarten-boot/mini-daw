@@ -687,7 +687,7 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
 // for it from the frame and registers its X11 connection and its timers; they
 // run in editorRunLoop(), which the GUI thread polls every frame.
 class PlugFrameImpl : public IPlugFrame
-#if !defined(_WIN32)
+#if defined(__linux__)
     , public Linux::IRunLoop
 #endif
 {
@@ -699,7 +699,7 @@ public:
     {
         QUERY_INTERFACE(queried, obj, FUnknown::iid, IPlugFrame)
         QUERY_INTERFACE(queried, obj, IPlugFrame::iid, IPlugFrame)
-#if !defined(_WIN32)
+#if defined(__linux__)
         QUERY_INTERFACE(queried, obj, Linux::IRunLoop::iid, Linux::IRunLoop)
 #endif
         *obj = nullptr;
@@ -708,7 +708,7 @@ public:
     uint32 PLUGIN_API addRef() override { return 1000; }  // owned by the editor
     uint32 PLUGIN_API release() override { return 1000; }
 
-#if !defined(_WIN32)
+#if defined(__linux__)
     tresult PLUGIN_API registerEventHandler(Linux::IEventHandler* handler, Linux::FileDescriptor fd) override
     {
         if (!handler || fd < 0) return kInvalidArgument;

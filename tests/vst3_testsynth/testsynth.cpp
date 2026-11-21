@@ -203,11 +203,11 @@ struct EditorSize {
     int32 height = 150;
 };
 
-// The run loop interfaces' IDs are defined by the SDK only for Linux (and
-// other non-Windows systems); Windows editors have their own message loop.
+// The run loop interfaces' IDs are defined by the SDK only for Linux;
+// Windows and macOS editors have their own message loop.
 class TestSynthView : public CPluginView,
                       public IPlugViewContentScaleSupport
-#if !defined(_WIN32)
+#if defined(__linux__)
     ,
                       public Linux::IEventHandler,
                       public Linux::ITimerHandler
@@ -220,7 +220,7 @@ public:
         ViewRect r(0, 0, size->width, size->height);
         setRect(r);
     }
-#if !defined(_WIN32)
+#if defined(__linux__)
     ~TestSynthView() override
     {
         if (runLoop_) {  // test mode 3: unregistering from the destructor
@@ -288,7 +288,7 @@ public:
         return CPluginView::removed();
     }
 
-#if !defined(_WIN32)
+#if defined(__linux__)
     // Linux::IEventHandler: the pipe or the X11 connection can be read.
     void PLUGIN_API onFDIsSet(Linux::FileDescriptor fd) override
     {
@@ -362,7 +362,7 @@ public:
     OBJ_METHODS(TestSynthView, CPluginView)
     DEFINE_INTERFACES
         DEF_INTERFACE(IPlugViewContentScaleSupport)
-#if !defined(_WIN32)
+#if defined(__linux__)
         DEF_INTERFACE(Linux::IEventHandler)
         DEF_INTERFACE(Linux::ITimerHandler)
 #endif
@@ -378,7 +378,7 @@ private:
     // The host's run loop, if its frame offers one (Linux hosts do).
     void startRunLoop()
     {
-#if !defined(_WIN32)
+#if defined(__linux__)
         if (!plugFrame || runLoop_) return;
         FUnknownPtr<Linux::IRunLoop> loop(plugFrame);
         if (!loop) return;
@@ -393,7 +393,7 @@ private:
     }
     void stopRunLoop()
     {
-#if !defined(_WIN32)
+#if defined(__linux__)
         if (runLoop_) {
             runLoop_->unregisterTimer(this);
             runLoop_->unregisterEventHandler(this);  // the pipe and the X11 connection
@@ -544,7 +544,7 @@ private:
     Display* display_ = nullptr;
     ::Window window_ = 0;
 #endif
-#if !defined(_WIN32)
+#if defined(__linux__)
     IPtr<Linux::IRunLoop> runLoop_;
     int pipe_[2] = {-1, -1};
 #endif
