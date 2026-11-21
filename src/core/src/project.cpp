@@ -307,6 +307,13 @@ bool parseProject(const std::string& text, const fs::path& folder, ProjectData& 
         t.mute = get("mute", false);
         t.solo = get("solo", false);
         t.take = loadedPath(get("take", std::string()), folder);
+        // A take compacted to FLAC after the project was last written (P31): the
+        // WAV is gone, its FLAC of the same name is there.
+        if (!t.take.empty() && t.kind == TrackKind::Audio) {
+            std::error_code ec;
+            const fs::path flac = fs::path(t.take).replace_extension(".flac");
+            if (!fs::exists(t.take, ec) && fs::exists(flac, ec)) t.take = flac;
+        }
         t.takeStart = get("takeStart", static_cast<std::int64_t>(0));
         if (t.number < 1 || std::find(numbers.begin(), numbers.end(), t.number) != numbers.end()) {
             const int fixed = numbers.empty() ? 1 : *std::max_element(numbers.begin(), numbers.end()) + 1;

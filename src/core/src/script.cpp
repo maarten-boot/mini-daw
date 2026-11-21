@@ -49,6 +49,8 @@ const std::vector<ScriptCommand>& scriptCommands()
          "Renders the song and / or recordings to audio files (like File > Export audio; replaces files) and waits "
          "until it is done. Default: Ogg Vorbis, one mix each, no zip. Words in any case; a recording called "
          "song, all or recordings is meant as that word."},
+        {"compact", 0, 0, "compact",
+         "Turns every WAV take in the takes folder into FLAC (like File > Compact recordings) and waits until done."},
         {"import", 2, 2, "import <file.dawproject> <project folder>",
          "Makes a new project from a DAWproject file and opens it (like File > Import DAWproject)."},
         {"add-track", 1, 1, "add-track midi|audio",

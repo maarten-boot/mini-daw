@@ -37,6 +37,11 @@ public:
     // values per frame). Returns the number of frames read; fewer at the end
     // of the data or on a read error (then error() says why).
     std::size_t read(float* out, std::size_t count);
+    // Integer PCM files (not float): the samples as they are stored (16-bit
+    // -32768..32767, 24-bit -8388608..8388607, 32-bit), for a lossless copy (P31).
+    std::size_t readPcm(std::int32_t* out, std::size_t count);
+    unsigned int bitsPerSample() const { return bits_; }
+    bool isFloat() const { return float_; }
     const std::string& error() const { return error_; }
 
 private:

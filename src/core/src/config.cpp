@@ -412,6 +412,11 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.recording.syncToDisk = true;
                 warn("sync_to_disk '" + value + "' must be true or false. Using true.");
             }
+        } else if (section == "recording" && key == "compact") {  // P31
+            if (!parseBool(value, cfg.recording.compact)) {
+                cfg.recording.compact = true;
+                warn("compact '" + value + "' must be true or false. Using true.");
+            }
         } else if (section == "recording" && key == "folder") {
             cfg.recording.folder = value;
         } else if (section == "recording" && key == "midi_timing") {
@@ -618,6 +623,9 @@ std::string defaultConfigText()
            "; Force take files to the disk once a second, so a take survives a\n"
            "; power loss. Set to false if recording stutters on a slow disk.\n"
            "sync_to_disk = true\n"
+           "; Compact recordings: after a recording ends its WAV files become FLAC\n"
+           "; (lossless, about half the size). false keeps them as WAV.\n"
+           "compact = true\n"
            "; Folder for takes. Empty: Documents\\mini-daw on Windows, ~/Music/mini-daw\n"
            "; on Linux and macOS. Without quotes the path is used as typed\n"
            "; (folder = \\\\server\\takes). Inside quotes, \\\\ stands for one \\.\n"
@@ -761,6 +769,7 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     text = setConfigValue(text, "audio", "sample_rate", std::to_string(config.audio.sampleRate));
     text = setConfigValue(text, "audio", "buffer_size", std::to_string(config.audio.bufferFrames));
     text = setConfigValue(text, "recording", "sync_to_disk", config.recording.syncToDisk ? "true" : "false");
+    text = setConfigValue(text, "recording", "compact", config.recording.compact ? "true" : "false");
     text = setConfigValue(text, "recording", "folder", quoteConfigString(config.recording.folder));
     text = setConfigValue(text, "recording", "midi_timing", midiTimingName(config.recording.midiTiming));
     text = setConfigValue(text, "recording", "latency_correction_ms",

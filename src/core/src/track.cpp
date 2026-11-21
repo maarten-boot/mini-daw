@@ -1,6 +1,7 @@
 #include "minidaw/track.hpp"
 #include "minidaw/path_util.hpp"
 #include "minidaw/smf.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 
 #include <algorithm>
@@ -210,7 +211,7 @@ std::uint64_t takeLengthFrames(const Track& track, unsigned int sampleRate)
     if (track.take.empty()) return 0;
     std::string err;
     if (track.kind == TrackKind::Audio) {
-        WavReader r;
+        AudioReader r;
         return r.open(track.take, err) ? r.frames() : 0;
     }
     SmfData d;
@@ -239,14 +240,14 @@ bool parseTakeFileName(const std::filesystem::path& file, int& number, std::stri
 {
     std::string ext = pathToUtf8(file.extension());
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (ext != ".wav" && ext != ".mid") return false;
+    if (ext != ".wav" && ext != ".flac" && ext != ".mid") return false;  // FLAC: a compacted take (P31)
     const std::string stem = pathToUtf8(file.stem());
     std::size_t digits = 0;
     while (digits < stem.size() && stem[digits] >= '0' && stem[digits] <= '9') ++digits;
     if (digits == 0 || digits > 4 || digits >= stem.size() || stem[digits] != '-') return false;
     number = std::stoi(stem.substr(0, digits));
     name = stem.substr(digits + 1);
-    wav = ext == ".wav";
+    wav = ext != ".mid";  // audio
     return true;
 }
 
@@ -266,7 +267,7 @@ std::vector<Track> tracksFromTakeFolder(const std::filesystem::path& folder, std
         t.kind = wav ? TrackKind::Audio : TrackKind::Midi;
         t.take = it->path();
         if (wav) {
-            WavReader reader;  // the channel count, and whether it is a WAV we can play at all
+            AudioReader reader;  // the channel count, and whether it is a WAV we can play at all
             std::string err;
             if (!reader.open(it->path(), err)) continue;
             t.channels = reader.channels() >= 2 ? std::vector<unsigned int>{0, 1} : std::vector<unsigned int>{0};

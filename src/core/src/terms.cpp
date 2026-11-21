@@ -168,8 +168,14 @@ std::vector<Term> makeTerms()
          "mini-daw runs.",
          "File > New project..., Open project..., Save project as...", {"Takes folder", "Note"}},
         {"WAV file", kProjects,
-         "The file of an audio take (.wav): 24-bit sound at the stream's sample rate. Any audio program can open it.",
-         "In the take folder", {"Take", "Sample rate"}},
+         "The file of an audio take (.wav): 24-bit sound at the stream's sample rate. Any audio program can open it. "
+         "After a recording mini-daw makes it a FLAC file (see Compact).",
+         "In the take folder", {"Take", "Sample rate", "Compact"}},
+        {"Compact", kProjects,
+         "Turning a take's WAV file into FLAC: exactly the same sound (lossless), about half the size. mini-daw does "
+         "it after each recording (Settings > Recording...) and for older ones with File > Compact recordings...; "
+         "each FLAC is checked against its WAV before the WAV is removed.",
+         "File > Compact recordings...", {"WAV file", "Take"}},
         {"MIDI file", kProjects,
          "The file of a MIDI take (.mid): the notes and controls with their times. Any music program can open it.",
          "In the take folder", {"Take", "MIDI"}},

@@ -92,6 +92,9 @@ struct RecordingSettings {
     // (1..60); an audio input counts as playing from this level (-60..-20 dBFS).
     int autoPauseSeconds = 5;
     int autoThresholdDb = -40;
+    // Compact recordings (P31, SPEC-REC-10): a take's WAV files become FLAC
+    // after the recording (or Render) ends. `[recording] compact`.
+    bool compact = true;
     friend bool operator==(const RecordingSettings&, const RecordingSettings&) = default;
 };
 

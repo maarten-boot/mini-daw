@@ -25,6 +25,7 @@
 #include "minidaw/audio_stream.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/audio_export.hpp"
+#include "minidaw/compact.hpp"
 #include "minidaw/dawproject.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/folder_browse.hpp"
@@ -115,7 +116,8 @@ struct ScriptRun {
     int commands = 0;
     int failures = 0;
     // The line that is running over several frames: slow work, a scan, wait or wait-for.
-    enum class Pending { None, Busy, Scan, Wait, WaitFor, Export } pending = Pending::None;
+    enum class Pending { None, Busy, Scan, Wait, WaitFor, Export, Compact } pending = Pending::None;
+    std::size_t compactDoneAtStart = 0, compactFailedAtStart = 0;  // `compact`: counted from here
     const minidaw::ScriptLine* current = nullptr;
     std::chrono::steady_clock::time_point started{};   // of the current line
     std::chrono::steady_clock::time_point deadline{};  // wait / wait-for
@@ -360,6 +362,14 @@ struct AppState {
     std::string audioExportFolder;
     std::unique_ptr<minidaw::AudioExport> audioExport;    // the export running, if any
     std::vector<std::string> audioExportReport;           // what the last export wrote and left out
+    // Compact recordings as FLAC (P31, SPEC-REC-10).
+    minidaw::Compactor compactor;
+    bool showCompact = false;
+    std::size_t compactWavFiles = 0;                      // WAV takes in the takes folder (window)
+    std::uintmax_t compactWavBytes = 0;
+    std::size_t compactDone = 0, compactFailed = 0;       // this session
+    std::uintmax_t compactSaved = 0;                      // bytes
+    std::vector<std::string> compactReport;               // the last problems
     // File > Import DAWproject (P28, SPEC-PRJ-05).
     bool showDawImport = false;
     std::string dawImportFile;
@@ -888,6 +898,8 @@ void openAudioSettings(AppState& app)
 void showProjectDialog(AppState& app, AppState::ProjectDialog kind);
 void showDawExport(AppState& app);
 void showAudioExport(AppState& app);
+void showCompact(AppState& app);
+void compactAfter(AppState& app, const std::filesystem::path& folderOrFile);
 void showDawImport(AppState& app);
 bool openProject(AppState& app, const std::filesystem::path& folder);
 void closeProject(AppState& app);
@@ -923,6 +935,7 @@ void drawMenuBar(AppState& app, bool& quit)
         }
         if (ImGui::MenuItem("Export DAWproject...", nullptr, false, !rec)) showDawExport(app);  // P27
         if (ImGui::MenuItem("Export audio...", nullptr, false, !rec)) showAudioExport(app);     // P29
+        if (ImGui::MenuItem("Compact recordings...")) showCompact(app);                        // P31
         if (ImGui::MenuItem("Import DAWproject...", nullptr, false, !rec)) showDawImport(app);  // P28
         ImGui::Separator();
         if (ImGui::MenuItem("Open take folder...", nullptr, false, !app.session.recording())) {
@@ -1943,6 +1956,7 @@ void pollRender(AppState& app)
     linked->take = app.renderOut;
     linked->takeStart = t->takeStart;
     refreshTakeLength(app, *linked);
+    compactAfter(app, app.renderOut);  // P31
     app.log.info("Track " + std::to_string(linked->number) + " holds the rendered sound of track " +
                  std::to_string(number) + " (" + buf + "); \"Sound from\" on that track chooses what plays");
 }
@@ -2025,11 +2039,13 @@ void syncRack(AppState& app, bool force)
 // Every frame: idle the plugins (controller updates), keep the rack in step,
 // and keep the saved states fresh for the project (every 5 s).
 void stepAudioExport(AppState& app);
+void stepCompactor(AppState& app);
 
 void updateInstruments(AppState& app)
 {
     pollRender(app);
     stepAudioExport(app);
+    stepCompactor(app);
     for (auto& [n, inst] : app.instruments) inst->idle();
     // restartComponent requests (Q5). Parameter value / title changes need
     // nothing here (mini-daw shows no plugin parameters); new busses or a
@@ -2908,6 +2924,136 @@ void drawAudioExportWindow(AppState& app)
     if (!open) app.showAudioExport = false;  // an export goes on; its result is in the log
 }
 
+// --- Compact recordings (P31, SPEC-REC-10) -------------------------------------------
+
+// After a recording, an auto record part or a Render: its WAV files to the
+// compactor, if the setting is on.
+void compactAfter(AppState& app, const std::filesystem::path& folderOrFile)
+{
+    if (!app.config.recording.compact || folderOrFile.empty()) return;
+    std::error_code ec;
+    if (std::filesystem::is_directory(folderOrFile, ec)) {
+        app.compactor.add(minidaw::wavTakeFiles(folderOrFile, false));
+    } else if (std::filesystem::is_regular_file(folderOrFile, ec)) {
+        app.compactor.add({folderOrFile});
+    }
+}
+
+// Files in use: the compactor waits (a file already started is finished; on
+// Windows a WAV that is open cannot be removed, so it would stay a WAV).
+bool compactorShouldWait(const AppState& app)
+{
+    return app.session.recording() || app.session.autoMode() || app.audio.player().playing() ||
+           !app.previewFolder.empty() || app.renderTrack != 0 || app.audioExport != nullptr || app.busy;
+}
+
+void countWavTakes(AppState& app)
+{
+    app.compactWavFiles = 0;
+    app.compactWavBytes = 0;
+    std::error_code ec;
+    for (const auto& f : minidaw::wavTakeFiles(activeTakesFolder(app), true)) {
+        ++app.compactWavFiles;
+        app.compactWavBytes += std::filesystem::file_size(f, ec);
+    }
+}
+
+void showCompact(AppState& app)
+{
+    if (!app.showCompact) countWavTakes(app);
+    app.showCompact = true;
+}
+
+std::string megabytes(std::uintmax_t bytes)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return buf;
+}
+
+// Every frame: pause or go on; a finished file's tracks now play the FLAC.
+void stepCompactor(AppState& app)
+{
+    app.compactor.setPaused(compactorShouldWait(app));
+    std::vector<minidaw::CompactFileResult> done = app.compactor.takeResults();
+    if (done.empty()) return;
+    bool changed = false;
+    for (const auto& r : done) {
+        if (r.ok) {
+            ++app.compactDone;
+            app.compactSaved += r.before > r.after ? r.before - r.after : 0;
+            for (auto& t : app.tracks) {
+                if (t.take == r.wav) {
+                    t.take = r.flac;
+                    changed = true;
+                }
+            }
+            app.log.info("Compacted " + minidaw::pathToUtf8(r.wav.filename()) + " to FLAC: " + megabytes(r.before) +
+                         " -> " + megabytes(r.after) + " (" + minidaw::pathToUtf8(r.flac.parent_path()) + ")");
+        } else {
+            if (!r.skipped) ++app.compactFailed;
+            const std::string line = r.error.empty() ? minidaw::pathToUtf8(r.wav.filename()) + ": not compacted" : r.error;
+            app.compactReport.insert(app.compactReport.begin(), line);
+            if (app.compactReport.size() > 10) app.compactReport.pop_back();
+            if (r.skipped) app.log.info("Not compacted: " + line);
+            else app.log.warning("Not compacted: " + line);
+        }
+    }
+    app.recordingsDirty = true;
+    if (changed) saveProjectNow(app);  // the WAV is gone: the project names the FLAC at once
+    if (app.showCompact && app.compactor.pending() == 0 && !app.compactor.working()) countWavTakes(app);
+}
+
+void drawCompactWindow(AppState& app)
+{
+    if (!app.showCompact) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(40 * em, 0), ImVec2(40 * em, FLT_MAX));
+    minidaw::app::placeNewWindow("Compact recordings###compact");
+    bool open = true;
+    if (ImGui::Begin("Compact recordings###compact", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Turns the WAV files of the recordings into FLAC: lossless (exactly the same sound), "
+                           "about half the size. Each file is checked against its WAV before the WAV is removed. "
+                           "Files in the \"deleted\" folder are left alone.");
+        ImGui::TextWrapped("Takes folder: %s", minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
+        ImGui::Text("WAV files there: %zu (%s)", app.compactWavFiles, megabytes(app.compactWavBytes).c_str());
+        const bool working = app.compactor.working() || app.compactor.pending() > 0;
+        minidaw::app::beginDisabled(working || app.compactWavFiles == 0);
+        if (ImGui::Button("Compact them now")) {
+            app.compactor.add(minidaw::wavTakeFiles(activeTakesFolder(app), true));
+            app.log.info("Compact recordings: " + std::to_string(app.compactWavFiles) + " WAV file(s) queued");
+        }
+        minidaw::app::endDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Count again")) countWavTakes(app);
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showCompact = false;
+        bool autoCompact = app.config.recording.compact;
+        if (ImGui::Checkbox("Compact new recordings after they end", &autoCompact)) {
+            app.config.recording.compact = autoCompact;
+            saveConfig(app);
+        }
+        if (working) {
+            const std::string cur = app.compactor.current();
+            if (app.compactor.paused()) {
+                ImGui::TextWrapped("Waiting: %zu file(s); it goes on when nothing is recorded, played, rendered or "
+                                   "exported.", app.compactor.pending() + (cur.empty() ? 0 : 1));
+            } else {
+                ImGui::TextWrapped("Compacting %s; %zu file(s) after it.", cur.empty() ? "..." : cur.c_str(),
+                                   app.compactor.pending());
+            }
+        }
+        if (app.compactDone > 0 || app.compactFailed > 0) {
+            ImGui::Text("This session: %zu file(s) compacted, %s saved%s", app.compactDone,
+                        megabytes(app.compactSaved).c_str(),
+                        app.compactFailed > 0 ? (", " + std::to_string(app.compactFailed) + " not (see below)").c_str() : "");
+        }
+        for (const auto& l : app.compactReport) ImGui::TextWrapped("%s", l.c_str());
+    }
+    ImGui::End();
+    if (!open) app.showCompact = false;
+}
+
 // --- DAWproject import (P28, SPEC-PRJ-05) ------------------------------------
 void showDawImport(AppState& app)
 {
@@ -3223,6 +3369,7 @@ void toggleRecording(AppState& app)
         const minidaw::SessionResult res = app.session.stop();
         app.recordingsDirty = true;
         app.lastTake = describeResult(res);
+        compactAfter(app, res.folder);  // P31
         app.log.info("Recording stopped");
         for (const auto& line : app.lastTake) {
             if (res.lostData()) app.log.warning("Take: " + line);
@@ -3401,6 +3548,7 @@ void updateAuto(AppState& app)
     case minidaw::AutoPartEvent::Kind::Ended: {
         app.livePart.clear();
         app.recordingsDirty = true;
+        compactAfter(app, ev.folder);  // P31
         char buf[64];
         std::snprintf(buf, sizeof buf, "%.1f s", ev.seconds);
         const std::string line = minidaw::pathToUtf8(ev.folder.filename()) + "  (" + buf + ")";
@@ -3753,8 +3901,7 @@ void previewRecording(AppState& app, const minidaw::RecordingInfo& rec)
     int id = kPreviewTrack;
     int midiWithoutSound = 0;
     for (const auto& f : rec.files) {
-        const std::string ext = minidaw::pathToUtf8(f.extension());
-        if (ext == ".wav" || ext == ".WAV") {
+        if (minidaw::isAudioTakeFile(f)) {  // WAV or FLAC (P31)
             clips.push_back({id, f, 0});
             app.audio.player().setGain(id, 1.0f, 1.0f);
             ++id;
@@ -5110,6 +5257,7 @@ void drawRecordingSettingsWindow(AppState& app)
             ImGui::EndCombo();
         }
         ImGui::Checkbox("Force takes to disk every second (survives power loss)", &p.syncToDisk);
+        ImGui::Checkbox("Compact recordings as FLAC after recording (lossless, about half the size)", &p.compact);  // P31
         // Auto record (SPEC-REC-08).
         ImGui::SetNextItemWidth(8 * em);
         if (ImGui::InputInt("Auto record: a part ends after this many quiet seconds", &p.autoPauseSeconds, 1, 5)) {
@@ -5764,6 +5912,16 @@ void scriptStart(AppState& app, const minidaw::ScriptLine& line)
             return;
         }
         sr.pending = ScriptRun::Pending::Export;
+    } else if (cmd == "compact") {  // P31
+        const auto files = minidaw::wavTakeFiles(activeTakesFolder(app), true);
+        if (files.empty()) {
+            ok("no WAV takes to compact");
+            return;
+        }
+        sr.compactDoneAtStart = app.compactDone;
+        sr.compactFailedAtStart = app.compactFailed;
+        app.compactor.add(files);
+        sr.pending = ScriptRun::Pending::Compact;
     } else if (cmd == "import") {  // P28
         why.clear();
         const std::filesystem::path folder = minidaw::pathFromUtf8(minidaw::cleanPathText(w[2]));
@@ -5944,6 +6102,18 @@ bool continueLine(AppState& app, ScriptRun& sr)
             scriptFinish(app, true, std::to_string(files) + " file(s)" + (left ? ", " + std::to_string(left) + " left out" : ""));
         } else {
             scriptFinish(app, false, rep.empty() ? std::string("not written") : rep[0]);
+        }
+        return true;
+    }
+    case ScriptRun::Pending::Compact: {  // P31: until the queue is empty and its results are in
+        if (app.compactor.working() || app.compactor.pending() > 0) return true;
+        stepCompactor(app);
+        const std::size_t done = app.compactDone - sr.compactDoneAtStart;
+        const std::size_t failed = app.compactFailed - sr.compactFailedAtStart;
+        if (failed > 0) {
+            scriptFinish(app, false, std::to_string(failed) + " file(s) not compacted (see the log)");
+        } else {
+            scriptFinish(app, true, std::to_string(done) + " file(s) compacted");
         }
         return true;
     }
@@ -6527,6 +6697,7 @@ int runGui(AppState& app)
         drawProjectDialog(app);
         drawDawExportWindow(app);
         drawAudioExportWindow(app);
+        drawCompactWindow(app);
         drawDawImportWindow(app);
         drawInstrumentsWindow(app);
         drawSavePresetWindow(app);
@@ -6559,6 +6730,7 @@ int runGui(AppState& app)
     }
     if (app.session.recording()) app.session.stop();  // finish the files before the stream closes
     stopPlayback(app);
+    app.compactor.stop();  // a file being converted is given up, nothing changed (P31)
     // A running export is cancelled and ended while plugins and the window are still there
     // (crosscheck #26 CC7); what it made is removed.
     if (app.audioExport) {

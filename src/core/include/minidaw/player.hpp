@@ -20,6 +20,7 @@
 // waits until the audio thread no longer uses the run (hazard pointer).
 
 #include "minidaw/ring_buffer.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 
 #include <atomic>

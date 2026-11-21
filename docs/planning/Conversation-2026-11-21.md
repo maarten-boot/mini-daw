@@ -200,3 +200,27 @@ User: "pushed it, check the CI run", "continue".
 - MSVC C4996 warnings now 15 (19 before P29, 25 in P29): `zip_writer.hpp` no longer has them, also not in the DAWproject code.
 - `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
 - `dist/TESTS.txt`: T-PRJ-12 first (8 steps with real instruments on Windows), then P30–P30c and the earlier open tests.
+
+## 13. P31 done: compact recordings as FLAC; P32 planned
+
+User: "start P31".
+
+- Asked:
+  - when → **a setting + File → Compact recordings…**;
+  - the WAV after the check → **removed**;
+  - the setting by default → **on**;
+  - DAWproject export → **FLAC as it is**.
+- User, during the work: "do we already have a tutorial if not we sould plan one for beginners".
+  - Read as "should". There is none: the Terms tab explains words, and `docs/Demo-checklist.md` is a presenter's checklist from 0.1.0.
+  - Planned as P32 (form and lessons to settle after P31).
+- Done:
+  - Core `audio_reader`: one reader for WAV and FLAC with the same float scaling and FLAC seeking; every reader of a take uses it.
+  - FLAC accepted by the take file names, the Timeline, Play it, the DAWproject export (FLAC as is) and import, and Export audio.
+  - Core `compact`: `compactFile` writes `.part`, decodes and compares, renames, then removes the WAV, or undoes when it is in use. The `Compactor` thread is paused while files are in use.
+  - `[recording] compact = true`. Hooks after Stop, an auto part's end and a Render.
+  - File → Compact recordings… window.
+  - Tracks moved to the FLAC and the project saved at once; a missing WAV take falls back to its FLAC on load.
+  - Script command `compact`; Terms "Compact".
+- Seen under Wine: every file failed with "Sharing violation". The WAV was still open in the encoder's reader when it was removed (Linux allows that), so it is now closed first.
+- Tests: T-REC-36 (4 cases), script case `compact` with a WAV fixture. Linux 273/273, Wine 253/253. GUI on Xvfb: a recorded take became FLAC after Stop and played; the window's tick-box label was shortened.
+- Version 0.31.0. Spec v0.76 (SPEC-REC-10), Plan P31 done, P32 planned, README, CLAUDE.md.

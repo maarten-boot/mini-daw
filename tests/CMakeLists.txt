@@ -30,7 +30,8 @@ add_executable(minidaw_tests
     test_dawproject_import.cpp
     test_remote.cpp
     test_instrument.cpp
-    test_audio_export.cpp)
+    test_audio_export.cpp
+    test_compact.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
 # DAWproject (P27): the export is read back with the same libraries.
 target_link_libraries(minidaw_tests PRIVATE minidaw_pugixml minidaw_miniz)
@@ -167,6 +168,8 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
         "2 track(s), 0 audio clip(s), 0 MIDI clip(s) with 0 note(s), 1 instrument(s), 0 marker(s)."
         "Result: 5 command(s), 0 failed")
     minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
+    minidaw_script_test(compact 0 IN "1 file(s) compacted" "no WAV takes to compact" "Compacted 01-Vocal.wav to FLAC"
+        "Export audio: Written: " "Result: 5 command(s), 0 failed")
     minidaw_script_test(exportaudio 1 IN "Export audio: Written: " "project song.flac" "Final.zip"
         "take-20261121-120000.opus" "no recording called \"no such take\"" "unknown option \"mp3\""
         "project song.wav" "zip needs a name" "Result: 10 command(s), 3 failed")

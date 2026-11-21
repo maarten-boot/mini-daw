@@ -22,6 +22,8 @@ add_library(minidaw_core STATIC
     core/src/color.cpp
     core/src/config.cpp
     core/src/audio_export.cpp
+    core/src/audio_reader.cpp
+    core/src/compact.cpp
     core/src/dawproject.cpp
     core/src/dawproject_import.cpp
     core/src/devices.cpp

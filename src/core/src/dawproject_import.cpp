@@ -10,6 +10,7 @@
 #include "minidaw/smf.hpp"
 #include "minidaw/track.hpp"
 #include "minidaw/wav.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 
 #include <miniz.h>
@@ -719,7 +720,7 @@ private:
         cacheFrames_ = static_cast<std::int64_t>(reader_.read(cache_.data(), kBlock));
         if (cacheFrames_ <= frame - cacheStart_) cacheFrames_ = frame - cacheStart_ + 1;  // a read error: silence
     }
-    WavReader reader_;
+    AudioReader reader_;
     std::vector<float> cache_;
     std::int64_t cacheStart_ = 0;
     std::int64_t cacheFrames_ = 0;
@@ -987,8 +988,8 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         if (auto it = sources.find(key); it != sources.end()) return it->second.get();
         std::string ext = pathToUtf8(pathFromUtf8(p.path).extension());
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (ext != ".wav") {
-            result.leftOut.push_back(who + ": " + p.path + " (only WAV files are read)");
+        if (ext != ".wav" && ext != ".flac") {
+            result.leftOut.push_back(who + ": " + p.path + " (only WAV and FLAC files are read)");
             return nullptr;
         }
         fs::path path;
@@ -1002,7 +1003,7 @@ DawImportResult importDawProject(const fs::path& file, const fs::path& projectFo
         } else {
             std::error_code e;
             fs::create_directories(unpacked, e);
-            path = unpacked / (std::to_string(++unpackedFiles) + ".wav");
+            path = unpacked / (std::to_string(++unpackedFiles) + ext);  // the reader goes by the extension
             if (!zip.extract(p.path, path, err)) {
                 result.leftOut.push_back(who + ": " + err);
                 return nullptr;

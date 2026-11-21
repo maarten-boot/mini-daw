@@ -186,4 +186,41 @@ std::size_t WavReader::read(float* out, std::size_t count)
     return done;
 }
 
+std::size_t WavReader::readPcm(std::int32_t* out, std::size_t count)
+{
+    if (!file_ || channels_ == 0 || float_) return 0;
+    const std::size_t bytesPerFrame = static_cast<std::size_t>(channels_) * (bits_ / 8);
+    const std::size_t chunkFrames = buffer_.size() / bytesPerFrame;
+    std::size_t done = 0;
+    while (done < count && position_ < frames_) {
+        const std::size_t want =
+            static_cast<std::size_t>(std::min<std::uint64_t>(std::min(count - done, chunkFrames), frames_ - position_));
+        const std::size_t got = std::fread(buffer_.data(), bytesPerFrame, want, file_);
+        const unsigned char* p = buffer_.data();
+        std::int32_t* o = out + done * channels_;
+        const std::size_t samples = got * channels_;
+        for (std::size_t i = 0; i < samples; ++i) {
+            if (bits_ == 16) {
+                o[i] = static_cast<std::int16_t>(le16(p));
+                p += 2;
+            } else if (bits_ == 24) {
+                std::int32_t s = static_cast<std::int32_t>(p[0] | (p[1] << 8) | (p[2] << 16));
+                if (s & 0x800000) s -= 0x1000000;
+                o[i] = s;
+                p += 3;
+            } else {
+                o[i] = static_cast<std::int32_t>(le32(p));
+                p += 4;
+            }
+        }
+        done += got;
+        position_ += got;
+        if (got < want) {
+            error_ = "Read error in " + pathToUtf8(path_.filename()) + ".";
+            break;
+        }
+    }
+    return done;
+}
+
 } // namespace minidaw

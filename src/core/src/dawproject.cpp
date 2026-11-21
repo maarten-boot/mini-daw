@@ -5,6 +5,7 @@
 #include "minidaw/recording_notes.hpp"
 #include "minidaw/smf.hpp"
 #include "minidaw/track.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 #include "zip_writer.hpp"
 
@@ -335,8 +336,8 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
         };
         std::string ext = pathToUtf8(take.extension());
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (ext == ".wav") {
-            WavReader wav;
+        if (ext == ".wav" || ext == ".flac") {  // FLAC as it is (P31, user's choice)
+            AudioReader wav;
             std::string err;
             if (!wav.open(take, err) || wav.sampleRate() == 0) {
                 result.leftOut.push_back(label + ": its take could not be read (" + err + ")");
@@ -346,7 +347,7 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
             auto it = audioFiles.find(take);
             if (it == audioFiles.end()) {
                 const std::string name =
-                    uniqueZipName("audio", pathToUtf8(folder.filename()) + " " + pathToUtf8(take.stem()), ".wav");
+                    uniqueZipName("audio", pathToUtf8(folder.filename()) + " " + pathToUtf8(take.stem()), ext);
                 it = audioFiles.emplace(take, Entry{name}).first;
                 filesToAdd.emplace_back(name, take);
             }
@@ -495,7 +496,7 @@ DawExportResult exportDawProject(const ProjectData& project, unsigned int sample
             for (const fs::path& f : r->files) {
                 std::string e = pathToUtf8(f.extension());
                 std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                (e == ".wav" ? audio : midi) = true;
+                (e == ".wav" || e == ".flac" ? audio : midi) = true;
             }
         }
         pugi::xml_node track = structure.append_child("Track");

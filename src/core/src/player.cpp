@@ -26,7 +26,7 @@ LatencyEstimate estimateLatency(unsigned int bufferFrames, unsigned int reported
 
 struct Player::Clip {
     int track = 0;
-    WavReader reader;
+    AudioReader reader;
     unsigned int fileChannels = 0;
     unsigned int channels = 0;           // 1 or 2 (played)
     std::int64_t start = 0;

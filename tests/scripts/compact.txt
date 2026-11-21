@@ -1,0 +1,5 @@
+open "@WORK@/project"
+compact
+compact
+expect tracks.1.take "01-Vocal.flac"
+export-audio "@WORK@/out" song wav

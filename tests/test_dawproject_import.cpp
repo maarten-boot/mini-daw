@@ -513,7 +513,7 @@ TEST_CASE("T-PRJ-11: a file as other programs write it", "[project][dawimport][T
     CHECK(hasLine(r, "\"Guitar\": its sends"));
     CHECK(hasLine(r, "(switched off)"));
     CHECK(hasLine(r, "time-stretched"));
-    CHECK(hasLine(r, "song.mp3 (only WAV files are read)"));
+    CHECK(hasLine(r, "song.mp3 (only WAV and FLAC files are read)"));
     CHECK(hasLine(r, "\"Keys\": its automation"));
     CHECK(hasLine(r, "Tempo changes"));
     CHECK(hasLine(r, "2 scene(s)"));

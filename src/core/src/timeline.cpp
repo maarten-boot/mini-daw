@@ -1,6 +1,7 @@
 #include "minidaw/timeline.hpp"
 
 #include "minidaw/path_util.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 
 #include <algorithm>
@@ -120,7 +121,7 @@ namespace {
 bool isRecordingFile(const std::filesystem::path& p, TrackKind& kind)
 {
     const std::string ext = pathToUtf8(p.extension());
-    if (ext == ".wav" || ext == ".WAV") {
+    if (isAudioTakeFile(p)) {  // WAV, or FLAC after compacting (P31)
         kind = TrackKind::Audio;
         return true;
     }
@@ -186,7 +187,7 @@ void addFolder(std::vector<RecordingInfo>& out, const std::filesystem::path& fol
         t.take = path;
         constexpr unsigned int rate = 48000;  // WAV: its own rate below; MIDI: any rate gives seconds
         if (t.kind == TrackKind::Audio) {
-            WavReader w;
+            AudioReader w;
             std::string err;
             if (w.open(path, err) && w.sampleRate() > 0) {
                 r.seconds = std::max(r.seconds, static_cast<double>(w.frames()) / w.sampleRate());

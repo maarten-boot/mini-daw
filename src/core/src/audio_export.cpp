@@ -5,6 +5,7 @@
 #include "minidaw/presets.hpp"
 #include "minidaw/smf.hpp"
 #include "minidaw/wav.hpp"
+#include "minidaw/audio_reader.hpp"
 #include "minidaw/wav_reader.hpp"
 #include "zip_writer.hpp"
 
@@ -438,7 +439,7 @@ namespace {
 
 struct OpenPart {
     const ExportPart* part = nullptr;
-    WavReader reader;
+    AudioReader reader;
     std::uint64_t frames = 0;
     unsigned int channels = 0;
 };
@@ -451,7 +452,7 @@ std::uint64_t mixLength(const std::vector<ExportPart>& parts)
 {
     std::int64_t end = 0;
     for (const auto& p : parts) {
-        WavReader r;
+        AudioReader r;
         std::string err;
         if (!r.open(partFile(p), err)) continue;
         end = std::max(end, p.start + static_cast<std::int64_t>(r.frames()));
@@ -561,7 +562,7 @@ float mixGain(const Track& t, const std::vector<Track>& tracks, bool forceLinked
 bool addWav(ExportItem& item, const fs::path& file, int track, std::string trackName, std::int64_t start, float gain,
             unsigned int rate, bool readFiles)
 {
-    WavReader r;
+    AudioReader r;
     std::string err;
     const std::string shown = pathToUtf8(file.filename());
     if (!readFiles) {
@@ -718,7 +719,7 @@ ExportItem recordingExportItem(const RecordingInfo& recording, const std::vector
             // A WAV not named "NN-name": no track, 0 dB, its name from the file.
             std::string ext = pathToUtf8(f.extension());
             for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (ext != ".wav") continue;
+            if (ext != ".wav" && ext != ".flac") continue;
             n = 0;
             trackName = pathToUtf8(f.stem());
             wav = true;
