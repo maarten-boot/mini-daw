@@ -101,7 +101,7 @@ public:
     ~FlacEncoder() override
     {
         if (enc_ != nullptr) FLAC__stream_encoder_delete(enc_);  // finishes and closes a file it was given
-        if (file_ != nullptr) std::fclose(file_);                // not handed over (init failed)
+        if (file_ != nullptr) std::fclose(file_);                // not handed over (no encoder)
     }
     bool open(const fs::path& path, unsigned int sampleRate, std::string& error) override
     {
@@ -121,11 +121,14 @@ public:
         FLAC__stream_encoder_set_sample_rate(enc_, sampleRate);
         FLAC__stream_encoder_set_compression_level(enc_, 5);
         const auto st = FLAC__stream_encoder_init_FILE(enc_, file_, nullptr, nullptr);
+        // The encoder owns the FILE from here, also when init failed: libFLAC stores
+        // it before anything that can fail and closes it in finish / delete
+        // (crosscheck #26 CC1: it was closed a second time here).
+        file_ = nullptr;
         if (st != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
             error = std::string("FLAC: ") + FLAC__StreamEncoderInitStatusString[st];
             return false;
         }
-        file_ = nullptr;  // the encoder owns it now (closed in finish / delete)
         return true;
     }
     bool write(const float* stereo, std::size_t frames, std::string& error) override
@@ -378,22 +381,54 @@ std::string exportFileBase(const ExportItem& item, const ExportPart* stem)
     return exportSafeName(base);
 }
 
+namespace {
+
+std::string foldCase(std::string s)
+{
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// `base` + ext, or "base (2)" + ext ... when taken (compared in any case).
+std::string uniqueName(const std::string& base, const std::string& ext, std::set<std::string>& used)
+{
+    std::string name = base + ext;
+    for (int k = 2; used.count(foldCase(name)) != 0; ++k) name = base + " (" + std::to_string(k) + ")" + ext;
+    used.insert(foldCase(name));
+    return name;
+}
+
+} // namespace
+
+std::vector<ExportOutput> exportOutputs(const std::vector<ExportItem>& items, const AudioExportSettings& settings)
+{
+    std::vector<ExportOutput> out;
+    const std::string ext(exportExtension(settings.format));
+    std::set<std::string> usedNames, usedFolders;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const ExportItem& item = items[i];
+        if (item.parts.empty()) continue;
+        const std::string folder = uniqueName(exportSafeName(item.name), "", usedFolders);
+        if (!settings.stems) {
+            out.push_back({i, -1, uniqueName(exportFileBase(item, nullptr), ext, usedNames), folder});
+            continue;
+        }
+        for (std::size_t p = 0; p < item.parts.size(); ++p) {
+            out.push_back({i, static_cast<int>(p), uniqueName(exportFileBase(item, &item.parts[p]), ext, usedNames), folder});
+        }
+    }
+    return out;
+}
+
 std::vector<fs::path> exportTargets(const std::vector<ExportItem>& items, const AudioExportSettings& settings)
 {
     std::vector<fs::path> out;
+    const auto outputs = exportOutputs(items, settings);
     if (settings.zip) {
-        out.push_back(settings.folder / pathFromUtf8(exportSafeName(settings.zipName) + ".zip"));
+        if (!outputs.empty()) out.push_back(settings.folder / pathFromUtf8(exportSafeName(settings.zipName) + ".zip"));
         return out;
     }
-    const std::string ext(exportExtension(settings.format));
-    for (const auto& item : items) {
-        if (item.parts.empty()) continue;
-        if (!settings.stems) {
-            out.push_back(settings.folder / pathFromUtf8(exportFileBase(item, nullptr) + ext));
-            continue;
-        }
-        for (const auto& p : item.parts) out.push_back(settings.folder / pathFromUtf8(exportFileBase(item, &p) + ext));
-    }
+    for (const auto& o : outputs) out.push_back(settings.folder / pathFromUtf8(o.fileName));
     return out;
 }
 
@@ -426,7 +461,7 @@ std::uint64_t mixLength(const std::vector<ExportPart>& parts)
 
 bool mixParts(const std::vector<ExportPart>& parts, const ExportPart* only, unsigned int sampleRate,
               AudioEncoder& encoder, const std::atomic<bool>& cancel, std::atomic<std::uint64_t>& done, float& peak,
-              std::string& error)
+              std::string& error, std::uint64_t* notNumbers)
 {
     // All files are opened (also for a stem: every stem as long as the whole item, so they line up).
     std::vector<std::unique_ptr<OpenPart>> open;
@@ -481,6 +516,11 @@ bool mixParts(const std::vector<ExportPart>& parts, const ExportPart* only, unsi
         }
         bool clipped = false;
         for (std::size_t i = 0; i < n * 2; ++i) {
+            // NaN / Inf (a faulty plugin, a broken float WAV) become silence (crosscheck #26 CC5).
+            if (!std::isfinite(mix[i])) {
+                mix[i] = 0.0f;
+                if (notNumbers != nullptr) ++*notNumbers;
+            }
             peak = std::max(peak, std::fabs(mix[i]));
             mix[i] = clampSample(mix[i], clipped);
         }
@@ -519,16 +559,18 @@ float mixGain(const Track& t, const std::vector<Track>& tracks, bool forceLinked
 
 // A WAV part, or a line in leftOut when it cannot be used.
 bool addWav(ExportItem& item, const fs::path& file, int track, std::string trackName, std::int64_t start, float gain,
-            unsigned int rate)
+            unsigned int rate, bool readFiles)
 {
     WavReader r;
     std::string err;
     const std::string shown = pathToUtf8(file.filename());
-    if (!r.open(file, err)) {
+    if (!readFiles) {
+        // Names only (the window's Replace check, CC3): no file is opened.
+    } else if (!r.open(file, err)) {
         item.leftOut.push_back(item.name + ": " + shown + " cannot be read: " + err);
         return false;
     }
-    if (r.sampleRate() != rate) {
+    if (readFiles && r.sampleRate() != rate) {
         item.leftOut.push_back(item.name + ": " + shown + " has " + std::to_string(r.sampleRate()) + " Hz, not " +
                                std::to_string(rate) + " Hz (as in Play)");
         return false;
@@ -545,11 +587,11 @@ bool addWav(ExportItem& item, const fs::path& file, int track, std::string track
 
 // A MIDI part rendered through its instrument, or a line in leftOut.
 bool addRender(ExportItem& item, const fs::path& file, const Track& t, const ExportInstrument& inst, std::int64_t start,
-               float gain, unsigned int rate)
+               float gain, unsigned int rate, bool readFiles)
 {
     SmfData d;
     std::string err;
-    if (!readSmf(file, d, err)) {
+    if (readFiles && !readSmf(file, d, err)) {
         item.leftOut.push_back(item.name + ": " + pathToUtf8(file.filename()) + " cannot be read: " + err);
         return false;
     }
@@ -562,9 +604,11 @@ bool addRender(ExportItem& item, const fs::path& file, const Track& t, const Exp
     job.state = t.instrumentState;
     job.controllerState = t.instrumentControllerState;
     job.sampleRate = rate;
-    std::uint64_t end = 0;
-    job.events = smfToFrames(d, rate, &end);
-    job.takeFrames = end;
+    if (readFiles) {
+        std::uint64_t end = 0;
+        job.events = smfToFrames(d, rate, &end);
+        job.takeFrames = end;
+    }
     p.render = std::move(job);
     p.start = start;
     p.gain = gain;
@@ -593,19 +637,26 @@ const Track* trackByNumber(const std::vector<Track>& tracks, int number)
 } // namespace
 
 ExportItem songExportItem(const std::vector<Track>& tracks, const ExportInstruments& instruments,
-                          unsigned int sampleRate, bool stems, std::string name)
+                          unsigned int sampleRate, bool stems, std::string name, bool readFiles)
 {
     ExportItem item;
     item.name = std::move(name);
+    // The song starts at the earliest take of any track, whether it sounds or not, so a
+    // mix and the stems of one song line up (crosscheck #26 CC4).
+    std::optional<std::int64_t> first;
+    for (const auto& t : tracks) {
+        if (!t.take.empty()) first = std::min(first.value_or(t.takeStart), t.takeStart);
+    }
     for (const auto& t : tracks) {
         if (t.take.empty()) continue;
         if (t.kind == TrackKind::Midi) item.midiFiles.push_back(t.take);
         const float gain = stems ? stemGain(t) : playbackGain(t, tracks);
+        const std::int64_t start = t.takeStart - first.value_or(0);
         if (t.kind == TrackKind::Audio) {
             const Track* owner = soundOwner(tracks, t);
             if (owner != nullptr && !owner->soundFromRecording) continue;  // the instrument plays instead
             if (gain <= 0.0f && !stems) continue;                           // Play does not hear it
-            addWav(item, t.take, t.number, t.name, t.takeStart, gain, sampleRate);
+            addWav(item, t.take, t.number, t.name, start, gain, sampleRate, readFiles);
             continue;
         }
         if (!instrumentPlaysTake(t)) continue;  // its recorded sound (the linked track) plays
@@ -615,30 +666,33 @@ ExportItem songExportItem(const std::vector<Track>& tracks, const ExportInstrume
             continue;
         }
         if (gain <= 0.0f && !stems) continue;
-        addRender(item, t.take, t, inst->second, t.takeStart, gain, sampleRate);
-    }
-    // From the earliest part's start.
-    if (!item.parts.empty()) {
-        std::int64_t first = item.parts.front().start;
-        for (const auto& p : item.parts) first = std::min(first, p.start);
-        for (auto& p : item.parts) p.start -= first;
+        addRender(item, t.take, t, inst->second, start, gain, sampleRate, readFiles);
     }
     return item;
 }
 
 ExportItem recordingExportItem(const RecordingInfo& recording, const std::vector<Track>& tracks,
                                const ExportInstruments& instruments, unsigned int sampleRate, bool stems,
-                               std::string name)
+                               std::string name, bool readFiles)
 {
     ExportItem item;
     item.name = std::move(name);
     // Which MIDI tracks of this recording are rendered (their linked track's WAV is then not used).
     std::set<int> rendered;
     for (const auto& f : recording.files) {
-        if (pathToUtf8(f.extension()) != ".mid") continue;
+        int n = 0;
+        std::string fileName;
+        bool wav = false;
+        const bool parsed = parseTakeFileName(f, n, fileName, wav);  // "NN-name", extension in any case (CC8)
+        if (parsed && wav) continue;
+        if (!parsed) {
+            std::string ext = pathToUtf8(f.extension());
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".mid") continue;
+            n = 0;  // a MIDI file without a track number: no track
+        }
         item.midiFiles.push_back(f);
-        const int n = std::atoi(pathToUtf8(f.filename()).c_str());
-        const Track* t = trackByNumber(tracks, n);
+        const Track* t = n > 0 ? trackByNumber(tracks, n) : nullptr;
         if (t == nullptr || t->kind != TrackKind::Midi) {
             item.leftOut.push_back(noInstrumentLine(item, f, nullptr));
             continue;
@@ -654,15 +708,23 @@ ExportItem recordingExportItem(const RecordingInfo& recording, const std::vector
             rendered.insert(n);
             continue;
         }
-        if (addRender(item, f, *t, inst->second, 0, gain, sampleRate)) rendered.insert(n);
+        if (addRender(item, f, *t, inst->second, 0, gain, sampleRate, readFiles)) rendered.insert(n);
     }
     for (const auto& f : recording.files) {
-        const std::string ext = pathToUtf8(f.extension());
-        if (ext != ".wav" && ext != ".WAV") continue;
-        const std::string file = pathToUtf8(f.filename());
-        const int n = std::atoi(file.c_str());
-        const Track* t = trackByNumber(tracks, n);
-        std::string trackName = file.size() > 3 ? file.substr(3, file.size() - 3 - ext.size()) : file;
+        int n = 0;
+        std::string trackName;
+        bool wav = false;
+        if (!parseTakeFileName(f, n, trackName, wav)) {
+            // A WAV not named "NN-name": no track, 0 dB, its name from the file.
+            std::string ext = pathToUtf8(f.extension());
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".wav") continue;
+            n = 0;
+            trackName = pathToUtf8(f.stem());
+            wav = true;
+        }
+        if (!wav) continue;
+        const Track* t = n > 0 ? trackByNumber(tracks, n) : nullptr;
         float gain = 1.0f;
         if (t != nullptr) {
             trackName = t->name;
@@ -672,7 +734,7 @@ ExportItem recordingExportItem(const RecordingInfo& recording, const std::vector
             gain = stems ? stemGain(*t) : mixGain(*t, tracks, forced);
             if (gain <= 0.0f && !stems) continue;
         }
-        addWav(item, f, n, trackName, 0, gain, sampleRate);
+        addWav(item, f, n, trackName, 0, gain, sampleRate, readFiles);
     }
     return item;
 }
@@ -726,6 +788,23 @@ bool AudioExport::start(std::vector<ExportItem> items, AudioExportSettings setti
     if (parts == 0) {
         error = "nothing to export";
         return false;
+    }
+    // A file the export would write over one of its own sources (a take, when the
+    // folder chosen is a take folder): refused (crosscheck #26 CC8).
+    for (const auto& target : exportTargets(items, settings)) {
+        if (!fs::exists(target, ec)) continue;
+        for (const auto& item : items) {
+            std::vector<fs::path> inputs = item.midiFiles;
+            for (const auto& p : item.parts) {
+                if (!p.wav.empty()) inputs.push_back(p.wav);
+            }
+            for (const auto& in : inputs) {
+                if (fs::equivalent(target, in, ec)) {
+                    error = pathToUtf8(target) + " is one of the files to export: choose another folder";
+                    return false;
+                }
+            }
+        }
     }
     // A work folder beside the output: rendered MIDI, and the audio files when zipping.
     std::mt19937 rng(static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -820,102 +899,42 @@ double AudioExport::progress() const
     return renders_.empty() ? std::min(1.0, mixing) : std::min(1.0, 0.5 * renders + 0.5 * mixing);
 }
 
+namespace {
+
+// Moves a finished file into place, replacing one of that name. Across drives
+// (rename fails) it is copied beside the target first and then renamed, so a
+// failed copy never leaves a half file under the target's name (CC6).
+bool moveIntoPlace(const fs::path& from, const fs::path& to, std::string& error)
+{
+    std::error_code ec;
+    fs::rename(from, to, ec);
+    if (!ec) return true;
+    const fs::path part = to.parent_path() / ("." + pathToUtf8(to.filename()) + ".part");
+    std::error_code ec2;
+    fs::copy_file(from, part, fs::copy_options::overwrite_existing, ec2);
+    if (!ec2) fs::rename(part, to, ec2);
+    if (ec2) {
+        removeQuietly(part);
+        error = "cannot write " + pathToUtf8(to) + ": " + ec2.message();
+        return false;
+    }
+    removeQuietly(from);
+    return true;
+}
+
+} // namespace
+
 void AudioExport::runMix()
 {
     AudioExportResult r;
-    const std::string ext(exportExtension(settings_.format));
-    const fs::path outFolder = settings_.zip ? work_ / "zip" : settings_.folder;
-    std::error_code ec;
-    if (settings_.zip) fs::create_directories(outFolder, ec);
-    std::vector<fs::path> made;      // written so far (removed on failure)
-    std::vector<std::pair<std::string, fs::path>> zipEntries;
-    std::set<std::string> usedNames, usedFolders;
-    std::string error;
-    bool ok = true;
-    for (const auto& item : items_) {
-        if (!ok || cancel_.load()) break;
-        if (item.parts.empty()) continue;
-        // A folder per item in the zip; two items of one name get "(2)".
-        std::string folderInZip = exportSafeName(item.name);
-        for (int k = 2; usedFolders.count(folderInZip) != 0; ++k) {
-            folderInZip = exportSafeName(item.name) + " (" + std::to_string(k) + ")";
-        }
-        usedFolders.insert(folderInZip);
-        std::vector<const ExportPart*> outputs;
-        if (settings_.stems) {
-            for (const auto& p : item.parts) outputs.push_back(&p);
-        } else {
-            outputs.push_back(nullptr);
-        }
-        for (const ExportPart* stem : outputs) {
-            std::string base = exportFileBase(item, stem);
-            // Two items or stems of one name: numbered, so nothing is written twice.
-            std::string name = base + ext;
-            for (int k = 2; usedNames.count(name) != 0; ++k) name = base + " (" + std::to_string(k) + ")" + ext;
-            usedNames.insert(name);
-            const fs::path file = outFolder / pathFromUtf8(name);
-            setStage("Writing " + name);
-            auto enc = makeEncoder(settings_.format, settings_.quality);
-            float peak = 0.0f;
-            made.push_back(file);
-            if (!enc->open(file, settings_.sampleRate, error) ||
-                !mixParts(item.parts, stem, settings_.sampleRate, *enc, cancel_, mixed_, peak, error) ||
-                !enc->finish(error)) {
-                ok = false;
-                break;
-            }
-            enc.reset();
-            r.peak = std::max(r.peak, peak);
-            if (peak > 1.0f) {
-                char buf[96];
-                std::snprintf(buf, sizeof buf, ": peak %+.1f dBFS, clipped", 20.0 * std::log10(peak));
-                r.clipped.push_back(name + buf);
-            }
-            if (settings_.zip) {
-                zipEntries.emplace_back(folderInZip + "/" + name, file);
-            } else {
-                r.files.push_back(file);
-            }
-        }
-        if (ok && settings_.zip) {
-            for (const auto& mid : item.midiFiles) {
-                zipEntries.emplace_back(folderInZip + "/" + pathToUtf8(mid.filename()), mid);
-            }
-        }
-    }
-    if (ok && !cancel_.load() && settings_.zip) {
-        setStage("Zipping");
-        const fs::path zipPath = settings_.folder / pathFromUtf8(exportSafeName(settings_.zipName) + ".zip");
-        const fs::path tmp = work_ / "export.zip";
-        detail::ZipWriter zip;
-        ok = zip.begin(tmp, error);
-        for (const auto& [name, src] : zipEntries) {
-            if (!ok || cancel_.load()) break;
-            ok = zip.addFile(name, src, error);
-        }
-        if (ok && !cancel_.load()) ok = zip.finish(error);
-        if (ok && !cancel_.load()) {
-            fs::rename(tmp, zipPath, ec);
-            if (ec) {  // another drive: copy
-                ec.clear();
-                fs::copy_file(tmp, zipPath, fs::copy_options::overwrite_existing, ec);
-            }
-            if (ec) {
-                ok = false;
-                error = "cannot write " + pathToUtf8(zipPath) + ": " + ec.message();
-            } else {
-                r.files.push_back(zipPath);
-            }
-        }
-    }
-    if (cancel_.load() || !ok) {
-        for (const auto& f : made) removeQuietly(f);  // the zip is only moved out at the very end
-        r.files.clear();
-        r.cancelled = cancel_.load();
-        r.error = r.cancelled ? std::string() : error;
-        r.ok = false;
-    } else {
-        r.ok = true;
+    try {
+        mixAll(r);
+    } catch (const std::exception& e) {  // never the whole program (crosscheck #26 CC5)
+        r = AudioExportResult{};
+        r.error = std::string("unexpected error: ") + e.what();
+    } catch (...) {
+        r = AudioExportResult{};
+        r.error = "unexpected error";
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -924,6 +943,105 @@ void AudioExport::runMix()
         stage_ = "Done";
     }
     done_.store(true, std::memory_order_release);
+}
+
+// Everything is written into the work folder first and moved into the chosen
+// folder only when all succeeded, so a failure or Cancel never touches files
+// that were there (crosscheck #26 CC2).
+void AudioExport::mixAll(AudioExportResult& r)
+{
+    const fs::path outFolder = work_ / "out";
+    std::error_code ec;
+    fs::create_directories(outFolder, ec);
+    const auto outputs = exportOutputs(items_, settings_);
+    std::vector<std::pair<std::string, fs::path>> zipEntries;  // name in the zip, file
+    std::vector<std::pair<fs::path, fs::path>> moves;          // file in work, target
+    std::set<std::string> zipNames;
+    std::size_t lastItem = SIZE_MAX;
+    std::string error;
+    for (const auto& o : outputs) {
+        if (cancel_.load()) break;
+        const ExportItem& item = items_[o.item];
+        const ExportPart* stem = o.part < 0 ? nullptr : &item.parts[static_cast<std::size_t>(o.part)];
+        // WAV files stop at 4 GB: said before the work, not after it (CC10).
+        if (settings_.format == ExportFormat::Wav) {
+            const std::uint64_t bytes = mixLength(item.parts) * 2 * 3;
+            if (bytes > WavWriter::kMaxDataBytes) {
+                r.error = o.fileName + " would be over 4 GB, too long for a WAV file: choose FLAC";
+                return;
+            }
+        }
+        const fs::path file = outFolder / pathFromUtf8(o.fileName);
+        setStage("Writing " + o.fileName);
+        auto enc = makeEncoder(settings_.format, settings_.quality);
+        float peak = 0.0f;
+        std::uint64_t notNumbers = 0;
+        if (!enc->open(file, settings_.sampleRate, error) ||
+            !mixParts(item.parts, stem, settings_.sampleRate, *enc, cancel_, mixed_, peak, error, &notNumbers) ||
+            !enc->finish(error)) {
+            if (!cancel_.load()) r.error = error;
+            return;
+        }
+        enc.reset();
+        r.peak = std::max(r.peak, peak);
+        if (peak > 1.0f) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, ": peak %+.1f dBFS, clipped", 20.0 * std::log10(peak));
+            r.clipped.push_back(o.fileName + buf);
+        }
+        if (notNumbers > 0) {
+            r.clipped.push_back(o.fileName + ": " + std::to_string(notNumbers) +
+                                " sample(s) were not numbers (NaN / Inf), written as silence");
+        }
+        if (settings_.zip) {
+            zipEntries.emplace_back(uniqueName(o.zipFolder + "/" + o.fileName, "", zipNames), file);
+            if (o.item != lastItem) {
+                // The item's MIDI files once, in its folder; two of one name numbered (CC8).
+                for (const auto& mid : item.midiFiles) {
+                    const std::string stemName = pathToUtf8(mid.stem());
+                    const std::string ext = pathToUtf8(mid.extension());
+                    zipEntries.emplace_back(uniqueName(o.zipFolder + "/" + stemName, ext, zipNames), mid);
+                }
+            }
+        } else {
+            moves.emplace_back(file, settings_.folder / pathFromUtf8(o.fileName));
+        }
+        lastItem = o.item;
+    }
+    if (cancel_.load()) {
+        r.cancelled = true;
+        return;
+    }
+    if (settings_.zip) {
+        setStage("Zipping");
+        const fs::path tmp = work_ / "export.zip";
+        detail::ZipWriter zip;
+        bool ok = zip.begin(tmp, error);
+        for (const auto& [name, src] : zipEntries) {
+            if (!ok || cancel_.load()) break;
+            ok = zip.addFile(name, src, error);
+        }
+        if (ok && !cancel_.load()) ok = zip.finish(error);
+        if (cancel_.load()) {
+            r.cancelled = true;
+            return;
+        }
+        if (!ok) {
+            r.error = error;
+            return;
+        }
+        moves.emplace_back(tmp, settings_.folder / pathFromUtf8(exportSafeName(settings_.zipName) + ".zip"));
+    }
+    // From here Cancel no longer counts: the files are complete (CC6).
+    setStage("Moving the files into place");
+    for (const auto& [from, to] : moves) {
+        if (!moveIntoPlace(from, to, error)) {
+            r.error = error + (r.files.empty() ? "" : " (" + std::to_string(r.files.size()) + " file(s) before it were written)");
+            return;
+        }
+        r.files.push_back(to);
+    }
+    r.ok = true;
 }
 
 AudioExportResult AudioExport::finish()

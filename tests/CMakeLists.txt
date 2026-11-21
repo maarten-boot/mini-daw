@@ -169,7 +169,7 @@ if(UNIX AND NOT APPLE AND TARGET minidaw)
     minidaw_script_test(exportfail 1 IN "Not written: " "Result: 2 command(s), 1 failed")
     minidaw_script_test(exportaudio 1 IN "Export audio: Written: " "project song.flac" "Final.zip"
         "take-20261121-120000.opus" "no recording called \"no such take\"" "unknown option \"mp3\""
-        "Result: 8 command(s), 2 failed")
+        "project song.wav" "zip needs a name" "Result: 10 command(s), 3 failed")
     minidaw_script_test(import 1 IN "Import DAWproject: Imported into " "1 instrument(s)"
         "already holds a project" "choose a folder outside the open project" "Result: 16 command(s), 3 failed")
     minidaw_script_test(loglines 0 IN "Track 1 \"MIDI 1\" added" "Track 1 \"MIDI 1\" removed"

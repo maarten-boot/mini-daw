@@ -122,6 +122,11 @@ std::vector<Track> defaultTracks(unsigned int inputChannels);
 // become '_'; leading/trailing spaces and dots are removed; empty -> "track".
 std::string safeFileName(std::string_view name);
 
+// A take file's name "NN-name.wav" / ".mid" (1-4 digits, the extension in
+// any case): its track number, name and kind. False for other names
+// (crosscheck #26 CC8: shared by Load onto the tracks and Export audio).
+bool parseTakeFileName(const std::filesystem::path& file, int& number, std::string& name, bool& wav);
+
 // "NN-<safe name>.wav" / ".mid".
 std::string takeFileName(const Track& track);
 

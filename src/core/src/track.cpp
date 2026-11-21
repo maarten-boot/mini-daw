@@ -4,6 +4,7 @@
 #include "minidaw/wav_reader.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <system_error>
@@ -234,24 +235,34 @@ std::vector<std::filesystem::path> listTakeFolders(const std::filesystem::path& 
     return out;
 }
 
+bool parseTakeFileName(const std::filesystem::path& file, int& number, std::string& name, bool& wav)
+{
+    std::string ext = pathToUtf8(file.extension());
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext != ".wav" && ext != ".mid") return false;
+    const std::string stem = pathToUtf8(file.stem());
+    std::size_t digits = 0;
+    while (digits < stem.size() && stem[digits] >= '0' && stem[digits] <= '9') ++digits;
+    if (digits == 0 || digits > 4 || digits >= stem.size() || stem[digits] != '-') return false;
+    number = std::stoi(stem.substr(0, digits));
+    name = stem.substr(digits + 1);
+    wav = ext == ".wav";
+    return true;
+}
+
 std::vector<Track> tracksFromTakeFolder(const std::filesystem::path& folder, std::string& error)
 {
     std::vector<Track> tracks;
     std::error_code ec;
     for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
         if (!it->is_regular_file(ec)) continue;
-        const std::string file = pathToUtf8(it->path().filename());
-        const std::string ext = pathToUtf8(it->path().extension());
-        const bool wav = ext == ".wav" || ext == ".WAV";
-        const bool mid = ext == ".mid" || ext == ".MID";
-        if (!wav && !mid) continue;
-        // "NN-name.ext"
-        std::size_t digits = 0;
-        while (digits < file.size() && file[digits] >= '0' && file[digits] <= '9') ++digits;
-        if (digits == 0 || digits > 4 || digits >= file.size() || file[digits] != '-') continue;
+        int number = 0;
+        std::string name;
+        bool wav = false;
+        if (!parseTakeFileName(it->path(), number, name, wav)) continue;
         Track t;
-        t.number = std::stoi(file.substr(0, digits));
-        t.name = pathToUtf8(it->path().stem()).substr(digits + 1);
+        t.number = number;
+        t.name = name;
         t.kind = wav ? TrackKind::Audio : TrackKind::Midi;
         t.take = it->path();
         if (wav) {

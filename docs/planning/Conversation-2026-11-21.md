@@ -150,3 +150,44 @@ User: "start P29".
   - GUI checked on Xvfb.
 - Version 0.30.4 (P29 after P30c raises the round). Spec v0.74, Plan P29 done, README, CLAUDE.md.
 - Open: the user's Windows test with real instruments (T-PRJ-12 M); P31 (compact recordings as FLAC) to settle.
+
+## 10. Commit P29; crosscheck #26
+
+User: "yes commit, then do crosscheck #26"; then "pushed it, check the CI run".
+
+- P29 committed as `27e3d8f`. CI run 44905865126 started (result below).
+- Crosscheck #26 in `Crosscheck-2026-11-21b.md`, code read by an independent reviewer (a subagent). CC1 and CC2 checked by Claude in the code and in FLAC's sources.
+  - CC1 (medium): FLAC closes the file twice after a failed init.
+  - CC2 (medium): files written in place; a failure or Cancel can remove files that were there.
+  - CC3: the Replace check for recording stems.
+  - CC4: a mix and its stems do not line up when the earliest take is muted.
+  - CC5: no exception guard; NaN.
+  - CC6: Cancel against the zip's move.
+  - CC7: quitting during an export.
+  - CC8: file names (NN-, case, output = input, duplicate zip names).
+  - CC9: export during Render.
+  - CC10: WAV 4 GB limit.
+  - CC11: script options' case.
+  - CC12: the MP3 line belongs in Spec §6.
+- CI run 44905865126 (`27e3d8f`, P29): windows, linux, licence green; Linux 266/266, Windows 250/250. MSVC C4996 warnings 25 (was 19): `zip_writer.hpp` now compiled in two files. `dist/` kept at 0.30.3 until CC1 / CC2 are fixed.
+
+## 11. P29a: crosscheck #26 fixes
+
+User: "yes fix CC1–CC12, CC1 first".
+
+- CC1: FLAC owns the FILE from init on, also when init fails (its own comment says so). Test with rates above its maximum; 0 is allowed ("unknown"), so 1 100 000 and 2 000 000.
+- CC2 / CC6:
+  - Files are written into the work folder and moved into place only when all succeeded.
+  - Moving ignores Cancel; across drives it copies beside the target first.
+- CC3: one naming plan `exportOutputs`; the window's Replace count builds the real items without opening files.
+- CC4: the song starts at the earliest take of any track (tests changed to it).
+- CC5: try / catch around the worker; NaN / Inf become silence and are counted.
+- CC7: closing mini-daw cancels a running export first.
+- CC8: `parseTakeFileName` shared with Load onto the tracks; names in any case; zip MIDI names numbered; an export over its own source refused.
+- CC9: no export during Render; a made folder removed when the export does not start.
+- CC10: WAV over 4 GB refused up front.
+- CC11: script words in any case, "zip needs a name".
+- CC12: SPEC-LIC-02.
+- Also: `zip_writer.hpp` without the calls MSVC warns about.
+- While testing: a `git stash` / `stash pop` to build the old code was not needed; everything checked back in place, the stash empty.
+- Linux 268/268; export tests under Wine 8/8 (with Replace). Version 0.30.5.

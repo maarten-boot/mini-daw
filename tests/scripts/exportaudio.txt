@@ -6,3 +6,5 @@ export-audio "@WORK@/out" song wav stems zip "Final"
 export-audio "@WORK@/out" recordings opus
 export-audio "@WORK@/out" "no such take"
 export-audio "@WORK@/out" song mp3
+export-audio "@WORK@/out" SONG WAV MIX
+export-audio "@WORK@/out" song zip

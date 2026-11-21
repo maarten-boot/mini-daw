@@ -47,7 +47,8 @@ const std::vector<ScriptCommand>& scriptCommands()
          "Writes the tracks as a DAWproject file (like File > Export DAWproject; replaces the file)."},
         {"export-audio", 2, 6, "export-audio <folder> song|recordings|all|<recording> [ogg|opus|flac|wav] [stems] [zip <name>]",
          "Renders the song and / or recordings to audio files (like File > Export audio; replaces files) and waits "
-         "until it is done. Default: Ogg Vorbis, one mix each, no zip."},
+         "until it is done. Default: Ogg Vorbis, one mix each, no zip. Words in any case; a recording called "
+         "song, all or recordings is meant as that word."},
         {"import", 2, 2, "import <file.dawproject> <project folder>",
          "Makes a new project from a DAWproject file and opens it (like File > Import DAWproject)."},
         {"add-track", 1, 1, "add-track midi|audio",

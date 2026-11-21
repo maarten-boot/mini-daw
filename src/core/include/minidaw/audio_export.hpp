@@ -85,14 +85,15 @@ struct ExportInstrument {
 using ExportInstruments = std::map<int, ExportInstrument>;
 
 // The song as Play plays it: every track's take at its place (shifted so the
-// earliest starts at 0). Mix (`stems` false): playbackGain (volume, mute,
+// earliest take of any track starts at 0, sounding or not: a mix and its
+// stems line up). Mix (`stems` false): playbackGain (volume, mute,
 // solo, "Sound from"); a track Play does not hear is not in it. Stems: each
 // track that sounds, at its volume (mute and solo do not count). MIDI takes
 // go through their loaded instrument (rendered) unless "Sound from" is the
 // recording; others are listed in leftOut, as are WAV files of another rate
 // or that cannot be read. midiFiles: every MIDI track's take.
 ExportItem songExportItem(const std::vector<Track>& tracks, const ExportInstruments& instruments,
-                          unsigned int sampleRate, bool stems, std::string name);
+                          unsigned int sampleRate, bool stems, std::string name, bool readFiles = true);
 // A recording from the Timeline on its own, from its start: file "NN-name"
 // with track NN's volume / mute / solo and instrument (as in the song); a
 // file without such a track at 0 dB (a MIDI file without one is left out).
@@ -100,7 +101,9 @@ ExportItem songExportItem(const std::vector<Track>& tracks, const ExportInstrume
 // is not rendered. midiFiles: the recording's .mid files.
 ExportItem recordingExportItem(const RecordingInfo& recording, const std::vector<Track>& tracks,
                                const ExportInstruments& instruments, unsigned int sampleRate, bool stems,
-                               std::string name);
+                               std::string name, bool readFiles = true);
+// readFiles false (both): the same parts without opening any file (no rate
+// checks, no MIDI read): for the file names the export will write (CC3).
 
 struct AudioExportSettings {
     ExportFormat format = ExportFormat::Ogg;
@@ -121,6 +124,19 @@ std::vector<std::filesystem::path> exportTargets(const std::vector<ExportItem>& 
 // "<item>" for a mix, "<item> - NN-name" for a stem.
 std::string exportFileBase(const ExportItem& item, const ExportPart* stem);
 
+// One file the export makes: item `item`'s mix (part -1) or the stem of part
+// `part`, named `fileName`; in a zip in the folder `zipFolder`. Names that
+// would be the same (also in another case: one file on Windows) get " (2)",
+// " (3)" ... (crosscheck #26 CC3 / CC8: the export and the Replace check use
+// these same names).
+struct ExportOutput {
+    std::size_t item = 0;
+    int part = -1;
+    std::string fileName;
+    std::string zipFolder;
+};
+std::vector<ExportOutput> exportOutputs(const std::vector<ExportItem>& items, const AudioExportSettings& settings);
+
 struct AudioExportResult {
     bool ok = false;
     bool cancelled = false;
@@ -138,7 +154,8 @@ struct AudioExportResult {
 // `cancel` becomes true (returns false, error empty). `done` counts frames.
 bool mixParts(const std::vector<ExportPart>& parts, const ExportPart* only, unsigned int sampleRate,
               AudioEncoder& encoder, const std::atomic<bool>& cancel, std::atomic<std::uint64_t>& done,
-              float& peak, std::string& error);
+              float& peak, std::string& error, std::uint64_t* notNumbers = nullptr);
+// (NaN / Inf in the mix become silence and are counted in `notNumbers`.)
 // The frames from 0 to the end of the last part (0 when none can be read).
 std::uint64_t mixLength(const std::vector<ExportPart>& parts);
 
@@ -164,6 +181,7 @@ public:
 
 private:
     void runMix();
+    void mixAll(AudioExportResult& r);
     void setStage(std::string text);
 
     std::vector<ExportItem> items_;

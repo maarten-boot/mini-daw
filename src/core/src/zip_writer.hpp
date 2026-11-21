@@ -12,8 +12,16 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <system_error>
+
+#if defined(_WIN32)
+#include <share.h>
+#endif
 
 namespace minidaw::detail {
+
+// errno as text, without strerror (MSVC warns that it is not thread-safe, C4996).
+inline std::string errnoText() { return std::error_code(errno, std::generic_category()).message(); }
 
 // Writes the ZIP: entries from memory or from files, stored or compressed.
 class ZipWriter {
@@ -26,12 +34,12 @@ public:
     bool begin(const std::filesystem::path& path, std::string& error)
     {
 #if defined(_WIN32)
-        file_ = _wfopen(path.c_str(), L"wb");
+        file_ = _wfsopen(path.c_str(), L"wb", _SH_DENYWR);
 #else
         file_ = std::fopen(path.c_str(), "wb");
 #endif
         if (!file_) {
-            error = "cannot write " + pathToUtf8(path) + ": " + std::strerror(errno);
+            error = "cannot write " + pathToUtf8(path) + ": " + errnoText();
             return false;
         }
         std::memset(&zip_, 0, sizeof zip_);
@@ -52,12 +60,12 @@ public:
     bool addFile(const std::string& name, const std::filesystem::path& source, std::string& error)
     {
 #if defined(_WIN32)
-        std::FILE* src = _wfopen(source.c_str(), L"rb");
+        std::FILE* src = _wfsopen(source.c_str(), L"rb", _SH_DENYNO);
 #else
         std::FILE* src = std::fopen(source.c_str(), "rb");
 #endif
         if (!src) {
-            error = "cannot read " + pathToUtf8(source) + ": " + std::strerror(errno);
+            error = "cannot read " + pathToUtf8(source) + ": " + errnoText();
             return false;
         }
         std::error_code ec;
@@ -83,7 +91,7 @@ public:
         const bool closed = std::fclose(file_) == 0;
         file_ = nullptr;
         if (!flushed || !closed) {
-            error = std::string("cannot write the file: ") + std::strerror(errno);
+            error = std::string("cannot write the file: ") + errnoText();
             return false;
         }
         return true;

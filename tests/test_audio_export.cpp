@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <thread>
 
 using namespace minidaw;
@@ -309,6 +310,12 @@ TEST_CASE("T-PRJ-12: every format writes a file of its kind; FLAC is lossless", 
     REQUIRE(enc->open(dir.path() / "44.opus", 44100, err));
     REQUIRE(mixParts(p44, nullptr, 44100, *enc, cancel, done, peak, err));
     REQUIRE(enc->finish(err));
+    // A sample rate FLAC refuses: an error, the file closed once (crosscheck #26 CC1: twice, a crash).
+    for (unsigned rate : {1100000u, 2000000u}) {  // above FLAC__MAX_SAMPLE_RATE (0 is "unknown", allowed)
+        auto f = makeEncoder(ExportFormat::Flac, ExportQuality{});
+        CHECK_FALSE(f->open(dir.path() / "refused.flac", rate, err));
+        CHECK(err.find("FLAC") != std::string::npos);
+    }
     // A folder that does not exist: an error, no crash.
     auto bad = makeEncoder(ExportFormat::Flac, ExportQuality{});
     CHECK_FALSE(bad->open(dir.path() / "no" / "such" / "x.flac", 48000, err));
@@ -360,6 +367,12 @@ TEST_CASE("T-PRJ-12: an export writes mixes, stems or one zip, and cleans up", "
         CHECK(w.samples[2 * 3000] == Approx(0.3f).margin(1e-5));
         CHECK(r.leftOut == std::vector<std::string>{"Song: 04-Synth.mid has no instrument"});
         CHECK(r.clipped.empty());
+        CHECK(noWorkFolderLeft(s.folder));
+        // Replace: the same export again moves the new file over the old one (also on Windows).
+        const AudioExportResult again = runExport({song()}, s);
+        CHECK(again.ok);
+        CHECK(again.error.empty());
+        CHECK(again.files == r.files);
         CHECK(noWorkFolderLeft(s.folder));
     }
     SECTION("stems, all as long as the song")
@@ -520,11 +533,11 @@ TEST_CASE("T-PRJ-12: the song as Play plays it: mixer, Sound from, instruments",
         REQUIRE(s.parts.size() == 2);
         CHECK(s.parts[0].track == 1);
         CHECK(s.parts[0].gain == Approx(std::pow(10.0f, -6.0f / 20.0f)));
-        CHECK(s.parts[0].start == 1000);  // the muted guitar does not count for the start
+        CHECK(s.parts[0].start == 1200);  // the muted guitar (-200) sets the start too: mix and stems line up (CC4)
         CHECK(s.parts[1].track == 3);
         REQUIRE(s.parts[1].render);
         CHECK(s.parts[1].render->classId == "0123");
-        CHECK(s.parts[1].start == 0);
+        CHECK(s.parts[1].start == 200);
         REQUIRE(s.leftOut.size() == 2);
         CHECK(s.leftOut[0].find("05-Old.wav has 44100 Hz") != std::string::npos);
         CHECK(s.leftOut[1].find("MIDI output MIDI Out 1") != std::string::npos);
@@ -555,7 +568,7 @@ TEST_CASE("T-PRJ-12: the song as Play plays it: mixer, Sound from, instruments",
         const ExportItem s = songExportItem(tracks, inst, 48000, false, "My song");
         REQUIRE(s.parts.size() == 1);
         CHECK(s.parts[0].track == 1);
-        CHECK(s.parts[0].start == 0);
+        CHECK(s.parts[0].start == 1200);  // as in the stems
     }
     SECTION("a recording on its own: its files with the tracks' settings")
     {
@@ -581,5 +594,134 @@ TEST_CASE("T-PRJ-12: the song as Play plays it: mixer, Sound from, instruments",
         CHECK(r.parts[1].track == 4);
         CHECK(r.parts[1].gain == Approx(1.0f));
         CHECK(r.leftOut[0].find("03-Keys.mid not in the export: track 3 has no instrument") != std::string::npos);
+    }
+}
+
+TEST_CASE("T-PRJ-12: crosscheck #26: files that were there survive a failure; names; limits", "[export][T-PRJ-12]")
+{
+    test::TempDir dir;
+    const fs::path src = dir.path() / "src";
+    const fs::path out = dir.path() / "out";
+    fs::create_directories(src);
+    fs::create_directories(out);
+    const fs::path a = makeWav(src / "01-Guitar.wav", 48000, 1, 4800, [](std::size_t, unsigned) { return 0.2f; });
+    const auto item = [&](const char* name, const fs::path& wav) {
+        ExportItem i;
+        i.name = name;
+        ExportPart p;
+        p.track = 1;
+        p.trackName = "Guitar";
+        p.wav = wav;
+        i.parts.push_back(p);
+        return i;
+    };
+    AudioExportSettings s;
+    s.folder = out;
+    s.format = ExportFormat::Wav;
+    s.sampleRate = 48000;
+
+    SECTION("CC2: a failure at the second item leaves the old files as they were")
+    {
+        std::ofstream(out / "One.wav") << "old one";
+        std::ofstream(out / "Two.wav") << "old two";
+        const AudioExportResult r = runExport({item("One", a), item("Two", src / "missing.wav")}, s);
+        CHECK_FALSE(r.ok);
+        CHECK_FALSE(r.error.empty());
+        CHECK(r.files.empty());
+        std::ifstream one(out / "One.wav"), two(out / "Two.wav");
+        std::string t1, t2;
+        std::getline(one, t1);
+        std::getline(two, t2);
+        CHECK(t1 == "old one");  // not replaced by a half export, not removed
+        CHECK(t2 == "old two");
+        CHECK(noWorkFolderLeft(out));
+    }
+    SECTION("CC8: a target that is one of the files to export is refused")
+    {
+        s.folder = src;  // exporting "01-Guitar" into its own folder as WAV
+        AudioExport ex;
+        std::string err;
+        CHECK_FALSE(ex.start({item("01-Guitar", a)}, s, err));
+        CHECK(err.find("is one of the files to export") != std::string::npos);
+        WavData w;
+        REQUIRE(readWav(a, w, err));  // the take is untouched
+        CHECK(w.frames() == 4800);
+    }
+    SECTION("CC10: a WAV over 4 GB is refused before any work")
+    {
+        ExportItem big = item("Big", a);
+        big.parts[0].start = 800000000;  // 800 M frames of silence first: 4.8 GB as 24-bit stereo
+        const AudioExportResult r = runExport({big}, s);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("over 4 GB") != std::string::npos);
+        CHECK(fs::is_empty(out));
+    }
+    SECTION("CC3 / CC8: one naming plan, names compared in any case; MIDI names in a zip numbered")
+    {
+        ExportItem x = item("Take", a), y = item("TAKE", a);
+        y.parts.push_back(y.parts[0]);  // two stems of one name
+        s.stems = true;
+        const auto o = exportOutputs({x, y}, s);
+        REQUIRE(o.size() == 3);
+        CHECK(o[0].fileName == "Take - 01-Guitar.wav");
+        CHECK(o[1].fileName == "TAKE - 01-Guitar (2).wav");
+        CHECK(o[2].fileName == "TAKE - 01-Guitar (3).wav");
+        CHECK(o[0].zipFolder == "Take");
+        CHECK(o[1].zipFolder == "TAKE (2)");
+        CHECK(exportTargets({x, y}, s).size() == 3);
+        // Two MIDI files of one name in an item: two entries, not one twice.
+        fs::create_directories(src / "b");
+        std::ofstream(src / "03-Keys.mid") << "MThd";
+        std::ofstream(src / "b" / "03-Keys.mid") << "MThd";
+        x.midiFiles = {src / "03-Keys.mid", src / "b" / "03-Keys.mid"};
+        s.stems = false;
+        s.zip = true;
+        s.zipName = "Z";
+        const AudioExportResult r = runExport({x}, s);
+        REQUIRE(r.ok);
+        CHECK(zipNames(out / "Z.zip") ==
+              std::vector<std::string>{"Take/03-Keys (2).mid", "Take/03-Keys.mid", "Take/Take.wav"});
+    }
+    SECTION("CC8: take file names")
+    {
+        int n = 0;
+        std::string name;
+        bool wav = false;
+        CHECK(parseTakeFileName("01-Vocal.wav", n, name, wav));
+        CHECK(n == 1);
+        CHECK(name == "Vocal");
+        CHECK(wav);
+        CHECK(parseTakeFileName("12-Keys.MID", n, name, wav));
+        CHECK(n == 12);
+        CHECK_FALSE(wav);
+        CHECK(parseTakeFileName("3-a.Wav", n, name, wav));  // any case
+        CHECK_FALSE(parseTakeFileName("5 drums.wav", n, name, wav));
+        CHECK_FALSE(parseTakeFileName("ab.wav", n, name, wav));
+        CHECK_FALSE(parseTakeFileName(".wav", n, name, wav));
+        CHECK_FALSE(parseTakeFileName("12345-x.wav", n, name, wav));
+        CHECK_FALSE(parseTakeFileName("01-x.txt", n, name, wav));
+    }
+}
+
+TEST_CASE("T-PRJ-12: crosscheck #26 CC5: NaN and Inf become silence and are counted", "[export][T-PRJ-12]")
+{
+    test::TempDir dir;
+    std::vector<ExportPart> parts(1);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    // A float WAV: WavWriter writes 24-bit, so the bad values are put in through a part's gain.
+    parts[0].wav = makeWav(dir.path() / "x.wav", 48000, 1, 10, [](std::size_t, unsigned) { return 0.5f; });
+    for (float g : {nan, inf}) {
+        parts[0].gain = g;
+        MemoryEncoder enc;
+        std::atomic<bool> cancel{false};
+        std::atomic<std::uint64_t> done{0};
+        float peak = 0.0f;
+        std::uint64_t bad = 0;
+        std::string err;
+        REQUIRE(mixParts(parts, nullptr, 48000, enc, cancel, done, peak, err, &bad));
+        CHECK(bad == 20);
+        CHECK(peak == 0.0f);
+        for (float v : enc.samples) CHECK(v == 0.0f);
     }
 }
