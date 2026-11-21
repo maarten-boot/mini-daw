@@ -264,3 +264,25 @@ User: "yes commit, then fix CC1–CC13, CC1 first".
   - The other fixes are as planned.
 - 4 new test cases. Linux 277/277, Wine 257/257.
 - Version 0.31.1, Spec v0.77.
+
+## 15. CI run for 0.31.1; P32 started
+
+User: "pushed it, check the CI run", "meanwhile start P32".
+
+- CI run 44931493128 (`34f7f22`) green:
+  - Linux 277/277, Windows 260/260; installer `mini-daw-0.31.1-setup.exe`.
+  - `release` skipped, as it should be (no tag).
+  - MSVC C4996 warnings: 15.
+- `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
+- `dist/TESTS.txt`: T-REC-36 M first (7 steps), then the P29 / P30 tests and the earlier open ones.
+- P32: asked.
+  - form → **both**: a Help → Getting started window, and a docs page made from the same text;
+  - lessons → **all four**: set up and first recording, MIDI and an instrument, overdub and mix, save and share;
+  - `docs/Demo-checklist.md` → **replaced** by the tutorial.
+- P32 done (version 0.32.0, Spec v0.78, SPEC-UI-19, T-UI-35):
+  - Core `tutorial`: 4 lessons, 21 steps. 18 of them tick themselves from what mini-daw sees (`TutorialFacts`).
+  - Help → Getting started… window: it opens by itself at the first start.
+  - `docs/Getting-started.md` is made from the same text; a test compares them.
+  - Render and Edit are on the MIDI track's Output column, and the lesson text says so.
+  - `docs/Demo-checklist.md` removed. The README links the guide.
+  - Tests: Linux 280/280, Wine 260/260. GUI checked on Xvfb.

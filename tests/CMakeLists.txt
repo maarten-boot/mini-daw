@@ -31,8 +31,11 @@ add_executable(minidaw_tests
     test_remote.cpp
     test_instrument.cpp
     test_audio_export.cpp
-    test_compact.cpp)
+    test_compact.cpp
+    test_tutorial.cpp)
 target_link_libraries(minidaw_tests PRIVATE minidaw_core minidaw_warnings Catch2::Catch2WithMain)
+# Getting started (P32): docs/Getting-started.md is compared with the tutorial's text.
+target_compile_definitions(minidaw_tests PRIVATE MINIDAW_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 # DAWproject (P27): the export is read back with the same libraries.
 target_link_libraries(minidaw_tests PRIVATE minidaw_pugixml minidaw_miniz)
 # Audio export (P29): FLAC files are decoded again to check they are lossless.

@@ -26,6 +26,7 @@
 #include "minidaw/config.hpp"
 #include "minidaw/audio_export.hpp"
 #include "minidaw/compact.hpp"
+#include "minidaw/tutorial.hpp"
 #include "minidaw/dawproject.hpp"
 #include "minidaw/devices.hpp"
 #include "minidaw/folder_browse.hpp"
@@ -365,6 +366,11 @@ struct AppState {
     // Compact recordings as FLAC (P31, SPEC-REC-10).
     minidaw::Compactor compactor;
     bool showCompact = false;
+    // Help > Getting started (P32, SPEC-UI-19): the steps done (by mini-daw or
+    // ticked by hand; they stay ticked this session) and what was seen happen.
+    bool showTutorial = false;
+    std::vector<bool> tutorialDone;
+    minidaw::TutorialFacts tutorialFacts;
     std::size_t compactWavFiles = 0;                      // WAV takes in the takes folder (window)
     std::uintmax_t compactWavBytes = 0;
     std::size_t compactDone = 0, compactFailed = 0;       // this session
@@ -989,6 +995,7 @@ void drawMenuBar(AppState& app, bool& quit)
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {  // P28a
+        if (ImGui::MenuItem("Getting started...")) app.showTutorial = true;  // P32
         if (ImGui::MenuItem("About mini-daw...")) app.showAbout = true;
         ImGui::EndMenu();
     }
@@ -1226,6 +1233,101 @@ std::string aboutText()
     return std::string(minidaw::kProductName) + " " + minidaw::versionText() + "\n" +
            "Build: " + minidaw::buildText() + "\n" +
            "Platform: " + minidaw::platformText() + "\n";
+}
+
+// --- Help > Getting started (P32, SPEC-UI-19) -------------------------------------------
+
+// What mini-daw sees now; the "this session" facts are set where they happen.
+void updateTutorialFacts(AppState& app)
+{
+    auto& f = app.tutorialFacts;
+    f.audioRunning = app.audio.info().running;
+    f.projectOpen = !app.projectFolder.empty();
+    f.instrumentsFound = !app.pluginCache.instruments().empty();
+    f.audioTrack = f.trackArmed = f.instrumentTrack = f.midiTake = f.monitoring = false;
+    int takes = 0;
+    for (const auto& t : app.tracks) {
+        const bool audio = t.kind == minidaw::TrackKind::Audio;
+        f.audioTrack = f.audioTrack || (audio && t.instrumentOf <= 0);
+        f.trackArmed = f.trackArmed || t.armed;
+        f.instrumentTrack = f.instrumentTrack || (!audio && !t.instrumentClass.empty());
+        f.midiTake = f.midiTake || (!audio && !t.take.empty());
+        f.monitoring = f.monitoring || (audio && t.monitor);
+        if (!t.take.empty()) ++takes;
+    }
+    f.twoTakes = takes >= 2;
+    const auto& lessons = minidaw::tutorialLessons();
+    app.tutorialDone.resize(minidaw::tutorialStepCount(), false);
+    std::size_t i = 0;
+    for (const auto& l : lessons) {
+        for (const auto& st : l.steps) {
+            if (minidaw::tutorialCheckDone(st.check, f)) app.tutorialDone[i] = true;  // stays ticked
+            ++i;
+        }
+    }
+}
+
+void drawTutorialWindow(AppState& app)
+{
+    if (!app.showTutorial) return;
+    updateTutorialFacts(app);
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(40 * em, 32 * em), ImGuiCond_FirstUseEver);
+    minidaw::app::placeNewWindow("Getting started");
+    if (ImGui::Begin("Getting started", &app.showTutorial, ImGuiWindowFlags_NoCollapse)) {
+        const std::size_t total = app.tutorialDone.size();
+        const auto doneCount = static_cast<std::size_t>(std::count(app.tutorialDone.begin(), app.tutorialDone.end(), true));
+        ImGui::TextWrapped("Four short lessons. Do the steps in mini-daw: a step ticks itself off when mini-daw sees "
+                           "it done (or tick it yourself). The same text is in docs/Getting-started.md.");
+        ImGui::Text("Done: %zu of %zu steps", doneCount, total);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Start again")) {
+            app.tutorialDone.assign(total, false);
+            app.tutorialFacts = minidaw::TutorialFacts{};
+        }
+        ImGui::Separator();
+        ImGui::BeginChild("lessons", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+        std::size_t i = 0;
+        for (const auto& l : minidaw::tutorialLessons()) {
+            std::size_t lessonDone = 0;
+            for (std::size_t k = 0; k < l.steps.size(); ++k) lessonDone += app.tutorialDone[i + k] ? 1 : 0;
+            const std::string head = l.title + "  (" + std::to_string(lessonDone) + " of " +
+                                     std::to_string(l.steps.size()) + ")###" + l.title;
+            // The first lesson not finished is open at first.
+            static bool opened = false;
+            if (!opened && lessonDone < l.steps.size()) {
+                ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                opened = true;
+            }
+            if (ImGui::CollapsingHeader(head.c_str())) {
+                ImGui::Indent(0.5f * em);
+                ImGui::TextWrapped("%s", l.intro.c_str());
+                for (const auto& st : l.steps) {
+                    ImGui::PushID(static_cast<int>(i));
+                    bool d = app.tutorialDone[i];
+                    if (ImGui::Checkbox("##done", &d)) app.tutorialDone[i] = d;
+                    ImGui::SetItemTooltip(st.check == minidaw::TutorialCheck::None
+                                              ? "Tick it when you have done it"
+                                              : "Ticks itself when mini-daw sees it done; you can tick it too");
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::TextWrapped("%s", st.text.c_str());
+                    ImGui::TextDisabled("Where: %s", st.where.c_str());
+                    ImGui::EndGroup();
+                    ImGui::PopID();
+                    ++i;
+                }
+                if (!l.tip.empty()) ImGui::TextWrapped("Tip: %s", l.tip.c_str());
+                ImGui::Unindent(0.5f * em);
+                ImGui::Spacing();
+            } else {
+                i += l.steps.size();
+            }
+        }
+        ImGui::EndChild();
+        if (ImGui::Button("Close")) app.showTutorial = false;
+    }
+    ImGui::End();
 }
 
 void drawAboutWindow(AppState& app)
@@ -1860,6 +1962,7 @@ void openPluginWindow(AppState& app, const minidaw::Track& t, std::optional<std:
     const std::string title = it->second->name() + " - " + t.name + " - " + minidaw::kProductName;
     std::string err;
     if (app.pluginWindows.open(t.number, *it->second, title, app.mainWindow, err, place)) {
+        app.tutorialFacts.editorOpened = true;  // P32
         app.log.info("Track " + std::to_string(t.number) + ": editor of " + it->second->name() + " opened");
     } else {
         const std::string note = "Track " + std::to_string(t.number) + ": the editor of " + it->second->name() +
@@ -1957,6 +2060,7 @@ void pollRender(AppState& app)
     linked->takeStart = t->takeStart;
     refreshTakeLength(app, *linked);
     compactAfter(app, app.renderOut);  // P31
+    app.tutorialFacts.rendered = true;  // P32
     app.log.info("Track " + std::to_string(linked->number) + " holds the rendered sound of track " +
                  std::to_string(number) + " (" + buf + "); \"Sound from\" on that track chooses what plays");
 }
@@ -2593,6 +2697,7 @@ void exportDawProjectNow(AppState& app, const std::filesystem::path& target)
     }
     for (const auto& l : r.leftOut) rep.push_back("Left out: " + l);
     for (const auto& l : rep) app.log.info("Export DAWproject: " + l);
+    if (r.ok) app.tutorialFacts.dawExported = true;  // P32
 }
 
 void drawDawExportWindow(AppState& app)
@@ -2774,6 +2879,7 @@ void stepAudioExport(AppState& app)
         rep.push_back("Not written: " + r.error);
     } else {
         for (const auto& f : r.files) rep.push_back("Written: " + minidaw::pathToUtf8(f));
+        app.tutorialFacts.audioExported = true;  // P32
     }
     for (const auto& c : r.clipped) rep.push_back("Too loud: " + c + " (lower the track volumes and export again)");
     for (const auto& l : r.leftOut) rep.push_back("Left out: " + l);
@@ -3313,6 +3419,7 @@ bool startPlayback(AppState& app, bool forRecording)
                   static_cast<double>(position) / info.sampleRate, audioStarted, app.midiPlayer.trackCount(),
                   instrumentTakes);
     app.log.info(buf);
+    if (!forRecording) app.tutorialFacts.played = true;  // P32
     return true;
 }
 
@@ -3378,6 +3485,7 @@ void toggleRecording(AppState& app)
         app.recordingsDirty = true;
         app.lastTake = describeResult(res);
         compactAfter(app, res.folder);  // P31
+        app.tutorialFacts.recorded = true;  // P32
         app.log.info("Recording stopped");
         for (const auto& line : app.lastTake) {
             if (res.lostData()) app.log.warning("Take: " + line);
@@ -3961,6 +4069,7 @@ void previewRecording(AppState& app, const minidaw::RecordingInfo& rec)
         app.timelineNote = "Its MIDI has no output to play to; load it onto the tracks to hear it.";
     }
     app.log.info("Playing the recording " + minidaw::pathToUtf8(rec.folder));
+    app.tutorialFacts.timelinePlayed = true;  // P32
 }
 
 // Puts a recording's files on the tracks as their takes (P17): the tracks
@@ -5030,9 +5139,15 @@ void drawTracksPanel(AppState& app)
                 const std::string instr = "Sound from: instrument (track " + std::to_string(owner->number) + ")";
                 const char* recText = "Sound from: this recording";
                 if (ImGui::BeginCombo("##soundfrom", owner->soundFromRecording ? recText : instr.c_str())) {
-                    if (minidaw::app::choice(instr.c_str(), !owner->soundFromRecording)) owner->soundFromRecording = false;
+                    if (minidaw::app::choice(instr.c_str(), !owner->soundFromRecording)) {
+                        owner->soundFromRecording = false;
+                        app.tutorialFacts.soundFromChanged = true;  // P32
+                    }
                     minidaw::app::beginDisabled(t.take.empty());
-                    if (minidaw::app::choice(recText, owner->soundFromRecording)) owner->soundFromRecording = true;
+                    if (minidaw::app::choice(recText, owner->soundFromRecording)) {
+                        owner->soundFromRecording = true;
+                        app.tutorialFacts.soundFromChanged = true;  // P32
+                    }
                     minidaw::app::endDisabled();
                     ImGui::EndCombo();
                 } else if (ImGui::IsItemHovered()) {
@@ -5085,14 +5200,16 @@ void drawTracksPanel(AppState& app)
             // Mix (SPEC-PLAY-04): may change at any time.
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(6.5f * em);
-            ImGui::SliderFloat("##vol", &t.volumeDb, minidaw::kMinVolumeDb, minidaw::kMaxVolumeDb,
-                               t.volumeDb <= minidaw::kMinVolumeDb ? "silent" : "%+.1f dB");
+            if (ImGui::SliderFloat("##vol", &t.volumeDb, minidaw::kMinVolumeDb, minidaw::kMaxVolumeDb,
+                                   t.volumeDb <= minidaw::kMinVolumeDb ? "silent" : "%+.1f dB")) {
+                app.tutorialFacts.mixChanged = true;  // P32
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback volume. Ctrl+click to type a value.");
             ImGui::SameLine();
-            ImGui::Checkbox("M##mute", &t.mute);
+            if (ImGui::Checkbox("M##mute", &t.mute)) app.tutorialFacts.mixChanged = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mute: this track is not played.");
             ImGui::SameLine();
-            ImGui::Checkbox("S##solo", &t.solo);
+            if (ImGui::Checkbox("S##solo", &t.solo)) app.tutorialFacts.mixChanged = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solo: only soloed tracks are played.");
             // Output: for MIDI the instrument or MIDI output it plays to (SPEC-PLAY-03), with
             // Edit and Render; its own column so it is never squeezed by the take name (PL1).
@@ -6706,6 +6823,7 @@ int runGui(AppState& app)
         drawTabsWindow(app);
         drawContrastReportWindow(app);
         drawAboutWindow(app);
+        drawTutorialWindow(app);  // P32
         drawLogWindow(app);
         drawTakeBrowser(app);
         drawProjectDialog(app);
@@ -6938,6 +7056,8 @@ int main(int argc, char** argv)
         app.script = std::move(run);  // the report is opened once this mini-daw holds the lock (AA9)
     }
 
+    std::error_code configEc;
+    const bool firstStart = !std::filesystem::exists(app.configPath, configEc);  // P32: Getting started opens
     auto loaded = minidaw::loadConfigFile(app.configPath);
     app.config = loaded.config;
     app.configWarnings = loaded.warnings;
@@ -7006,6 +7126,10 @@ int main(int argc, char** argv)
         sr.report.flush();
     }
     openLog(app, app.script ? "GUI, script" : "GUI");
+    if (firstStart && !app.script) {  // the first start: Getting started opens (P32)
+        app.showTutorial = true;
+        app.log.info("First start: Help > Getting started opened");
+    }
     if (!app.instanceLockNote.empty()) app.log.warning(app.instanceLockNote);
     if (app.script) {
         app.log.info("Script " + minidaw::pathToUtf8(app.script->file) + ": " +

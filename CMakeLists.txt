@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(minidaw
-    VERSION 0.31.1
+    VERSION 0.32.0
     DESCRIPTION "Small MIDI/audio recorder with VST3 instrument hosting"
     LANGUAGES C CXX)
 
