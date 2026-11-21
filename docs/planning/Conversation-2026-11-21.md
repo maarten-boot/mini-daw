@@ -224,3 +224,34 @@ User: "start P31".
 - Seen under Wine: every file failed with "Sharing violation". The WAV was still open in the encoder's reader when it was removed (Linux allows that), so it is now closed first.
 - Tests: T-REC-36 (4 cases), script case `compact` with a WAV fixture. Linux 273/273, Wine 253/253. GUI on Xvfb: a recorded take became FLAC after Stop and played; the window's tick-box label was shortened.
 - Version 0.31.0. Spec v0.76 (SPEC-REC-10), Plan P31 done, P32 planned, README, CLAUDE.md.
+
+## 14. P31 committed; crosscheck #27; a release planned (P33)
+
+User: "yes commit, then do crosscheck #27".
+
+- Committed as `e2f2f0d`.
+- Crosscheck #27 started: an independent reviewer reads the P31 code; Claude checks Spec ↔ Plan ↔ Tests ↔ docs.
+
+User, during the crosscheck: "can we plan a release v0.8.0".
+
+- No tags, no releases and no release job in CI yet.
+- 0.8.0 would sort below the 0.31.0 builds already made. Asked:
+  - version → **v1.0.0**;
+  - publishing → **a CI job on a tag**, creating a draft release;
+  - before the release → **crosscheck #27 fixes, the P32 tutorial, release docs** (the user's Windows tests were not chosen as a gate).
+- Planned as P33.
+- User: "Windows tests are not a release blocker" (noted in P33).
+
+User: "meanwhile start the release CI job for P33".
+
+- Job `release` in `build.yml`: only on a tag `v*`, after the windows, linux and licence jobs. It is the only job with `contents: write`.
+  - It packs the setup, a Windows zip, a Linux tar.gz and `SHA256SUMS.txt`.
+  - It makes a **draft** release with `gh release create --draft --verify-tag`; an `-rc` tag becomes a pre-release.
+- `tools/release_notes.py`: the tag must be `v<x.y.z>[-rc<n>]` and equal the CMake version. The notes are the `## <x.y.z>` section of `CHANGELOG.md` (required for a real release) plus a downloads table. The licence job runs it first, so a wrong tag fails early.
+- `actions/download-artifact` v8.0.2 pinned by hash. The pin check passes.
+- SPEC-CI-05, T-CI-04. To test: push tag `v0.31.0-rc1`.
+
+Crosscheck #27 done: `Crosscheck-2026-11-21c.md`, CC1–CC13. Claude confirmed CC1 and CC2 in the code.
+- CC1 (high): a crashed take, whose WAV header is shorter than its data, loses its tail when it is compacted.
+- CC2: Render again after compaction reuses the old name.
+- Fixes planned as P31a.

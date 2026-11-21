@@ -245,6 +245,7 @@ Status column in the Results section at the end.
 | T-CI-03 | SPEC-CI-04 | A | `tools/check_licenses.py` reads `cmake/Dependencies.cmake`; also with a copy where one library is pinned by tag only | Every `GIT_TAG` is a 40-character hash with its release as a comment, and that release is the version in `THIRD_PARTY.md`; the tag-only copy fails |
 | T-CI-02 | SPEC-CI-02 | A | Push to GitHub | Windows, Linux and licence jobs all pass; both smoke runs succeed; both program downloads are present |
 | T-CI-03 | SPEC-CI-03 | M | Cross-compile with the MinGW toolchain file | `mini-daw.exe` and `minidaw_tests.exe` build without errors |
+| T-CI-04 | SPEC-CI-05 | A+M | A: `tools/release_notes.py` with `v<CMake version>-rc1` (notes printed), `v<CMake version>` without a CHANGELOG section, another version, `v0.31` (all three refused with a reason). M: push tag `v<CMake version>-rc1`; afterwards delete the draft and the tag | The rc tag: all jobs green, a draft pre-release with the 4 files; the zip holds both programs and the texts; the tar's `mini-daw` is executable and starts (`--version`); the checksums match. A wrong tag fails in the licence job |
 
 
 ## Results

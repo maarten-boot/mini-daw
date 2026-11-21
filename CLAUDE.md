@@ -20,6 +20,7 @@ Planning documents live in `docs/planning/`: read `Spec.md`, `Plan.md`, `Tests.m
 - `src/app/` — GUI: `main.cpp`, `imgui_theme.cpp` (palette → ImGui), `state_cues.cpp` (hover / pressed / disabled / selected cues through ImGui's item hooks, PL1), `folder_chooser.cpp` (Browse…, P19), `window_place.cpp` (where a new own window first opens, P26a), `plugin_window.cpp` (plugin editor windows, P10d), `remote_server.cpp` (remote control over HTTP with cpp-httplib, P25b), `renderer_d3d11.cpp` (Windows), `renderer_opengl.cpp` (Linux/macOS). `tests/test_state_cues.cpp` runs the cues in a headless ImGui context.
 - `tests/` — Catch2 tests; test names start with their Tests.md ID where there is one (e.g. `T-UI-02: ...`).
 - `tools/check_licenses.py` — licence, ASIO-file and action-pinning check (also a ctest).
+- `tools/release_notes.py` — release tag check (tag = CMake version) and the notes from `CHANGELOG.md`; used by the CI job `release` on a pushed tag (P33).
 - `tools/midi_test/` — make a test MIDI file and check the timing of a recorded MIDI take (T-REC-01/04).
 - `dist/` — not committed; test builds for the user to try. **Only the current build lives there:** empty `dist/` before putting a new build in (user's rule, 2026-11-02), so there is one place to look; say which commit/step it is. Put the Windows and Linux builds of the same CI run there together, and a `dist/TESTS.txt` with what to test in this cycle (user's rules, 2026-11-07/08). The local Linux build needs glibc 2.43; the CI download (built on Ubuntu 24.04, glibc 2.39) runs on more systems.
 

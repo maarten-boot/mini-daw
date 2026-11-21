@@ -1,6 +1,8 @@
 # Build and test on Windows (primary target) and Linux.
 # Every action is pinned to a full commit SHA; the comment gives the release tag.
 # tools/check_licenses.py fails if an action is not pinned this way.
+# A pushed tag v<x.y.z>[-rc<n>] also makes a draft GitHub release (P33, job
+# "release"); the tag must match the CMake version, see tools/release_notes.py.
 
 name: build
 
@@ -122,3 +124,62 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Licence and pinning checks
         run: python3 -I tools/check_licenses.py
+
+      - name: Tag, version and release notes (release, P33)
+        # Early, so a wrong tag fails before the long builds are waited for.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 -I tools/release_notes.py "$GITHUB_REF_NAME"
+
+  release:
+    # Only for a pushed tag, after both builds and their tests passed.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, licence]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # creating the draft release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release notes
+        run: python3 -I tools/release_notes.py "$GITHUB_REF_NAME" > notes.md
+
+      - name: Download the builds of this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p out
+          # Windows: the installer, and a zip to run without installing.
+          cp artifacts/mini-daw-windows-x64/mini-daw-*-setup.exe "out/mini-daw-$v-windows-x64-setup.exe"
+          w="mini-daw-$v-windows-x64"
+          mkdir -p "$w"
+          cp artifacts/mini-daw-windows-x64/mini-daw.exe artifacts/mini-daw-windows-x64/mini-daw.com \
+             LICENSE THIRD_PARTY.md README.md "$w/"
+          zip -r -q "out/$w.zip" "$w"
+          # Linux: the program (the download loses its x bit) with the same texts.
+          l="mini-daw-$v-linux-x64"
+          mkdir -p "$l"
+          cp artifacts/mini-daw-linux-x64/mini-daw LICENSE THIRD_PARTY.md README.md "$l/"
+          chmod 755 "$l/mini-daw"
+          tar -czf "out/$l.tar.gz" --owner=0 --group=0 "$l"
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          ls -l out
+          cat out/SHA256SUMS.txt
+
+      - name: Create the draft release
+        # A draft: the user checks it and publishes it on GitHub. A -rc tag is
+        # marked as a pre-release. Re-running fails if the draft is already
+        # there: delete that draft first.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          pre=()
+          case "$v" in *-rc*) pre=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" out/* --draft --verify-tag \
+            --title "mini-daw $v" --notes-file notes.md "${pre[@]}"
