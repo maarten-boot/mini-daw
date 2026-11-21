@@ -17,15 +17,28 @@ std::string g_name = "OpenGL";
 
 void rendererWindowHints()
 {
+#if defined(__APPLE__)
+    // macOS gives 3.x only as a 3.2+ core, forward-compatible context (P34).
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
 }
 
 bool rendererInit(GLFWwindow* window, std::string& error)
 {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
-    if (!ImGui_ImplGlfw_InitForOpenGL(window, true) || !ImGui_ImplOpenGL3_Init("#version 130")) {
+#if defined(__APPLE__)
+    const char* glsl = "#version 150";
+#else
+    const char* glsl = "#version 130";
+#endif
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true) || !ImGui_ImplOpenGL3_Init(glsl)) {
         error = "OpenGL 3.0 could not be initialised.";
         return false;
     }

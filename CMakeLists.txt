@@ -5,6 +5,12 @@ project(minidaw
     DESCRIPTION "Small MIDI/audio recorder with VST3 instrument hosting"
     LANGUAGES C CXX)
 
+# macOS (P34): the VST3 SDK loads modules with Objective-C++ (module_mac.mm).
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

@@ -349,3 +349,17 @@ User: "pushed it, check the CI run", "pushed the v1.0.0 tag, check the release r
   - P12 now holds only JACK and Wayland.
   - Tests T-MAC-01 (automatic in CI) and T-MAC-02 to -04 (manual, once there is a Mac).
   - Without a Mac, a part counts as done when it builds and its automatic tests pass on the CI runner.
+
+## 16. P34a started: a macOS CI job
+
+User: "start P34a".
+
+- No Mac here, so the Mac build can only be tried in CI. The first round is written from reading the code; the CI run will show what is left.
+  - Job `macos` on `macos-15`, arm64 for now: configure, build, ctest, smoke run, upload `mini-daw-macos`.
+  - `continue-on-error`, and the release does not wait for it.
+  - CMake: OBJCXX on Apple. The SDK's `module_mac.mm` and `threadchecker_mac.mm` are built with ARC; CoreFoundation / Foundation are linked.
+  - OpenGL 3.2 core, forward-compatible, with GLSL 150 on macOS.
+  - The Mac VST3 folders: `~/Library/Audio/Plug-Ins/VST3` and `/Library/Audio/Plug-Ins/VST3`.
+  - The test synth as a Mac bundle: `macmain.cpp`, `Contents/MacOS`, an `Info.plist`.
+  - The script / remote tests stay Linux-only (they need Xvfb).
+- Linux 280/280; the MinGW build is unchanged.

@@ -217,6 +217,9 @@ std::vector<fs::path> standardVst3Folders()
     };
     known(FOLDERID_ProgramFilesCommon);      // C:\Program Files\Common Files\VST3
     known(FOLDERID_UserProgramFilesCommon);  // %LOCALAPPDATA%\Programs\Common\VST3
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME")) out.push_back(fs::path(home) / "Library/Audio/Plug-Ins/VST3");
+    out.emplace_back("/Library/Audio/Plug-Ins/VST3");
 #else
     if (const char* home = std::getenv("HOME")) out.push_back(fs::path(home) / ".vst3");
     out.emplace_back("/usr/lib/vst3");

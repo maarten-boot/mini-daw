@@ -98,6 +98,12 @@ if(WIN32)
     target_sources(minidaw_testsynth PRIVATE ${vst3}/public.sdk/source/main/dllmain.cpp)
     set(testsynth_arch x86_64-win)
     set(testsynth_suffix .vst3)
+elseif(APPLE)
+    # A Mac bundle (P34): Contents/MacOS/<name> and an Info.plist (CFBundle needs it).
+    target_sources(minidaw_testsynth PRIVATE ${vst3}/public.sdk/source/main/macmain.cpp)
+    target_link_libraries(minidaw_testsynth PRIVATE "-framework CoreFoundation")
+    set(testsynth_arch MacOS)
+    set(testsynth_suffix "")
 else()
     target_sources(minidaw_testsynth PRIVATE ${vst3}/public.sdk/source/main/linuxmain.cpp)
     set(testsynth_arch x86_64-linux)
@@ -129,6 +135,25 @@ add_custom_command(TARGET minidaw_testsynth POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:minidaw_testsynth>
             ${testsynth_bundle}/Contents/${testsynth_arch}/minidaw-testsynth${testsynth_suffix}
     VERBATIM)
+if(APPLE)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/testsynth-Info.plist [=[<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>minidaw-testsynth</string>
+    <key>CFBundleIdentifier</key><string>org.minidaw.testsynth</string>
+    <key>CFBundleName</key><string>minidaw-testsynth</string>
+    <key>CFBundlePackageType</key><string>BNDL</string>
+    <key>CFBundleSignature</key><string>????</string>
+    <key>CFBundleVersion</key><string>1.0</string>
+</dict>
+</plist>
+]=])
+    add_custom_command(TARGET minidaw_testsynth POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/testsynth-Info.plist
+                ${testsynth_bundle}/Contents/Info.plist
+        VERBATIM)
+endif()
 add_dependencies(minidaw_tests minidaw_testsynth)
 target_compile_definitions(minidaw_tests PRIVATE MINIDAW_TEST_VST3="${testsynth_bundle}")
 catch_discover_tests(minidaw_tests DISCOVERY_MODE PRE_TEST)

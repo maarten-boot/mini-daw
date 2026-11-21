@@ -238,7 +238,11 @@ if(WIN32)
     list(APPEND MINIDAW_VST3_SOURCES ${vst3}/public.sdk/source/vst/hosting/module_win32.cpp
                                      ${vst3}/public.sdk/source/common/threadchecker_win32.cpp)
 elseif(APPLE)
-    # macOS later (P12)
+    # macOS (P34): bundles through CFBundle; both files need ARC.
+    set(minidaw_vst3_mac ${vst3}/public.sdk/source/vst/hosting/module_mac.mm
+                         ${vst3}/public.sdk/source/common/threadchecker_mac.mm)
+    list(APPEND MINIDAW_VST3_SOURCES ${minidaw_vst3_mac})
+    set_source_files_properties(${minidaw_vst3_mac} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 else()
     list(APPEND MINIDAW_VST3_SOURCES ${vst3}/public.sdk/source/vst/hosting/module_linux.cpp
                                      ${vst3}/public.sdk/source/common/threadchecker_linux.cpp)
@@ -254,6 +258,8 @@ endif()
 set_target_properties(minidaw_vst3host PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(WIN32)
     target_link_libraries(minidaw_vst3host PUBLIC ole32 shell32)
+elseif(APPLE)
+    target_link_libraries(minidaw_vst3host PUBLIC "-framework CoreFoundation" "-framework Foundation")
 else()
     target_link_libraries(minidaw_vst3host PUBLIC ${CMAKE_DL_LIBS})
 endif()

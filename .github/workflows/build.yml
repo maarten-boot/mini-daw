@@ -118,6 +118,44 @@ jobs:
           path: build/src/mini-daw
           if-no-files-found: error
 
+  macos:
+    # P34a (SPEC-TECH-07): macOS is a preview until it has been tried on a Mac.
+    # A failure here shows in the run but does not fail it, and the release
+    # does not wait for it (P34e decides when that changes). For now the
+    # runner's own architecture (arm64); the universal build comes in P34d.
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache fetched dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/_deps/*-src
+          key: deps-macos-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 300
+
+      - name: Smoke-run the program
+        run: |
+          ./build/src/mini-daw --version
+          ./build/src/mini-daw --list-devices
+
+      - name: Upload program
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mini-daw-macos
+          path: build/src/mini-daw
+          if-no-files-found: warn
+
   licence:
     runs-on: ubuntu-24.04
     steps:
