@@ -20,10 +20,11 @@ TEST_CASE("Product name does not contain 'ASIO' (SPEC-LIC-04, T-LIC-05)", "[lice
     REQUIRE(name.find("asio") == std::string::npos);
 }
 
-TEST_CASE("Version is 0.<step>.<round> and builds can be told apart (SPEC-UI-18, T-UI-32)", "[version]")
+TEST_CASE("Version is <major>.<minor>.<patch> and builds can be told apart (SPEC-UI-18, T-UI-32)", "[version]")
 {
     using minidaw::BuildInfo;
-    REQUIRE(std::regex_match(minidaw::versionText(), std::regex(R"(0\.[1-9][0-9]*\.[0-9]+)")));
+    // 0.<step>.<round> before the first release, 1.<minor>.<patch> since 1.0.0 (P33).
+    REQUIRE(std::regex_match(minidaw::versionText(), std::regex(R"((0\.[1-9][0-9]*|[1-9][0-9]*\.[0-9]+)\.[0-9]+)")));
     REQUIRE(minidaw::versionText() != "0.1.0");  // raised with the steps since P28a
 
     CHECK(minidaw::buildText(BuildInfo{"380f0af", "2026-11-16", false, "43849674053"}) ==

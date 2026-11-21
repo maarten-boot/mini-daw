@@ -1,8 +1,8 @@
 # Changelog
 
-Every release of mini-daw, newest first. A release's section here becomes its notes on GitHub (`tools/release_notes.py`; the release job refuses a tag without one), so links in it are full URLs. Before 1.0.0 there were no releases: the builds were numbered `0.<step>.<round>` after the steps in `docs/planning/Plan.md`.
+Every release of mini-daw, newest first. A release's section here becomes its notes on GitHub (`tools/release_notes.py`; the release job refuses a tag without one), so links in it are full URLs. Before 1.0.0 there were no releases: the builds were numbered `0.<step>.<round>` after the steps in `docs/planning/Plan.md`. From 1.0.0 on: `1.<minor>.<patch>`, the minor number raised by a step that adds something, the patch number by fixes.
 
-## 1.0.0 — not released yet
+## 1.0.0 — 2026-11-21
 
 The first release. mini-daw is a small program to record MIDI and audio on several tracks at once, play it back, and play VST®3 instruments, for Windows 10 / 11 and Linux.
 

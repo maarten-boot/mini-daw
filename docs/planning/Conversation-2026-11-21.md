@@ -301,3 +301,20 @@ User: "pushed it, check the CI run", "meanwhile write the release docs".
   - `release` skipped; C4996 warnings: 15.
 - `dist/` replaced with both builds of this run, plus `instrument-switch.txt`.
 - `dist/TESTS.txt`: T-UI-35 M first, then T-REC-36 and the rest.
+
+User: "pushed the rc tag, check the release run".
+
+- CI run 44938379062 (`80e7eba`, main) green.
+- Tag run 44939335251 (`v0.32.0-rc1`): every job green, `release` included.
+  - The tag check passed in the licence job.
+  - Four files were made: setup, zip, tar.gz and `SHA256SUMS.txt`. A draft pre-release was created.
+- This session's GitHub token is read-only and cannot see drafts. The user checks the draft, then deletes it and the tag.
+- User: "draft looks fine, deleted it and the tag". T-CI-04 passes. The tag is gone from GitHub; no local copy.
+
+User: "yes prepare 1.0.0 with today's date".
+
+- `CMakeLists.txt` VERSION 1.0.0.
+- `CHANGELOG.md` `## 1.0.0 — 2026-11-21`.
+- README status line: "version 1.0.0, the first release".
+- The version rule from now on is `<major>.<minor>.<patch>`: a step that adds something raises the minor number, fixes raise the patch number. This is written in Spec SPEC-UI-18, `CLAUDE.md`, `version.hpp.in`, the CHANGELOG intro and T-UI-32, whose pattern also allows the 0.x numbers before the release.
+- Spec v0.79.

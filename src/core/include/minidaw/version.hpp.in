@@ -2,9 +2,9 @@
 
 namespace minidaw {
 
-// The version (CMakeLists.txt, SPEC-UI-18): 0.<step>.<round> - the number of
-// the last Plan step done (P28 -> 0.28.0) and its follow-up rounds (P28a ->
-// 0.28.1, P28b -> 0.28.2). Raised with every step that changes the program.
+// The version (CMakeLists.txt, SPEC-UI-18): <major>.<minor>.<patch>. Since the
+// first release, 1.0.0 (P33): the minor number raised by a step that adds
+// something, the patch number by fixes. Before it: 0.<step>.<round>.
 
 inline constexpr const char* kVersion = "@PROJECT_VERSION@";
 inline constexpr const char* kProductName = "mini-daw";
