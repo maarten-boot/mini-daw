@@ -489,3 +489,21 @@ User: "yes commit, then start P34e" (P34d done committed as 00b6e58).
   - Findings: 12, none high: CC1 no time limit on the macOS job; CC2 reopening audio during Render / export (Apply had it before P34); CC3 presets in the Linux folders on macOS; CC4 no NSOpenPanel as the Spec says; CC5 the command-line tests and the microphone question; CC6 denormals in the parse fallback; CC7 / CC8 Ctrl in the Terms search and the script help; CC9 the test synth's view lifetime; CC10 / CC11 docs; CC12 Opus without SIMD on Apple silicon.
 - User (asked): fix CC1–CC11, with CC4 as NSOpenPanel ("CC1–CC11 (Recommended)"); keep the release not waiting for the macOS job ("Keep it optional").
 - All eleven fixed (see the crosscheck's actions). Linux and MinGW are checked here; the macOS parts (NSOpenPanel, the presets on macOS, the test synth) are tried by CI.
+
+## 21. P34e: CI green, release 1.1.0 prepared (2026-11-22)
+
+User: "yes commit" (b639eaf), "pushed it, check the CI run" (run 45041822344). All jobs green.
+
+- macOS: 270 / 270 tests; `folder_chooser_mac.mm` (NSOpenPanel) built; T-VST-35 (Mac preset folders) and T-MAC-05 (the new denormal cases) passed; `.dmg` made.
+- Linux 283 / 283, Windows 266 / 266.
+- `dist/` replaced with this run's Windows and Linux builds (plus `instrument-switch.txt`); the `TESTS.txt` Build line names b639eaf.
+
+User: "yes, prepare 1.1.0".
+
+- `CMakeLists.txt` VERSION 1.1.0.
+- CHANGELOG `## 1.1.0 — 2026-11-22`: macOS as a preview (CoreAudio / CoreMIDI and the microphone question, VST3 and the editor, Mac presets, the system dialog, Cmd, the folders), Apply refused during recording / Render / export, known limits.
+- README status line: version 1.1.0, steps P2–P34.
+- Plan: P34 and P34e done.
+- `tools/release_notes.py --macos v1.1.0` gives the notes with the `.dmg` line.
+
+User (meanwhile): where is the gh token kept and how to renew it. It is in `~/.config/gh/hosts.yml` (github.com, account maarten-boot), a token that expires 2026-11-30; renew with `gh auth login -h github.com --with-token` from the user's own terminal.

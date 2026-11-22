@@ -2,6 +2,23 @@
 
 Every release of mini-daw, newest first. A release's section here becomes its notes on GitHub (`tools/release_notes.py`; the release job refuses a tag without one), so links in it are full URLs. Before 1.0.0 there were no releases: the builds were numbered `0.<step>.<round>` after the steps in `docs/planning/Plan.md`. From 1.0.0 on: `1.<minor>.<patch>`, the minor number raised by a step that adds something, the patch number by fixes.
 
+## 1.1.0 — 2026-11-22
+
+**macOS, as a preview.** mini-daw now also comes as `mini-daw-1.1.0-macos.dmg`: one program for Apple silicon and Intel Macs, macOS 12 or newer. It is built and tested automatically on every change, but has not yet been tried on a real Mac, so tell us what you find. It is not signed by Apple: the first time, open it from System Settings → Privacy & Security → Open Anyway (see [Installing](https://github.com/maarten-boot/mini-daw#installing) in the README).
+
+### On macOS
+- Audio through CoreAudio and MIDI through CoreMIDI. macOS asks once whether mini-daw may use the microphone; the devices are opened again when you answer. Because the program is not signed, macOS may ask again after each update.
+- VST3 instruments from `~/Library/Audio/Plug-Ins/VST3` and `/Library/Audio/Plug-Ins/VST3`, with the instrument's own window (Edit). Presets in `~/Library/Audio/Presets`, where other Mac programs keep them too.
+- Browse… opens the system's folder and file dialog.
+- Shortcuts use Cmd instead of Ctrl (Cmd+R records, Cmd+Q quits); the menus, Terms, Getting started and the script help say so.
+- Settings and the log in `~/Library/Application Support/mini-daw`; takes recorded without a project in `~/Music/mini-daw`.
+
+### On every system
+- Settings → Audio devices → Apply is refused, with a line saying why, while a recording, a Render or an audio export runs (it used to reopen the devices in the middle of that work).
+
+### Known limits
+As in 1.0.0, and on macOS: a preview, not yet tried on a real Mac; not signed (Open Anyway the first time); Opus export is slower on Apple silicon than it could be. See [Known limits](https://github.com/maarten-boot/mini-daw#known-limits).
+
 ## 1.0.0 — 2026-11-21
 
 The first release. mini-daw is a small program to record MIDI and audio on several tracks at once, play it back, and play VST®3 instruments, for Windows 10 / 11 and Linux.
