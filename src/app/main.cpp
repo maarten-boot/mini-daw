@@ -586,10 +586,20 @@ void drawBusy(const AppState& app)
                 text.c_str(), nullptr, wrap);
 }
 
+// Why the audio devices cannot be opened again now, or "" (crosscheck #28 CC2):
+// a recording, a Render or an audio export uses the stream or the instruments.
+std::string audioReopenBlocker(const AppState& app)
+{
+    if (app.session.recording()) return "Stop the recording before changing the audio devices.";
+    if (app.renderTrack != 0) return "Wait until Render has finished before changing the audio devices.";
+    if (app.audioExport) return "Wait until Export audio has finished before changing the audio devices.";
+    return {};
+}
+
 void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, bool save)
 {
-    if (app.session.recording()) {
-        app.audioError = "Stop the recording before changing the audio devices.";
+    if (std::string why = audioReopenBlocker(app); !why.empty()) {
+        app.audioError = std::move(why);
         return;
     }
     stopPlayback(app);  // the MIDI thread reads the stream; the run does not survive a reopen
@@ -678,6 +688,29 @@ int printContrastReport(const AppState& app)
     return app.unresolved.empty() && allPass ? 0 : 1;
 }
 
+// --audio-test / --record-test on macOS (crosscheck #28 CC5): there is no
+// window to open the devices again when macOS answers its microphone question,
+// so wait for the answer here (at most 30 s) and open them again. False (with
+// the reason printed) when mini-daw may not record.
+bool micAnswerForTest(AppState& app, minidaw::OpenResult& r, const minidaw::AudioSettings& s)
+{
+    if (!r.error.empty()) return true;  // no stream: the caller reports that
+    if (r.micAccess == minidaw::MicAccess::NotAsked) {
+        std::printf("Waiting for the answer to macOS's question about the microphone (at most 30 s) ...\n");
+        for (int i = 0; i < 300 && minidaw::micAccess() == minidaw::MicAccess::NotAsked; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        r = app.audio.open(s, app.scan);
+        logOpenResult(app, r);
+    }
+    if (r.micAccess == minidaw::MicAccess::Refused || r.micAccess == minidaw::MicAccess::Restricted ||
+        r.micAccess == minidaw::MicAccess::NotAsked) {
+        std::printf("error: %s\n", minidaw::micAccessWarning(r.micAccess).c_str());
+        return false;
+    }
+    return true;
+}
+
 // --audio-test: open the configured devices, run, report (T-DEV-02 without a GUI).
 int runAudioTest(AppState& app, int seconds, bool monitor)
 {
@@ -688,6 +721,7 @@ int runAudioTest(AppState& app, int seconds, bool monitor)
                 s.outputDevice.c_str(), s.sampleRate, s.bufferFrames);
     minidaw::OpenResult r = app.audio.open(s, app.scan);
     logOpenResult(app, r);
+    if (!micAnswerForTest(app, r, s)) return 1;
     for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
     if (!r.error.empty()) {
         std::printf("error: %s\n", r.error.c_str());
@@ -825,6 +859,7 @@ int runRecordTest(AppState& app, int seconds, const std::filesystem::path& folde
     logScan(app);
     minidaw::OpenResult r = app.audio.open(app.config.audio, app.scan);
     logOpenResult(app, r);
+    if (!micAnswerForTest(app, r, app.config.audio)) return 1;
     for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
     if (!r.error.empty()) {
         std::printf("error: %s\n", r.error.c_str());
@@ -6683,9 +6718,10 @@ int runGui(AppState& app)
         app.pluginWindows.update();  // editor windows the user closed
         // macOS answered its microphone question (P34b): an input opened before
         // the answer records silence, so the devices are opened again - once
-        // no recording runs, as Settings > Audio devices... > Apply would.
+        // no recording, Render or export runs (CC2), as Settings > Audio
+        // devices... > Apply would.
         if (const std::uint64_t answers = minidaw::micAccessAnswers();
-            answers != app.micAnswersSeen && !app.session.recording()) {
+            answers != app.micAnswersSeen && audioReopenBlocker(app).empty() && !app.busy) {
             app.micAnswersSeen = answers;
             if (app.micAccessAtOpen == minidaw::MicAccess::NotAsked) {
                 const minidaw::MicAccess now = minidaw::micAccess();
@@ -6932,7 +6968,7 @@ void printUsage(const char* argv0)
                 "line worked, 1 if not, 2 for a script with errors (nothing is run), 3 if mini-daw is\n"
                 "already running with this config. The report goes to <file>.report.txt. Commands:\n");
     for (const auto& c : minidaw::scriptCommands()) {
-        std::printf("  %-42s %s\n", std::string(c.usage).c_str(), std::string(c.text).c_str());
+        std::printf("  %-42s %s\n", std::string(c.usage).c_str(), minidaw::keysHere(c.text).c_str());  // CC8
     }
     std::printf("--remote lets other programs send these commands over HTTP for this run (also\n"
                 "[remote] enabled in the config): POST /api/command with {\"line\": \"<command>\"},\n"

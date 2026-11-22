@@ -477,3 +477,15 @@ User: "pushed it, check the CI run" (run 45028873440). All jobs green.
 - `codesign --verify --deep --strict`: valid on disk, satisfies its Designated Requirement (ad hoc).
 - `mini-daw-1.0.0-macos.dmg`, 5.6 MB, checksum valid; the download `mini-daw-macos` holds it.
 - P34d done as far as CI can check it. Left: P34e (crosscheck, release 1.1.0).
+
+## 20. P34e: crosscheck #28 and its fixes (2026-11-22)
+
+User: "yes commit, then start P34e" (P34d done committed as 00b6e58).
+
+- Crosscheck #28 (`docs/planning/Crosscheck-2026-11-22.md`), done the same way as #27:
+  - Claude checked Spec ↔ Plan ↔ Tests ↔ docs.
+  - A reviewer subagent read the P34 code (`git diff cd917dc 00b6e58`) with SPEC-TECH-07, without Claude's conclusions.
+  - Claude checked CC2 and CC7 in the code.
+  - Findings: 12, none high: CC1 no time limit on the macOS job; CC2 reopening audio during Render / export (Apply had it before P34); CC3 presets in the Linux folders on macOS; CC4 no NSOpenPanel as the Spec says; CC5 the command-line tests and the microphone question; CC6 denormals in the parse fallback; CC7 / CC8 Ctrl in the Terms search and the script help; CC9 the test synth's view lifetime; CC10 / CC11 docs; CC12 Opus without SIMD on Apple silicon.
+- User (asked): fix CC1–CC11, with CC4 as NSOpenPanel ("CC1–CC11 (Recommended)"); keep the release not waiting for the macOS job ("Keep it optional").
+- All eleven fixed (see the crosscheck's actions). Linux and MinGW are checked here; the macOS parts (NSOpenPanel, the presets on macOS, the test synth) are tried by CI.

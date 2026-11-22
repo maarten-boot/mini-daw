@@ -52,7 +52,8 @@ void resizeView(void* view, int width, int height)
 void removeView(void* view)
 {
     if (!view) return;
-    NSView* v = (__bridge_transfer NSView*)view;  // released when it goes out of scope
+    MinidawTestSynthView* v = (__bridge_transfer MinidawTestSynthView*)view;  // released when it goes out of scope
+    v.click = nullptr;  // nothing reaches the plugin's view object any more (CC9)
     [v removeFromSuperview];
 }
 

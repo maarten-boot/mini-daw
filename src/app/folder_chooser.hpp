@@ -5,6 +5,8 @@
 // Windows: the system's "Select folder" dialog (IFileOpenDialog), shown from a
 // thread of its own so mini-daw's window keeps drawing (meters, auto record)
 // while it is open; the main window is its owner, so it stays in front.
+// macOS: NSOpenPanel as a sheet on the main window (crosscheck #28 CC4); its
+// answer comes on the main thread while GLFW handles events.
 // Elsewhere, or if that dialog cannot be made: a folder browser drawn with
 // ImGui (a modal window: Up, Home, the folders inside, Choose this folder).
 

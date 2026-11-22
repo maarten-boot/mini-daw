@@ -90,9 +90,11 @@ if(MINIDAW_BUILD_APP)
     endif()
     if(APPLE)
         # The plugin editor windows' Cocoa calls (P34c), Objective-C++ with ARC.
-        target_sources(minidaw_app PRIVATE app/plugin_window_mac.mm)
-        set_source_files_properties(app/plugin_window_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-        target_link_libraries(minidaw_app PUBLIC "-framework Cocoa")
+        # The folder / file dialog (NSOpenPanel, crosscheck #28 CC4) too.
+        target_sources(minidaw_app PRIVATE app/plugin_window_mac.mm app/folder_chooser_mac.mm)
+        set_source_files_properties(app/plugin_window_mac.mm app/folder_chooser_mac.mm
+                                    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        target_link_libraries(minidaw_app PUBLIC "-framework Cocoa" "-framework UniformTypeIdentifiers")
         # OpenGL is deprecated on macOS but works; Metal only if needed (SPEC-TECH-07).
         target_compile_definitions(minidaw_app PRIVATE GL_SILENCE_DEPRECATION)
     endif()

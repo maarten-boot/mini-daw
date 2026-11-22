@@ -1,4 +1,5 @@
 #include "minidaw/terms.hpp"
+#include "minidaw/keys_text.hpp"
 
 #include <cctype>
 
@@ -67,7 +68,8 @@ std::vector<Term> makeTerms()
          "\"deleted\" folder.",
          "Timeline tab", {"Take folder", "Recording folder", "Project"}},
         {"Recording folder", kRecording,
-         "Where takes go when no project is open. Default: Documents\\mini-daw on Windows, ~/Music/mini-daw on Linux.",
+         "Where takes go when no project is open. Default: Documents\\mini-daw on Windows, ~/Music/mini-daw on Linux and "
+         "macOS.",
          "Settings > Recording...", {"Takes folder", "Project"}},
         {"Auto record", kRecording,
          "Records by itself when you play: while it is on, mini-daw waits, and a part starts at the first note or "
@@ -311,7 +313,8 @@ std::vector<std::size_t> findTerms(std::string_view query)
         const Term& t = all[i];
         if (containsNoCase(t.name, query)) {
             byName.push_back(i);
-        } else if (containsNoCase(t.text, query) || containsNoCase(t.where, query)) {
+        } else if (containsNoCase(keysHere(t.text), query) || containsNoCase(keysHere(t.where), query)) {
+            // As shown: Cmd+... on macOS (crosscheck #28 CC7).
             byText.push_back(i);
         }
     }

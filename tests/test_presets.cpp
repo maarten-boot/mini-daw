@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+
 #include <fstream>
 
 using namespace minidaw;
@@ -80,6 +82,13 @@ TEST_CASE("T-VST-35: preset folders of a plugin and the files in them", "[preset
     CHECK(pathToUtf8(f.user).find("Ven_dor") != std::string::npos);
     CHECK(pathToUtf8(f.user).find("My_Synth") != std::string::npos);
     CHECK(f.all.back() == bundle / "Contents" / "Resources" / "Presets");
+    // The system's own places (crosscheck #28 CC3: VST3's on macOS).
+#if defined(__APPLE__)
+    CHECK(pathToUtf8(f.user).find("/Library/Audio/Presets/Ven_dor/My_Synth") != std::string::npos);
+    CHECK(std::find(f.all.begin(), f.all.end(), fs::path("/Library/Audio/Presets/Ven_dor/My_Synth")) != f.all.end());
+#elif !defined(_WIN32)
+    CHECK(pathToUtf8(f.user).find("/.vst3/presets/Ven_dor/My_Synth") != std::string::npos);
+#endif
     CHECK(userPresetPath(f, "Warm: pad").filename() == "Warm_ pad.vstpreset");
     CHECK(userPresetPath(f, "CON").filename() == "_CON.vstpreset");  // a Windows device name (X8)
 

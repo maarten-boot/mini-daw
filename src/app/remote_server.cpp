@@ -1,4 +1,5 @@
 #include "remote_server.hpp"
+#include "minidaw/keys_text.hpp"
 
 #include "minidaw/script.hpp"
 
@@ -193,7 +194,7 @@ bool RemoteServer::start(const std::string& host, int port, RemotePolicy policy,
         for (const ScriptCommand& c : scriptCommands()) {
             std::string why;
             const bool allowed = remoteCommandAllowed(c.name, loopback, why);
-            list.push_back({{"name", c.name}, {"usage", c.usage}, {"text", c.text}, {"allowed", allowed}});
+            list.push_back({{"name", c.name}, {"usage", c.usage}, {"text", keysHere(c.text)}, {"allowed", allowed}});  // CC8
         }
         sendJson(res, 200, {{"ok", true}, {"commands", list}});
     });

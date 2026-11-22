@@ -184,6 +184,12 @@ PresetFolders presetFolders(const std::string& vendor, const std::string& plugin
         const std::string root = envVar(var);
         if (!root.empty()) f.all.push_back(pathFromUtf8(root) / "VST3 Presets" / sub);
     }
+#elif defined(__APPLE__)
+    // VST3's places on macOS (crosscheck #28 CC3).
+    const std::string home = envVar("HOME");
+    if (!home.empty()) f.user = pathFromUtf8(home) / "Library" / "Audio" / "Presets" / sub;
+    f.all.push_back(fs::path("/Library/Audio/Presets") / sub);
+    f.all.push_back(fs::path("/Network/Library/Audio/Presets") / sub);
 #else
     const std::string home = envVar("HOME");
     if (!home.empty()) f.user = pathFromUtf8(home) / ".vst3" / "presets" / sub;

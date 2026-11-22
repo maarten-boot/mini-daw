@@ -83,8 +83,9 @@ std::vector<TutorialLesson> makeLessons()
               "this recording\" (the recorded sound). Only one plays, so nothing sounds twice.",
               "The \"... sound\" track's Input column", C::SoundFromChanged},
          },
-         "No instrument found? Most install into C:\\Program Files\\Common Files\\VST3 (Windows) or ~/.vst3 "
-         "(Linux). An instrument that fails or crashes is listed with the reason and skipped."},
+         "No instrument found? Most install into C:\\Program Files\\Common Files\\VST3 (Windows), ~/.vst3 "
+         "(Linux) or /Library/Audio/Plug-Ins/VST3 (macOS). An instrument that fails or crashes is listed with the "
+         "reason and skipped."},
 
         {"3. Overdub and mix",
          "Record a second part while the first one plays, then set the levels.",

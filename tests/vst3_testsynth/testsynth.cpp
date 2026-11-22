@@ -237,6 +237,12 @@ public:
     }
 #endif
 
+#if defined(__APPLE__)
+    // A host that drops the view without removed(): the view must not keep a
+    // click pointer to this object (crosscheck #28 CC9).
+    ~TestSynthView() override { testsynth::mac::removeView(nsview_); }
+#endif
+
     tresult PLUGIN_API setFrame(IPlugFrame* frame) override
     {
         const tresult r = CPluginView::setFrame(frame);
@@ -280,6 +286,7 @@ public:
         }
 #endif
 #if defined(__APPLE__)
+        testsynth::mac::removeView(nsview_);  // attached twice: the first view goes (crosscheck #28 CC9)
         nsview_ = testsynth::mac::makeView(parent, size_->width, size_->height,
                                            [](void* self, bool louder) { static_cast<TestSynthView*>(self)->clicked(louder); },
                                            this);

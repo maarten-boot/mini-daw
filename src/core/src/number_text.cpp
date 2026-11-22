@@ -1,11 +1,22 @@
 #include "minidaw/number_text.hpp"
 
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <locale>
 #include <sstream>
 #include <system_error>
+
+#if defined(_WIN32)
+#include <locale.h>
+#else
+#include <clocale>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
+#endif
 
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
 #define MINIDAW_STD_FLOAT_CHARCONV 1
@@ -76,6 +87,18 @@ std::string formatDoubleFallback(double value)
     return negative ? "-" + best : best;
 }
 
+namespace {
+// A digit other than 0 in the mantissa (before any exponent): "0e-999" is 0, "1e-999" is too small.
+bool digitsNonZero(std::string_view text)
+{
+    for (const char c : text) {
+        if (c == 'e' || c == 'E') break;
+        if (c >= '1' && c <= '9') return true;
+    }
+    return false;
+}
+} // namespace
+
 std::optional<double> parseDoubleFallback(std::string_view text)
 {
     // What from_chars accepts in its general format: an optional '-',
@@ -99,12 +122,22 @@ std::optional<double> parseDoubleFallback(std::string_view text)
     }
     if (i != text.size()) return std::nullopt;
 
-    std::istringstream in{std::string(text)};
-    in.imbue(std::locale::classic());
-    double v = 0.0;
-    in >> v;
-    if (in.fail() || !std::isfinite(v)) return std::nullopt;  // too large: no double
-    if (in.peek() != std::char_traits<char>::eof()) return std::nullopt;
+    // strtod in the "C" locale (crosscheck #28 CC6: a stream fails on libc++
+    // whenever strtod reports ERANGE, also for denormal numbers, which
+    // from_chars returns). Out of range only when it gives 0 or infinity.
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+#if defined(_WIN32)
+    static const _locale_t cLocale = _create_locale(LC_ALL, "C");
+    const double v = _strtod_l(copy.c_str(), &end, cLocale);
+#else
+    static const locale_t cLocale = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
+    const double v = strtod_l(copy.c_str(), &end, cLocale);
+#endif
+    if (end != copy.c_str() + copy.size()) return std::nullopt;
+    if (!std::isfinite(v)) return std::nullopt;                 // too large: no double
+    if (errno == ERANGE && v == 0.0 && digitsNonZero(text)) return std::nullopt;  // too small
     return v;
 }
 

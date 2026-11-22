@@ -40,7 +40,7 @@ A MIDI keyboard plays a VST3 instrument (a software synth or piano). mini-daw re
 6. Choose what plays: "Sound from: instrument" (the instrument plays your notes) or "Sound from: this recording" (the recorded sound). Only one plays, so nothing sounds twice.  
    *Where:* The "... sound" track's Input column
 
-**Tip:** No instrument found? Most install into C:\Program Files\Common Files\VST3 (Windows) or ~/.vst3 (Linux). An instrument that fails or crashes is listed with the reason and skipped.
+**Tip:** No instrument found? Most install into C:\Program Files\Common Files\VST3 (Windows), ~/.vst3 (Linux) or /Library/Audio/Plug-Ins/VST3 (macOS). An instrument that fails or crashes is listed with the reason and skipped.
 
 ## 3. Overdub and mix
 

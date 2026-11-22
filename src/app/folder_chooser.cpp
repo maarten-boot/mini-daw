@@ -22,6 +22,8 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#elif defined(__APPLE__)
+#include "folder_chooser_mac.hpp"  // NSOpenPanel (crosscheck #28 CC4)
 #endif
 
 namespace fs = std::filesystem;
@@ -42,6 +44,18 @@ struct FolderChooser::Impl {
     bool nativeFailed = false;     // the dialog could not be made: use the browser
     fs::path nativeResult;         // with mutex
     std::string nativeError;       // with mutex
+
+#if defined(__APPLE__)
+    // The macOS dialog's answer, written by its completion handler (main
+    // thread, during glfwPollEvents); shared, so a late answer after this
+    // chooser is gone writes nowhere harmful.
+    struct MacAnswer {
+        bool done = false;
+        bool chosen = false;
+        fs::path path;
+    };
+    std::shared_ptr<MacAnswer> macAnswer;
+#endif
 
     // A file with this extension instead of a folder (P28); empty: a folder.
     std::string fileExtension;
@@ -139,12 +153,21 @@ FolderChooser::FolderChooser() : impl_(std::make_unique<Impl>()) {}
 
 FolderChooser::~FolderChooser()
 {
+#if defined(__APPLE__)
+    if (impl_->macAnswer && !impl_->macAnswer->done) mac::cancelOpenPanel();
+#endif
     if (impl_->thread.joinable()) impl_->thread.join();  // the dialog is modal to the main window
 }
 
 bool FolderChooser::active() const { return impl_->mode != Impl::Mode::Idle; }
 
-bool FolderChooser::nativeOpen() const { return impl_->mode == Impl::Mode::Native && !impl_->nativeDone; }
+bool FolderChooser::nativeOpen() const
+{
+#if defined(__APPLE__)
+    if (impl_->mode == Impl::Mode::Native && impl_->macAnswer) return !impl_->macAnswer->done;
+#endif
+    return impl_->mode == Impl::Mode::Native && !impl_->nativeDone;
+}
 
 #ifdef _WIN32
 namespace {
@@ -167,6 +190,8 @@ void FolderChooser::cancel()
     if (d.mode == Impl::Mode::Native && !d.nativeDone) {
         if (const unsigned long tid = d.nativeThreadId; tid != 0) EnumThreadWindows(tid, closeThreadWindow, 0);
     }
+#elif defined(__APPLE__)
+    if (d.mode == Impl::Mode::Native && d.macAnswer && !d.macAnswer->done) mac::cancelOpenPanel();
 #endif
 }
 
@@ -227,6 +252,24 @@ void FolderChooser::openAny(GLFWwindow* owner, const std::string& title, const f
         });
         return;
     }
+#elif defined(__APPLE__)
+    if (!d.nativeFailed) {
+        auto answer = std::make_shared<Impl::MacAnswer>();
+        const bool shown = mac::showOpenPanel(owner, title, pathToUtf8(d.start), d.fileExtension,
+                                              [answer](bool chosen, std::string path) {
+                                                  answer->chosen = chosen;
+                                                  answer->path = pathFromUtf8(path);
+                                                  answer->done = true;
+                                              });
+        if (shown) {
+            d.macAnswer = std::move(answer);
+            d.nativeDone = false;
+            d.mode = Impl::Mode::Native;
+            return;
+        }
+        d.nativeFailed = true;
+        d.note = "The macOS folder dialog could not be shown; mini-daw's own is used.";
+    }
 #else
     (void)owner;
 #endif
@@ -239,6 +282,20 @@ bool FolderChooser::update(fs::path& chosen)
 {
     Impl& d = *impl_;
     if (d.mode == Impl::Mode::Native) {
+#if defined(__APPLE__)
+        if (d.macAnswer) {  // the dialog's answer, taken over like the Windows thread's
+            if (!d.macAnswer->done) return false;
+            {
+                std::lock_guard<std::mutex> lock(d.mutex);
+                d.nativeChosen = d.macAnswer->chosen;
+                d.nativeResult = d.macAnswer->path;
+                d.nativeError.clear();
+                d.nativeFailed = false;
+            }
+            d.macAnswer.reset();
+            d.nativeDone = true;
+        }
+#endif
         if (!d.nativeDone) return false;
         if (d.thread.joinable()) d.thread.join();
         bool ok = false;

@@ -64,6 +64,11 @@ TEST_CASE("T-MAC-05: numbers as text, the same with and without std::to_chars / 
             CHECK_FALSE(parse("nan"));
             CHECK_FALSE(parse("1e999"));
             CHECK_FALSE(parse("4,5"));
+            // Denormal numbers are numbers; too small to hold is not (crosscheck #28 CC6).
+            CHECK(parse("5e-324") == std::numeric_limits<double>::denorm_min());
+            CHECK(parse("2.2250738585072014e-310").has_value());
+            CHECK_FALSE(parse("1e-400"));
+            CHECK(parse("0e-999") == 0.0);
         }
     }
 
