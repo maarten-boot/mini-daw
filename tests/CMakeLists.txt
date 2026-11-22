@@ -101,8 +101,10 @@ if(WIN32)
     set(testsynth_suffix .vst3)
 elseif(APPLE)
     # A Mac bundle (P34): Contents/MacOS/<name> and an Info.plist (CFBundle needs it).
-    target_sources(minidaw_testsynth PRIVATE ${vst3}/public.sdk/source/main/macmain.cpp)
-    target_link_libraries(minidaw_testsynth PRIVATE "-framework CoreFoundation")
+    target_sources(minidaw_testsynth PRIVATE ${vst3}/public.sdk/source/main/macmain.cpp
+                                              vst3_testsynth/testsynth_mac.mm)  # the editor view (P34c)
+    set_source_files_properties(vst3_testsynth/testsynth_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(minidaw_testsynth PRIVATE "-framework CoreFoundation" "-framework Cocoa")
     set(testsynth_arch MacOS)
     set(testsynth_suffix "")
 else()
@@ -154,6 +156,12 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/testsynth-Info.plist
                 ${testsynth_bundle}/Contents/Info.plist
         VERBATIM)
+endif()
+if(APPLE)
+    # The editor in an NSView (P34c, T-MAC-07), Objective-C++ with ARC.
+    target_sources(minidaw_tests PRIVATE test_editor_mac.mm)
+    set_source_files_properties(test_editor_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(minidaw_tests PRIVATE "-framework Cocoa")
 endif()
 add_dependencies(minidaw_tests minidaw_testsynth)
 target_compile_definitions(minidaw_tests PRIVATE MINIDAW_TEST_VST3="${testsynth_bundle}")

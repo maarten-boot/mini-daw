@@ -87,6 +87,14 @@ if(MINIDAW_BUILD_APP)
     else()
         target_sources(minidaw_app PRIVATE app/renderer_opengl.cpp)
     endif()
+    if(APPLE)
+        # The plugin editor windows' Cocoa calls (P34c), Objective-C++ with ARC.
+        target_sources(minidaw_app PRIVATE app/plugin_window_mac.mm)
+        set_source_files_properties(app/plugin_window_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        target_link_libraries(minidaw_app PUBLIC "-framework Cocoa")
+        # OpenGL is deprecated on macOS but works; Metal only if needed (SPEC-TECH-07).
+        target_compile_definitions(minidaw_app PRIVATE GL_SILENCE_DEPRECATION)
+    endif()
     target_link_libraries(minidaw_app PUBLIC minidaw_core minidaw_imgui minidaw_httplib PRIVATE minidaw_warnings)
     if(WIN32)
         # shell32: ShellExecuteW (View > Log > Open log folder) and the folder dialog (P19); ole32 / uuid: COM

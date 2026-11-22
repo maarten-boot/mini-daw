@@ -75,6 +75,9 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;  // this module's HINSTANCE
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #endif
+#if defined(__APPLE__)
+#include "testsynth_mac.hpp"  // P34c
+#endif
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -249,6 +252,9 @@ public:
 #if defined(__linux__)
         if (std::strcmp(type, kPlatformTypeX11EmbedWindowID) == 0) return kResultTrue;
 #endif
+#if defined(__APPLE__)
+        if (std::strcmp(type, kPlatformTypeNSView) == 0) return kResultTrue;
+#endif
         return std::strcmp(type, kTestPlatform) == 0 ? kResultTrue : kResultFalse;
     }
     tresult PLUGIN_API attached(void* parent, FIDString type) override
@@ -273,6 +279,12 @@ public:
             return kResultFalse;
         }
 #endif
+#if defined(__APPLE__)
+        nsview_ = testsynth::mac::makeView(parent, size_->width, size_->height,
+                                           [](void* self, bool louder) { static_cast<TestSynthView*>(self)->clicked(louder); },
+                                           this);
+        if (!nsview_) return kResultFalse;
+#endif
         return kResultOk;
     }
     tresult PLUGIN_API removed() override
@@ -284,6 +296,10 @@ public:
         if (testMode() != 3) stopRunLoop();
 #if defined(__linux__)
         closeX11Window();
+#endif
+#if defined(__APPLE__)
+        testsynth::mac::removeView(nsview_);
+        nsview_ = nullptr;
 #endif
         return CPluginView::removed();
     }
@@ -335,6 +351,9 @@ public:
         }
 #if defined(_WIN32)
         if (hwnd_ && newSize) MoveWindow(hwnd_, 0, 0, newSize->getWidth(), newSize->getHeight(), TRUE);
+#endif
+#if defined(__APPLE__)
+        if (nsview_ && newSize) testsynth::mac::resizeView(nsview_, newSize->getWidth(), newSize->getHeight());
 #endif
 #if defined(__linux__)
         if (display_ && window_ && newSize) {
@@ -547,6 +566,9 @@ private:
 #if defined(__linux__)
     IPtr<Linux::IRunLoop> runLoop_;
     int pipe_[2] = {-1, -1};
+#endif
+#if defined(__APPLE__)
+    void* nsview_ = nullptr;  // the MinidawTestSynthView, retained
 #endif
     int ticks_ = 0;
     int reads_ = 0;

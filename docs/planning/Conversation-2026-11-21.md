@@ -429,3 +429,18 @@ User: "pushed it, check the CI run" (run 45016560178). All jobs green.
 - macOS: 268 / 268 tests (T-MAC-06 included), the smoke run as before, and the new step read the built-in Info.plist: `org.minidaw.mini-daw 1.0.0` with the microphone usage text.
 - No warnings in our code on macOS any more, except the expected OpenGL deprecation ones.
 - P34b done as far as CI can check it; asking for the microphone and recording after it are for T-MAC-02 / -03 on a Mac.
+
+## 18. P34c: the instrument's own window on macOS (2026-11-22)
+
+User: "yes commit, then start P34c" (P34b done committed as 428f861).
+
+- Already done in P34a: the Mac VST3 folders, `.vst3` bundles through the SDK's `module_mac.mm`, the test synth as a bundle; the VST tests passed on macOS.
+- New, the editor window (`plugin_window.cpp` with the Cocoa calls in `plugin_window_mac.mm`):
+  - a GLFW window without OpenGL, as on Windows and Linux; its content view goes to the plugin as "NSView";
+  - once shown, a child window of the main window: it stays above it and is minimised with it;
+  - no content scale on macOS: VST3 sizes are points there and the system scales;
+  - plugin timers run on the main thread's run loop, which `glfwPollEvents` runs every frame.
+- The test synth gets an NSView editor (`testsynth_mac.mm`): white with black text, a click on the left / right half lowers / raises the gain, as its Windows and X11 windows.
+- New test T-MAC-07 (macOS only, Objective-C++): the editor in a Cocoa window that is never shown; size, resize, a click that reaches the sound, the view gone after close.
+- `GL_SILENCE_DEPRECATION` for our OpenGL code on macOS (the warnings were expected).
+- None of the Objective-C++ could be compiled here; Linux 282/282 (Xvfb, XSD skipped) and the MinGW build are unchanged.

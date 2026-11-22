@@ -19,6 +19,9 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #define MINIDAW_PLUGIN_WINDOWS 1
+#elif defined(__APPLE__)
+#include "plugin_window_mac.hpp"  // the Cocoa calls (P34c)
+#define MINIDAW_PLUGIN_WINDOWS 1
 #endif
 
 namespace minidaw::app {
@@ -70,12 +73,14 @@ void onWindowSize(GLFWwindow* w, int width, int height)
     if (got.width > 0 && got.height > 0 && !(got == InstrumentEditor::Size{width, height})) setClientSize(*pw, got);
 }
 
+#if !defined(__APPLE__)
 // The window moved to a display with another scale: plugins that support
 // scaling usually ask for a new size afterwards (resizeView).
 void onContentScale(GLFWwindow* w, float xscale, float /*yscale*/)
 {
     if (PluginWindows::Window* pw = windowOf(w)) pw->editor.setContentScale(xscale);
 }
+#endif
 
 } // namespace
 #endif
@@ -89,7 +94,7 @@ PluginWindows::~PluginWindows()
 
 bool PluginWindows::supported()
 {
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
     return true;
 #elif defined(MINIDAW_PLUGIN_WINDOWS)
     // VST3 editors on Linux need X11 (also XWayland); a GLFW built with
@@ -113,13 +118,19 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     Window& win = *pw;
 #if defined(_WIN32)
     const char* platform = "HWND";
+#elif defined(__APPLE__)
+    const char* platform = "NSView";  // P34c
 #else
     const char* platform = "X11EmbedWindowID";  // the editor gets the run loop from its frame (P24)
 #endif
     if (!win.editor.create(instrument, platform, error)) return false;
+#if !defined(__APPLE__)
+    // VST3 sizes are pixels on Windows and Linux; on macOS they are points and
+    // the system scales (the content scale is not used there).
     float scale = 1.0f, unused = 1.0f;
     if (owner) glfwGetWindowContentScale(owner, &scale, &unused);
     win.editor.setContentScale(scale);
+#endif
     const InstrumentEditor::Size size = win.editor.size();
     if (size.width <= 0 || size.height <= 0) {
         error = "The plugin's editor window has no size.";
@@ -142,6 +153,16 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     if (owner) {
         // Owned by the main window: above it, minimised with it, no taskbar button of its own.
         SetWindowLongPtrW(parent, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(glfwGetWin32Window(owner)));
+    }
+#elif defined(__APPLE__)
+    // The plugin's view goes into the window's content view (P34c); the window
+    // becomes a child of the main window once it is shown (below).
+    void* parent = mac::contentView(win.window);
+    if (!parent) {
+        error = "The editor window has no view to put the instrument's window into.";
+        win.editor.close();
+        glfwDestroyWindow(win.window);
+        return false;
     }
 #else
     // X11: a window the plugin puts its own window into (by ID, through its own
@@ -184,7 +205,7 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
         glfwGetWindowPos(owner, &ox, &oy);
         glfwSetWindowPos(win.window, ox + 60, oy + 80);
     }
-#if !defined(_WIN32)
+#if defined(__linux__)
     // The window must exist on the X server before the plugin's own connection uses it.
     XSync(display, False);
 #endif
@@ -202,8 +223,14 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     const InstrumentEditor::Size now = win.editor.size();
     if (now.width > 0 && now.height > 0 && !(now == size)) setClientSize(win, now);
     glfwSetWindowSizeCallback(win.window, onWindowSize);
+#if !defined(__APPLE__)
     glfwSetWindowContentScaleCallback(win.window, onContentScale);
+#endif
     glfwShowWindow(win.window);
+#if defined(__APPLE__)
+    // Above the main window and minimised with it (as owned windows on Windows).
+    if (owner) mac::attachToOwner(win.window, owner);
+#endif
     glfwFocusWindow(win.window);
     windows_[track] = std::move(pw);
     return true;
@@ -211,7 +238,7 @@ bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::strin
     (void)instrument;
     (void)title;
     (void)owner;
-    error = "Plugin editor windows are not available on this system yet (Windows and Linux).";
+    error = "Plugin editor windows are not available on this system.";
     return false;
 #endif
 }
@@ -228,6 +255,9 @@ void PluginWindows::close(int track)
     Window& win = *it->second;
     win.editor.close();  // the view leaves the window before the window goes
     if (win.window) {
+#if defined(__APPLE__)
+        mac::detachFromOwner(win.window);
+#endif
         glfwSetWindowUserPointer(win.window, nullptr);
         glfwDestroyWindow(win.window);
     }

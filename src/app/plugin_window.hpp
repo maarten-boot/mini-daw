@@ -2,10 +2,12 @@
 
 // Plugin editor windows (SPEC-VST-05; P10d): one native window per open
 // editor, owned by the main window (stays above it, minimises with it, no
-// separate taskbar button). Windows ("HWND") and, since P24, Linux
+// separate taskbar button). Windows ("HWND"), since P24 Linux
 // ("X11EmbedWindowID", transient for the main window; the editors' run loop,
-// minidaw::editorRunLoop(), is polled by the main loop every frame). On other
-// systems, and on Linux without X11, supported() is false. GUI thread only.
+// minidaw::editorRunLoop(), is polled by the main loop every frame) and since
+// P34c macOS ("NSView", a child window of the main window; the editors use the
+// main thread's run loop, which glfwPollEvents runs). On Linux without X11,
+// supported() is false. GUI thread only.
 
 #include "minidaw/instrument.hpp"
 
