@@ -252,6 +252,7 @@ Status column in the Results section at the end.
 | T-MAC-03 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 1 of Getting started: audio devices, record an audio track, play; a USB MIDI keyboard on a MIDI track | Recorded and played as on Windows; MIDI reconnects after unplugging |
 | T-MAC-04 | SPEC-TECH-07 | M (when there is a Mac) | Lesson 2: scan VST3 instruments (e.g. a free one in `~/Library/Audio/Plug-Ins/VST3`), Edit opens its window, Render | As on Windows |
 | T-MAC-05 | SPEC-TECH-07 | A | Decimal numbers as text (`formatDouble` / `parseDouble`, used by the DAWproject export, scripts and the contrast setting): the fallback for Apple's libc++ (no floating-point `from_chars`, `to_chars` only from macOS 13.3) gives the same text and values as `std::to_chars` / `from_chars` for 4000+ doubles; the whole text or nothing, no '+', spaces, hex, inf, nan | Pass on Linux and Windows (they have both); on macOS the fallback is what runs |
+| T-MAC-06 | SPEC-TECH-07 | A | The microphone permission: the line for Refused / Restricted / NotAsked names the microphone and that inputs record silence (Refused: where to allow it); `micAccess()` is `NotNeeded` on Windows / Linux and never asks there; on macOS it is read without asking. CI (macOS): the program carries an `Info.plist` with `NSMicrophoneUsageDescription` and the version | Pass; the question itself and recording after allowing it: T-MAC-02 on a Mac |
 
 
 ## Results

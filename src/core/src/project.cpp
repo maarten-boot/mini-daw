@@ -55,22 +55,22 @@ std::string base64Encode(const std::string& bytes)
     static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
     out.reserve((bytes.size() + 2) / 3 * 4);
+    const auto byte = [&](std::size_t k) { return static_cast<unsigned>(static_cast<unsigned char>(bytes[k])); };
     std::size_t i = 0;
     for (; i + 2 < bytes.size(); i += 3) {
-        const unsigned v = (static_cast<unsigned char>(bytes[i]) << 16) | (static_cast<unsigned char>(bytes[i + 1]) << 8) |
-                           static_cast<unsigned char>(bytes[i + 2]);
+        const unsigned v = (byte(i) << 16) | (byte(i + 1) << 8) | byte(i + 2);
         out += abc[(v >> 18) & 63];
         out += abc[(v >> 12) & 63];
         out += abc[(v >> 6) & 63];
         out += abc[v & 63];
     }
     if (i + 1 == bytes.size()) {
-        const unsigned v = static_cast<unsigned char>(bytes[i]) << 16;
+        const unsigned v = byte(i) << 16;
         out += abc[(v >> 18) & 63];
         out += abc[(v >> 12) & 63];
         out += "==";
     } else if (i + 2 == bytes.size()) {
-        const unsigned v = (static_cast<unsigned char>(bytes[i]) << 16) | (static_cast<unsigned char>(bytes[i + 1]) << 8);
+        const unsigned v = (byte(i) << 16) | (byte(i + 1) << 8);
         out += abc[(v >> 18) & 63];
         out += abc[(v >> 12) & 63];
         out += abc[(v >> 6) & 63];

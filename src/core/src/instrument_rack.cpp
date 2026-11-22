@@ -21,11 +21,11 @@ void noteOff(InstrumentMidi* events, std::size_t& n, int ch, int note)
 void releaseAll(std::array<std::uint16_t, 128>& held, InstrumentMidi* events, std::size_t& n, std::size_t cap)
 {
     for (int note = 0; note < 128; ++note) {
-        if (held[note] == 0) continue;
+        if (held[static_cast<std::size_t>(note)] == 0) continue;
         for (int ch = 0; ch < 16 && n < cap; ++ch) {
-            if (held[note] & (1u << ch)) noteOff(events, n, ch, note);
+            if (held[static_cast<std::size_t>(note)] & (1u << ch)) noteOff(events, n, ch, note);
         }
-        held[note] = 0;
+        held[static_cast<std::size_t>(note)] = 0;
     }
 }
 

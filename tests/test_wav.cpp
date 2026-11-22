@@ -23,7 +23,7 @@ std::vector<unsigned char> fileBytes(const std::filesystem::path& p)
 
 std::uint32_t u32(const std::vector<unsigned char>& b, std::size_t at)
 {
-    return b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (static_cast<std::uint32_t>(b[at + 3]) << 24);
+    return static_cast<std::uint32_t>(b[at] | (b[at + 1] << 8) | (b[at + 2] << 16)) | (static_cast<std::uint32_t>(b[at + 3]) << 24);
 }
 
 std::uint16_t u16(const std::vector<unsigned char>& b, std::size_t at)
@@ -253,7 +253,7 @@ TEST_CASE("readWav reads 16-bit PCM and 32-bit float files", "[wav]")
     auto writeFile = [](const std::filesystem::path& p, std::uint16_t format, std::uint16_t bits,
                         const std::vector<unsigned char>& data) {
         std::vector<unsigned char> h(44);
-        auto p32 = [&](std::size_t at, std::uint32_t v) { for (int i = 0; i < 4; ++i) h[at + i] = (v >> (8 * i)) & 0xFF; };
+        auto p32 = [&](std::size_t at, std::uint32_t v) { for (int i = 0; i < 4; ++i) h[at + static_cast<std::size_t>(i)] = (v >> (8 * i)) & 0xFF; };
         auto p16 = [&](std::size_t at, std::uint16_t v) { h[at] = static_cast<unsigned char>(v & 0xFF); h[at + 1] = static_cast<unsigned char>(v >> 8); };
         std::memcpy(&h[0], "RIFF", 4);
         p32(4, static_cast<std::uint32_t>(36 + data.size()));

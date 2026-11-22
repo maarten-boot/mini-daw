@@ -151,6 +151,21 @@ jobs:
           ./build/src/mini-daw --version
           ./build/src/mini-daw --list-devices
 
+      - name: Check the built-in Info.plist
+        # The microphone usage text (macOS ends a program that asks to record
+        # without one) and the version (P34b).
+        run: |
+          python3 - <<'PY'
+          import plistlib, re, sys
+          data = open("build/src/mini-daw", "rb").read()
+          found = re.search(rb"<plist version.*?</plist>", data, re.S)
+          if not found:
+              sys.exit("no Info.plist in build/src/mini-daw")
+          info = plistlib.loads(found.group(0))
+          print(info["CFBundleIdentifier"], info["CFBundleShortVersionString"])
+          print("NSMicrophoneUsageDescription:", info["NSMicrophoneUsageDescription"])
+          PY
+
       - name: Upload program
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

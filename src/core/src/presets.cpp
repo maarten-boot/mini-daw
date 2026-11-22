@@ -44,7 +44,7 @@ void putInt64(std::string& out, std::int64_t v)
 std::uint64_t getLE(std::string_view b, std::size_t at, int bytes)
 {
     std::uint64_t v = 0;
-    for (int i = 0; i < bytes; ++i) v |= static_cast<std::uint64_t>(static_cast<unsigned char>(b[at + i])) << (8 * i);
+    for (int i = 0; i < bytes; ++i) v |= static_cast<std::uint64_t>(static_cast<unsigned char>(b[at + static_cast<std::size_t>(i)])) << (8 * i);
     return v;
 }
 

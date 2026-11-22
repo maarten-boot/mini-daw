@@ -405,3 +405,19 @@ User: "pushed it, check the CI run" (run 45012825655). All jobs green, `macos` i
 - `mini-daw-macos` uploaded (2.5 MB, the program for Apple silicon, not yet an `.app`).
 - So P34a is done by its rule (builds and passes its automatic tests on the CI runner), for arm64; the universal build is part of P34d.
 - Clang's `-Wconversion` also warns on sign changes, which GCC's does not: about 30 in our code (int → size_t, int16 → size_t), all harmless; one `__int128` → int64 for a file time in `plugin_scan.cpp` (libc++'s file clock; only compared for equality, fits). To be cleaned up with P34b. The OpenGL deprecation warnings are expected (SPEC-TECH-07).
+
+## 17. P34b: audio, MIDI and the microphone permission (2026-11-22)
+
+User: "yes commit, then start P34b" (P34a done committed as ff3c523).
+
+- Already in place since P34a: RtAudio with CoreAudio and RtMidi with CoreMIDI; the smoke run listed the CoreAudio devices. The config, log and recording folders already had their macOS places (`~/Library/Application Support/mini-daw`, `~/Music/mini-daw`). MIDI port names are used as macOS gives them.
+- New, the microphone permission:
+  - macOS lets a program record only after the user allowed it; until then CoreAudio gives silence without an error.
+  - `minidaw/mic_access.hpp`: `micAccess()` (AVFoundation, never asks), `askMicAccess()`, `micAccessAnswers()`, `micAccessWarning()`. Windows and Linux: `NotNeeded`.
+  - `AudioStream::open` with an input asks when macOS has not asked yet, and adds a warning line when mini-daw may not record (refused: where in System Settings to allow it).
+  - When the answer comes, the app opens the devices again (not during a recording; then after it).
+  - macOS ends a program that asks without a usage text. So `res/macos/Info.plist.in` (with `NSMicrophoneUsageDescription` and the version) is built into the program with `-sectcreate __TEXT __info_plist`; P34d's `.app` uses the same file. A program without that text (the tests) does not ask.
+  - CI step on macOS: the built-in plist is read back and must have the usage text.
+- The clang warnings from P34a: about 25 sign changes fixed with explicit casts; `ComponentHandlerImpl` made `final` (clang: deleted through a `unique_ptr` without a virtual destructor); the 128-bit file time cast on purpose; an unused parameter on macOS marked. A local clang 21 build now has no warnings in our code.
+- New test T-MAC-06. Linux 282/282 (Xvfb; XSD skipped as before), MinGW build fine.
+- Version stays 1.0.0: the macOS work is released as 1.1.0 at the end of P34 (P34e).

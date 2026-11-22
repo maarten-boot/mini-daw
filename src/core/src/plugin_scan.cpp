@@ -329,7 +329,7 @@ std::int64_t moduleStamp(const fs::path& module)
     auto take = [&](const fs::path& p) {
         const auto t = fs::last_write_time(p, ec);
         if (ec) return;
-        const std::int64_t v = t.time_since_epoch().count();
+        const auto v = static_cast<std::int64_t>(t.time_since_epoch().count());  // libc++: a 128-bit count
         stamp = any ? std::max(stamp, v) : v;
         any = true;
     };

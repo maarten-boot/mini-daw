@@ -101,7 +101,7 @@ bool PluginWindows::supported()
 }
 
 bool PluginWindows::open(int track, Vst3Instrument& instrument, const std::string& title, GLFWwindow* owner,
-                         std::string& error, std::optional<std::pair<int, int>> place)
+                         std::string& error, [[maybe_unused]] std::optional<std::pair<int, int>> place)
 {
     if (const auto it = windows_.find(track); it != windows_.end()) {
         glfwShowWindow(it->second->window);

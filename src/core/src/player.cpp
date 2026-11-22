@@ -234,7 +234,7 @@ void Player::fill(Run& run)
             }
             c.reader.seek(static_cast<std::uint64_t>(fileFrame));
             std::size_t want = std::min<std::size_t>(chunk - f, c.fileBuf.size() / c.fileChannels);
-            want = std::min<std::size_t>(want, static_cast<std::size_t>(c.reader.frames() - fileFrame));
+            want = std::min<std::size_t>(want, static_cast<std::size_t>(c.reader.frames() - static_cast<std::uint64_t>(fileFrame)));
             const std::size_t got = c.reader.read(c.fileBuf.data(), want);
             for (std::size_t i = 0; i < got; ++i) {
                 for (unsigned int ch = 0; ch < c.channels; ++ch) {

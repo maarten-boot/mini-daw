@@ -88,7 +88,7 @@ std::vector<MidiEvent> buildMidiTake(const std::vector<TimedMidi>& input, int ch
     const std::uint64_t end = endFrame > startFrame ? endFrame - startFrame : 0;
     for (int ch = 0; ch < 16; ++ch) {
         for (int note = 0; note < 128; ++note) {
-            for (std::uint16_t n = held[ch][note]; n > 0; --n) {
+            for (std::uint16_t n = held[static_cast<std::size_t>(ch)][static_cast<std::size_t>(note)]; n > 0; --n) {
                 MidiEvent e;
                 e.frame = end;
                 e.data = {static_cast<std::uint8_t>(0x80 | ch), static_cast<std::uint8_t>(note), 0};
@@ -266,7 +266,7 @@ bool readSmf(const std::filesystem::path& path, SmfData& data, std::string& erro
         return false;
     }
     data.format = static_cast<std::uint16_t>((bytes[8] << 8) | bytes[9]);
-    const unsigned int ntracks = (bytes[10] << 8) | bytes[11];
+    const auto ntracks = static_cast<unsigned int>((bytes[10] << 8) | bytes[11]);
     data.division = static_cast<std::int16_t>((bytes[12] << 8) | bytes[13]);
 
     std::size_t pos = 8 + get32be(&bytes[4]);

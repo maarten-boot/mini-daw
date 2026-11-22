@@ -288,6 +288,10 @@ struct AppState {
     bool tabsFocusUp = false;
     // Terms tab (P23, SPEC-UI-17)
     std::size_t runLoopDropped = 0;  // editorRunLoop().droppedCount() already logged (Z1)
+    // macOS microphone permission (P34b): the permission when the stream was
+    // last opened, and the answers to macOS's question already acted on.
+    minidaw::MicAccess micAccessAtOpen = minidaw::MicAccess::NotNeeded;
+    std::uint64_t micAnswersSeen = 0;
     std::string termsFind;
     std::size_t termsJump = SIZE_MAX;   // a "See also" clicked: scroll to this term in the next frame
     std::size_t termsMarked = SIZE_MAX; // the term jumped to last (shown with "> ")
@@ -593,6 +597,7 @@ void applyAudioSettings(AppState& app, const minidaw::AudioSettings& settings, b
     logOpenResult(app, r);
     app.audioWarnings = r.warnings;
     app.audioError = r.error;
+    app.micAccessAtOpen = r.micAccess;
     if (r.error.empty()) {
         app.config.audio = settings;
         if (save) saveConfig(app);
@@ -6669,6 +6674,20 @@ int runGui(AppState& app)
         stepRemote(app);  // --remote (P25b): the same, for a command sent over HTTP
         noteNormalPlace();
         app.pluginWindows.update();  // editor windows the user closed
+        // macOS answered its microphone question (P34b): an input opened before
+        // the answer records silence, so the devices are opened again - once
+        // no recording runs, as Settings > Audio devices... > Apply would.
+        if (const std::uint64_t answers = minidaw::micAccessAnswers();
+            answers != app.micAnswersSeen && !app.session.recording()) {
+            app.micAnswersSeen = answers;
+            if (app.micAccessAtOpen == minidaw::MicAccess::NotAsked) {
+                const minidaw::MicAccess now = minidaw::micAccess();
+                app.log.info(now == minidaw::MicAccess::Allowed
+                                 ? "macOS now allows mini-daw to use the microphone: opening the audio devices again."
+                                 : "macOS does not allow mini-daw to use the microphone.");
+                applyAudioSettings(app, app.config.audio, false);
+            }
+        }
         minidaw::editorRunLoop().poll();  // Linux plugin editors: their X11 events and timers (P24)
         if (const std::size_t dropped = minidaw::editorRunLoop().droppedCount(); dropped != app.runLoopDropped) {
             app.runLoopDropped = dropped;

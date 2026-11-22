@@ -11,6 +11,7 @@
 #include "minidaw/frame_clock.hpp"
 #include "minidaw/monitor.hpp"
 #include "minidaw/instrument_rack.hpp"
+#include "minidaw/mic_access.hpp"
 #include "minidaw/player.hpp"
 #include "minidaw/recorder.hpp"
 #include "minidaw/session_io.hpp"
@@ -70,6 +71,7 @@ struct StreamInfo {
 struct OpenResult {
     std::string error;                // empty = stream is running
     std::vector<std::string> warnings;
+    MicAccess micAccess = MicAccess::NotNeeded;  // with an input: the microphone permission (macOS, P34b)
 };
 
 class AudioStream : public SessionAudio {

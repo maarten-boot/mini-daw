@@ -127,6 +127,14 @@ OpenResult AudioStream::open(const AudioSettings& settings, const DeviceScan& sc
     const ResolvedDevice out = resolveAudioDevice(scan.audioDevices, settings.outputDevice, Direction::Output);
     if (!in.warning.empty()) result.warnings.push_back(in.warning);
     if (!out.warning.empty()) result.warnings.push_back(out.warning);
+    if (in.id) {
+        // macOS (P34b): an input records silence until the user allowed the
+        // microphone; ask now if macOS has not asked yet, and say so.
+        MicAccess access = micAccess();
+        if (access == MicAccess::NotAsked && !askMicAccess()) access = micAccess();  // answered meanwhile
+        if (std::string line = micAccessWarning(access); !line.empty()) result.warnings.push_back(std::move(line));
+        result.micAccess = access;
+    }
     if (!in.id && !out.id) {
         result.error = "No input or output device is selected, so no audio stream was opened.";
         return result;

@@ -63,7 +63,7 @@ struct ParamChange {
 } // namespace
 
 // Receives the controller's edits (performEdit) and passes them to the processor.
-class ComponentHandlerImpl : public IComponentHandler {
+class ComponentHandlerImpl final : public IComponentHandler {
 public:
     explicit ComponentHandlerImpl(Vst3Instrument* owner) : owner_(owner) {}
     tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
@@ -261,7 +261,7 @@ bool Vst3Instrument::load(const std::filesystem::path& module, const std::string
             for (int16 ch = 0; ch < 16; ++ch) {
                 for (int16 cc = 0; cc <= kCtrlProgramChange; ++cc) {
                     ParamID id = 0;
-                    if (map->getMidiControllerAssignment(0, ch, cc, id) == kResultTrue) m.midiMap[ch][cc] = id;
+                    if (map->getMidiControllerAssignment(0, ch, cc, id) == kResultTrue) m.midiMap[static_cast<std::size_t>(ch)][static_cast<std::size_t>(cc)] = id;
                 }
             }
         }
@@ -632,17 +632,17 @@ void Vst3Instrument::process(const InstrumentMidi* events, std::size_t count, st
                 ev.polyPressure.noteId = -1;
                 if (m.hasEventInput) m.events.addEvent(ev);
             } else if (status == 0xB0 && e.data[1] < 128) {
-                const auto id = m.midiMap[ch][e.data[1]];
+                const auto id = m.midiMap[static_cast<std::size_t>(ch)][e.data[1]];
                 if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[2] / 127.0, true);
             } else if (status == 0xE0) {
-                const auto id = m.midiMap[ch][kPitchBend];
+                const auto id = m.midiMap[static_cast<std::size_t>(ch)][kPitchBend];
                 const int bend = e.data[1] | (e.data[2] << 7);
                 if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, bend / 16383.0, true);
             } else if (status == 0xD0) {
-                const auto id = m.midiMap[ch][kAfterTouch];
+                const auto id = m.midiMap[static_cast<std::size_t>(ch)][kAfterTouch];
                 if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0, true);
             } else if (status == 0xC0) {
-                const auto id = m.midiMap[ch][kCtrlProgramChange];
+                const auto id = m.midiMap[static_cast<std::size_t>(ch)][kCtrlProgramChange];
                 if (id != kNoMapping) addParam(static_cast<ParamID>(id), offset, e.data[1] / 127.0, true);
             }
         }

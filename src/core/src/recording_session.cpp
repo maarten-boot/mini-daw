@@ -442,8 +442,8 @@ void RecordingSession::releaseHeld(PortEventsHeld& held, int channel)
     for (int ch = 0; ch < 16; ++ch) {
         if (channel >= 0 && ch != channel) continue;
         for (int n = 0; n < 128; ++n) {
-            if (held.down[ch * 128 + n] != 0) {
-                held.down[ch * 128 + n] = 0;
+            if (held.down[static_cast<std::size_t>(ch * 128 + n)] != 0) {
+                held.down[static_cast<std::size_t>(ch * 128 + n)] = 0;
                 --held.count;
                 midiHeld_.fetch_sub(1, std::memory_order_relaxed);
             }
@@ -472,15 +472,15 @@ void RecordingSession::noteActivity(PortEventsHeld& held, const TimedMidi& m)
     const int value = m.size >= 3 ? (m.data[2] & 0x7F) : 0;
     bool starts = true;
     if (type == 0x90 && m.size >= 3 && value > 0) {
-        if (held.down[ch * 128 + key] == 0) {
-            held.down[ch * 128 + key] = 1;
+        if (held.down[static_cast<std::size_t>(ch * 128 + key)] == 0) {
+            held.down[static_cast<std::size_t>(ch * 128 + key)] = 1;
             ++held.count;
             midiHeld_.fetch_add(1, std::memory_order_relaxed);
         }
     } else if (type == 0x80 || type == 0x90) {  // note-off (or note-on with velocity 0)
         starts = false;
-        if (m.size >= 2 && held.down[ch * 128 + key] != 0) {
-            held.down[ch * 128 + key] = 0;
+        if (m.size >= 2 && held.down[static_cast<std::size_t>(ch * 128 + key)] != 0) {
+            held.down[static_cast<std::size_t>(ch * 128 + key)] = 0;
             --held.count;
             midiHeld_.fetch_sub(1, std::memory_order_relaxed);
         }

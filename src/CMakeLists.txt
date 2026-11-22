@@ -34,6 +34,7 @@ add_library(minidaw_core STATIC
     core/src/render.cpp
     core/src/log.cpp
     core/src/meter.cpp
+    core/src/mic_access.cpp
     core/src/number_text.cpp
     core/src/monitor.cpp
     core/src/player.cpp
@@ -69,6 +70,12 @@ target_link_libraries(minidaw_core
             minidaw_vorbis minidaw_opusenc FLAC)                  # audio export (P29)
 if(WIN32)
     target_link_libraries(minidaw_core PRIVATE shell32 ole32)  # SHGetKnownFolderPath
+endif()
+if(APPLE)
+    # The microphone permission (P34b): AVFoundation, Objective-C++ with ARC.
+    target_sources(minidaw_core PRIVATE core/src/mic_access_mac.mm)
+    set_source_files_properties(core/src/mic_access_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(minidaw_core PRIVATE "-framework AVFoundation" "-framework Foundation")
 endif()
 
 if(MINIDAW_BUILD_APP)
@@ -141,6 +148,15 @@ if(MINIDAW_BUILD_APP)
         endif()
     else()
         add_executable(minidaw)
+    endif()
+    if(APPLE)
+        # Info.plist built into the program (P34b): the microphone usage text,
+        # without which macOS ends a program that asks to record; the version.
+        # The .app of P34d uses the same file.
+        configure_file(${PROJECT_SOURCE_DIR}/res/macos/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
+        target_link_options(minidaw PRIVATE
+            "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
+        set_property(TARGET minidaw APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Info.plist)
     endif()
     set_target_properties(minidaw PROPERTIES OUTPUT_NAME "mini-daw")
     target_link_libraries(minidaw PRIVATE minidaw_app)
