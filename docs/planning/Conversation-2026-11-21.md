@@ -467,3 +467,13 @@ User: "yes commit, then start P34d" (P34c done committed as 0b68c6d).
 - Cmd instead of Ctrl: ImGui already treats its Ctrl modifier as the Command key on macOS, so only the texts change: `minidaw::keysHere()` in the menus, the transport, tooltips, the status line, Terms and Getting started; `docs/Getting-started.md` (the same text on every system) says "On a Mac, the shortcuts are Cmd instead of Ctrl" once. Test T-MAC-08.
 - README: building on macOS; Installing → macOS 12 or newer (preview: drag to Applications, Open Anyway, the microphone question, Cmd shortcuts, folders); Known limits updated.
 - Linux 283/283 (Xvfb, XSD skipped), MinGW build fine. The macOS part is tried by the next CI run.
+
+### 19.1 The P34d run: green
+
+User: "pushed it, check the CI run" (run 45028873440). All jobs green.
+
+- macOS: build 4.5 minutes for both architectures (was 2.5 for arm64 alone); 270 / 270 tests; `lipo -archs`: x86_64 arm64.
+- The built-in plist and the app's Info.plist: `org.minidaw.mini-daw 1.0.0`, icon `mini-daw`, the microphone usage text; the icon file is there.
+- `codesign --verify --deep --strict`: valid on disk, satisfies its Designated Requirement (ad hoc).
+- `mini-daw-1.0.0-macos.dmg`, 5.6 MB, checksum valid; the download `mini-daw-macos` holds it.
+- P34d done as far as CI can check it. Left: P34e (crosscheck, release 1.1.0).
