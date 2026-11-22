@@ -9,6 +9,7 @@
 
 #include <cctype>
 #include <fstream>
+#include <system_error>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -140,15 +141,23 @@ TEST_CASE("T-UI-21b: odd folder names and paths (crosscheck #14)", "[folders][T-
 
 #ifndef _WIN32
     // V1: a name that is not UTF-8 (Latin-1 "caf\xe9") is listed, not fatal.
-    fs::create_directories(dir.path() / fs::path(std::string("caf\xe9")));
+    // macOS (APFS) refuses to make such a name at all (P34a).
+    std::error_code latin1Error;
+    fs::create_directories(dir.path() / fs::path(std::string("caf\xe9")), latin1Error);
+#if defined(__APPLE__)
+    const std::size_t latin1 = latin1Error ? 0 : 1;
+#else
+    REQUIRE_FALSE(latin1Error);
+    const std::size_t latin1 = 1;
+#endif
     list = listSubfolders(dir.path(), false);
     CHECK(list.error.empty());
-    CHECK(list.folders.size() == 4);
+    CHECK(list.folders.size() == 3 + latin1);
     // Links: one to a folder is listed, a dangling one is skipped.
     fs::create_directory_symlink(dir / "gamma", dir / "link-to-gamma");
     fs::create_directory_symlink(dir / "gone", dir / "dangling");
     list = listSubfolders(dir.path(), false);
-    CHECK(list.folders.size() == 5);
+    CHECK(list.folders.size() == 4 + latin1);
     // A folder that cannot be read: an error, no crash.
     fs::create_directories(dir / "closed" / "inner");
     fs::permissions(dir / "closed", fs::perms::none);

@@ -159,6 +159,14 @@ TEST_CASE("T-VST-37: run loop readers: called when their descriptor can be read"
     CHECK(other == 0);
     CHECK(loop.removeOwner(&q) == 1);
     CHECK(loop.readerCount() == 0);
+    // Two readers of one descriptor are both called (macOS's poll() marks a
+    // descriptor listed twice on one entry only, P34a). q still holds its byte.
+    int both = 0;
+    loop.addReader(q[0], [&] { ++both; }, &q);
+    loop.addReader(q[0], [&] { ++both; }, &q);
+    CHECK(loop.poll() == 2);
+    CHECK(both == 2);
+    CHECK(loop.removeOwner(&q) == 2);
     ::close(p[0]);
     ::close(q[0]);
     ::close(q[1]);

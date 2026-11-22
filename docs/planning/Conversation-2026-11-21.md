@@ -386,3 +386,11 @@ User: "pushed it, check the CI run" (run 44959348477). Linux, Windows and the li
 - Fix: `minidaw/number_text.hpp`, `formatDouble` / `parseDouble`. They use the standard functions where the library has them (Linux, Windows) and a portable fallback elsewhere (stream in the "C" locale, shortest digits that read back, the same choice between fixed and scientific as `to_chars`).
 - New test T-MAC-05: the fallback gives the same results as the standard on 4000+ values (it found one difference first: `to_chars` writes large whole numbers with their exact digits; fixed).
 - Linux 281/281 (with Xvfb; the XSD check skipped as before); the MinGW build is fine.
+
+### 16.3 The third macOS run: it builds
+
+User: "pushed" (run 44962018436). Linux, Windows and the licence check passed. On the Mac the build succeeded (2.5 min) and 265 of 267 tests passed; the smoke run was skipped after the failures.
+
+- T-UI-21b: the test makes a folder named in Latin-1 (not UTF-8) on purpose; APFS refuses such a name ("Illegal byte sequence"). On macOS the test now allows that refusal; elsewhere the folder must be made, as before.
+- T-VST-37: two readers on one pipe. macOS's `poll()` (built on kqueue) marks a descriptor listed twice as ready on one entry only, so the first reader was never called. Fix in `RunLoop::poll`: each descriptor once in the poll list, every reader of it called. A new check: two readers of one descriptor are both called.
+- Linux 281/281 with Xvfb (XSD skipped as before); MinGW build fine.
