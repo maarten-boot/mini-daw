@@ -507,3 +507,8 @@ User: "yes, prepare 1.1.0".
 - `tools/release_notes.py --macos v1.1.0` gives the notes with the `.dmg` line.
 
 User (meanwhile): where is the gh token kept and how to renew it. It is in `~/.config/gh/hosts.yml` (github.com, account maarten-boot), a token that expires 2026-11-30; renew with `gh auth login -h github.com --with-token` from the user's own terminal.
+
+User: "pushed it, check the CI run" (run 45044604946, 6219305): all green, every build `mini-daw 1.1.0`; `dist/` replaced with its builds (`mini-daw-1.1.0-setup.exe`), `TESTS.txt` header for 1.1.0.
+
+User: "pushed the v1.1.0 tag, check the release run" (run 45048508723): all jobs green, `release` included. The draft release holds `mini-daw-1.1.0-windows-x64-setup.exe`, `-windows-x64.zip`, `-linux-x64.tar.gz`, `-macos.dmg` (5.6 MB) and `SHA256SUMS.txt`; the notes have the macOS line. The draft is not visible to the read-only token; the user publishes it on GitHub.
+- The user published the draft as release v1.1.0 ("published it").
