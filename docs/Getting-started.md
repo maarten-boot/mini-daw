@@ -2,7 +2,7 @@
 
 <!-- Made from src/core/src/tutorial.cpp: change the text there; the test T-UI-35 fails while this file differs (it writes the new text to the build folder). -->
 
-A short tutorial for beginners in four lessons. The same lessons are in mini-daw under **Help > Getting started**, where each step ticks itself off when you have done it.
+A short tutorial for beginners in four lessons. The same lessons are in mini-daw under **Help > Getting started**, where each step ticks itself off when you have done it. On a Mac, the shortcuts are Cmd instead of Ctrl (Cmd+R, Cmd+L, ...).
 
 ## 1. Set up and record your first take
 

@@ -2,7 +2,7 @@
 
 a simple daw just for recording and playback with VST®3 instrument support
 
-A small program to record MIDI and audio input on several tracks at once, with monitoring and playback, and VST3 instruments on MIDI tracks. For Windows 10 / 11 and Linux; macOS later.
+A small program to record MIDI and audio input on several tracks at once, with monitoring and playback, and VST3 instruments on MIDI tracks. For Windows 10 / 11 and Linux; macOS as a preview (built and tested automatically, not yet tried on a real Mac).
 
 **Status:** version 1.0.0, the first release (2026-11-21; steps P2–P33, PL1, PL2; what is in it: `CHANGELOG.md`; the version is shown at the right of the menu bar and in Help → About, with the commit and CI run of the build). The program lists audio devices and MIDI ports, lets you choose the audio devices, sample rate and buffer size, and records audio and MIDI tracks: add tracks, arm them and press Record. Each track has a level meter (with dBFS value and a CLIP label) and, for audio tracks, a Monitor switch to hear the input while armed (use headphones). MIDI keyboards can be unplugged and plugged in again; they reconnect by themselves. View → Log (Ctrl+L) shows a diagnostics log, also kept as `mini-daw.log` next to `config.ini` (on Windows in `%APPDATA%\mini-daw`). Play back what you recorded (Space = Play/Stop, Home = to the start), with volume, mute and solo per track; MIDI tracks play to a MIDI output you choose. Record while other tracks play to overdub along with them; File → Open take folder… loads earlier takes. Projects: File → New project… keeps everything (tracks, mix, takes) in one folder, saved automatically and reopened at the next start; Save project as… copies it with its takes. Windows: an installer (`mini-daw-<version>-setup.exe`, from the CI downloads). VST3 instruments: Settings → Instruments (VST3)… scans the plugin folders (add your own with **Browse…**, remove them with **Remove**; every folder field has a Browse… button); choose an instrument in a MIDI track's output list; it plays live when the track is armed and plays the track's take, and is saved with its settings in the project. **Presets** beside it lists the instrument's own programs and its `.vstpreset` files (with **<** / **>** to step through them), and **Save preset…** keeps the current sound as a preset of your own (in `Documents\VST3 Presets`, so other programs see it too). The track's **Edit** button opens the instrument's own window (sounds, presets), on Windows and on Linux (X11); it can stay open while you play. Recording an armed instrument track also records the instrument's sound, onto a linked audio track below it ("<name> sound"); **Render** makes that sound from the MIDI take, faster than real time. The linked track's **Sound from** chooses what plays: the instrument (default) or the recording. **Auto record** records everything you play on the armed tracks without pressing Record: a part starts when you play and ends after a pause (5 s, adjustable in Settings → Recording…), each part in its own folder `auto/<date time>`. The transport (Play, Record, Auto record …) is above the tabs, the same on every tab. The audio stream and the device list are on the **Audio setup** tab (the Recording tab keeps a short status line); drag a tab, or use Settings → Tabs…, to change their order (Terms stays at the right end), and the tab used last opens at the next start. The **Timeline** tab shows all recordings (auto parts "A" and takes "R") in time order, in lines like text (the view scrolls down as they fill it), with long pauses drawn short and labelled with their real length; double-click one to hear it, or load it onto the tracks; right-click one to give it a name, write notes about it, or delete it (it goes into a `deleted` folder, so you can get it back). While recording, type a note in the transport area and press Enter: it is kept at that moment and shown as a mark on the timeline. File → Project note… keeps a note for the whole project. File → **Export DAWproject…** writes the tracks, takes, notes, instruments (with their sound) and marks as a `.dawproject` file, the open exchange format that Bitwig Studio, Studio One, Cubase and other programs read. File → **Import DAWproject…** makes a new project from such a file (from those programs or from mini-daw): the tracks with their volume, mute and solo, the audio (each track's clips in one take, converted to mini-daw's sample rate), the notes, the VST3 instruments with their sound and the markers; what mini-daw cannot hold (effects, automation, pan …) is listed. File → **Export audio…** makes audio files to listen to or hand on: the song as Play plays it and / or recordings from the Timeline, as Ogg Vorbis, Opus, FLAC or WAV, one mix each or stems (a file per track), optionally all in one .zip with the MIDI files; instruments are rendered as Render does. Recordings are kept as FLAC after they end (lossless, about half the size of WAV; Settings → Recording…), and File → **Compact recordings…** does the same for older ones. mini-daw runs once per user: starting it again brings the open window to the front. The window reopens at the size and place it had when you closed it (also maximised; `remember = false` under `[window]` in `config.ini` turns this off). It also comes back in the state you left it: auto record on (also after a crash), the song position, the instrument windows and mini-daw's other windows. The **Terms** tab explains the words mini-daw uses (track, take, arm, overdub, preset, latency …), with a Find field. Adjustable contrast and text size. Keyboard: Tab and the arrow keys move between controls, Enter presses the one in focus (Space stays Play/Stop). See `docs/planning/` for the Spec, Plan and test cases.
 
@@ -32,6 +32,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/src/mini-daw
 ```
+
+### macOS (Xcode or its Command Line Tools)
+
+```
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+ctest --test-dir build --output-on-failure
+open build/src/mini-daw.app
+```
+
+Leave out `CMAKE_OSX_ARCHITECTURES` to build only for the Mac you are on. The command-line options work with the program inside the app: `build/src/mini-daw.app/Contents/MacOS/mini-daw --list-devices`.
 
 ### Cross-compiling for Windows from Linux (MinGW-w64)
 
@@ -163,7 +174,7 @@ ASIO support is **optional and off by default**, and is planned for a later step
 
 ## Installing
 
-Download the files from the [Releases](https://github.com/maarten-boot/mini-daw/releases) page. `SHA256SUMS.txt` there has the checksum of each file (Windows: `certutil -hashfile <file> SHA256`; Linux: `sha256sum -c SHA256SUMS.txt --ignore-missing`).
+Download the files from the [Releases](https://github.com/maarten-boot/mini-daw/releases) page. `SHA256SUMS.txt` there has the checksum of each file (Windows: `certutil -hashfile <file> SHA256`; Linux: `sha256sum -c SHA256SUMS.txt --ignore-missing`; macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`).
 
 ### Windows 10 / 11 (64-bit)
 
@@ -190,15 +201,23 @@ tar -xzf mini-daw-<version>-linux-x64.tar.gz
 
 Copy `mini-daw` to a folder in your PATH (e.g. `~/.local/bin`) to start it by name. Settings, log and plugin list are in `~/.config/mini-daw` (or `$XDG_CONFIG_HOME/mini-daw`); recordings go to `~/Music/mini-daw` unless you choose another folder. VST3 instruments are found in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`, and in folders you add (Settings → Instruments (VST®3)…). To remove mini-daw, delete the program and, if you like, those folders.
 
+### macOS 12 or newer (preview)
+
+`mini-daw-<version>-macos.dmg` (in the releases from 1.1.0 on; until then in the CI downloads as `mini-daw-macos`) holds one program for Apple silicon and Intel Macs. It is a **preview**: it is built and its automatic tests pass on every change, but nobody has tried it on a real Mac yet; please report what you find.
+
+Open the `.dmg` and drag **mini-daw** onto **Applications**. mini-daw is not signed by Apple (there is no Apple developer account behind it), so the first start is refused: macOS says it cannot check mini-daw for malicious software. Then open **System Settings → Privacy & Security**, scroll down to the line about mini-daw and choose **Open Anyway** (and confirm). After that it starts normally. (In the Terminal, `xattr -dr com.apple.quarantine /Applications/mini-daw.app` does the same.)
+
+When mini-daw first opens an audio input (usually at its first start), macOS asks whether mini-daw may use the microphone: allow it, or audio inputs record silence (mini-daw says so). You can change it later in System Settings → Privacy & Security → Microphone. Shortcuts are Cmd instead of Ctrl (Cmd+R to record, Cmd+Q to quit). Settings, log and plugin list are in `~/Library/Application Support/mini-daw`; recordings go to `~/Music/mini-daw`. VST3 instruments are found in `~/Library/Audio/Plug-Ins/VST3` and `/Library/Audio/Plug-Ins/VST3`. To remove mini-daw, drag it from Applications to the Bin and, if you like, delete those folders.
+
 ## Known limits
 
 - **Latency on Windows:** audio runs through WASAPI in shared mode, which adds some delay (exclusive mode and ASIO are not there yet). Use headphones and Monitor; overdubs are lined up with what you heard.
 - **Windows 10 / 11 N editions** need the Media Feature Pack (`MFPlat.dll`), or mini-daw does not start.
-- **No macOS yet.** On Linux no JACK; the instrument's own window (Edit) needs X11 or XWayland.
+- **macOS is a preview:** built and tested automatically, not yet tried on a real Mac. On Linux no JACK; the instrument's own window (Edit) needs X11 or XWayland.
 - **VST3 instruments only:** no effects, no VST2 / CLAP / LV2 plugins.
 - **No editing** of notes or audio; MIDI is recorded at a fixed 120 BPM grid (or SMPTE), without a tempo map.
 - **Export audio:** no MP3 (its encoder is not under a licence mini-daw can use).
-- **Not signed:** Windows SmartScreen may warn on the first start (More info → Run anyway).
+- **Not signed:** Windows SmartScreen may warn on the first start (More info → Run anyway); macOS refuses the first start until you choose Open Anyway (see Installing).
 - **Max contrast (21:1):** hover and selection are shown by frames and marks instead of colours.
 
 ## Trademarks

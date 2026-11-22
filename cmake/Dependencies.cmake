@@ -137,6 +137,13 @@ set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+# One macOS program for Apple silicon and Intel (P34d): Opus picks its SIMD
+# code from the build machine's processor, which does not fit both slices;
+# plain C there (FLAC and the others check per slice).
+list(LENGTH CMAKE_OSX_ARCHITECTURES minidaw_osx_arch_count)
+if(APPLE AND minidaw_osx_arch_count GREATER 1)
+    set(OPUS_DISABLE_INTRINSICS ON CACHE BOOL "" FORCE)
+endif()
 # MinGW: the stack protector / FORTIFY_SOURCE options link libssp as a DLL
 # (Opus adds "ssp" to its libraries), so the program would no longer be one
 # self-contained .exe. Off there; MSVC and Linux keep them.

@@ -119,10 +119,10 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # P34a (SPEC-TECH-07): macOS is a preview until it has been tried on a Mac.
-    # A failure here shows in the run but does not fail it, and the release
-    # does not wait for it (P34e decides when that changes). For now the
-    # runner's own architecture (arm64); the universal build comes in P34d.
+    # P34 (SPEC-TECH-07): macOS is a preview until it has been tried on a Mac.
+    # A failure here shows in the run but does not fail it; the release takes
+    # the .dmg when this job made one (P34e decides whether that changes).
+    # One program for Apple silicon and Intel (P34d); the tests run as arm64.
     runs-on: macos-15
     continue-on-error: true
     steps:
@@ -135,7 +135,9 @@ jobs:
           key: deps-macos-${{ hashFiles('cmake/Dependencies.cmake') }}
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
 
       - name: Build
         # Make with a bare -j starts every job at once: the first run took
@@ -148,8 +150,15 @@ jobs:
 
       - name: Smoke-run the program
         run: |
-          ./build/src/mini-daw --version
-          ./build/src/mini-daw --list-devices
+          ./build/src/mini-daw.app/Contents/MacOS/mini-daw --version
+          ./build/src/mini-daw.app/Contents/MacOS/mini-daw --list-devices
+
+      - name: Check both architectures
+        run: |
+          archs="$(lipo -archs build/src/mini-daw.app/Contents/MacOS/mini-daw)"
+          echo "mini-daw: $archs"
+          case " $archs " in *" arm64 "*) ;; *) echo "arm64 missing"; exit 1 ;; esac
+          case " $archs " in *" x86_64 "*) ;; *) echo "x86_64 missing"; exit 1 ;; esac
 
       - name: Check the built-in Info.plist
         # The microphone usage text (macOS ends a program that asks to record
@@ -157,21 +166,44 @@ jobs:
         run: |
           python3 - <<'PY'
           import plistlib, re, sys
-          data = open("build/src/mini-daw", "rb").read()
+          app = "build/src/mini-daw.app/Contents/"
+          data = open(app + "MacOS/mini-daw", "rb").read()
           found = re.search(rb"<plist version.*?</plist>", data, re.S)
           if not found:
-              sys.exit("no Info.plist in build/src/mini-daw")
-          info = plistlib.loads(found.group(0))
-          print(info["CFBundleIdentifier"], info["CFBundleShortVersionString"])
-          print("NSMicrophoneUsageDescription:", info["NSMicrophoneUsageDescription"])
+              sys.exit("no Info.plist in the program")
+          for name, info in (("built in", plistlib.loads(found.group(0))),
+                             ("Info.plist", plistlib.load(open(app + "Info.plist", "rb")))):
+              print(name + ":", info["CFBundleIdentifier"], info["CFBundleShortVersionString"],
+                    "icon:", info["CFBundleIconFile"])
+              print("  NSMicrophoneUsageDescription:", info["NSMicrophoneUsageDescription"])
           PY
+          test -s build/src/mini-daw.app/Contents/Resources/mini-daw.icns
+
+      - name: Make the .dmg
+        # Unsigned (no Apple developer account): an ad-hoc signature over the
+        # whole .app, so macOS sees it as one unchanged program and offers
+        # "Open Anyway" (README, Installing).
+        run: |
+          set -euo pipefail
+          v="$(plutil -extract CFBundleShortVersionString raw build/src/mini-daw.app/Contents/Info.plist)"
+          codesign --force --deep --sign - build/src/mini-daw.app
+          codesign --verify --deep --strict --verbose=2 build/src/mini-daw.app
+          stage="$RUNNER_TEMP/dmg"
+          rm -rf "$stage" && mkdir -p "$stage"
+          cp -R build/src/mini-daw.app "$stage/"
+          ln -s /Applications "$stage/Applications"
+          cp LICENSE THIRD_PARTY.md README.md CHANGELOG.md "$stage/"
+          mkdir -p out
+          hdiutil create -volname "mini-daw $v" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "out/mini-daw-$v-macos.dmg"
+          hdiutil verify "out/mini-daw-$v-macos.dmg"
+          ls -l out
 
       - name: Upload program
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mini-daw-macos
-          path: build/src/mini-daw
+          path: out/mini-daw-*-macos.dmg
           if-no-files-found: warn
 
   licence:
@@ -187,22 +219,31 @@ jobs:
         run: python3 -I tools/release_notes.py "$GITHUB_REF_NAME"
 
   release:
-    # Only for a pushed tag, after both builds and their tests passed.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, licence]
+    # Only for a pushed tag, after the Windows and Linux builds and their tests
+    # passed. macOS is a preview (P34): its .dmg goes along when that job made
+    # one, and the release does not wait for it to succeed.
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+          && needs.windows.result == 'success' && needs.linux.result == 'success'
+          && needs.licence.result == 'success' }}
+    needs: [windows, linux, licence, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write  # creating the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Release notes
-        run: python3 -I tools/release_notes.py "$GITHUB_REF_NAME" > notes.md
-
       - name: Download the builds of this run
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          mac=()
+          if compgen -G "artifacts/mini-daw-macos/*.dmg" > /dev/null; then mac=(--macos); fi
+          python3 -I tools/release_notes.py "${mac[@]}" "$GITHUB_REF_NAME" > notes.md
 
       - name: Package
         run: |
@@ -222,6 +263,10 @@ jobs:
           cp artifacts/mini-daw-linux-x64/mini-daw LICENSE THIRD_PARTY.md README.md CHANGELOG.md "$l/"
           chmod 755 "$l/mini-daw"
           tar -czf "out/$l.tar.gz" --owner=0 --group=0 "$l"
+          # macOS (P34d, a preview): the .dmg, when the macOS job made one.
+          for d in artifacts/mini-daw-macos/*.dmg; do
+            if [ -f "$d" ]; then cp "$d" "out/mini-daw-$v-macos.dmg"; fi
+          done
           (cd out && sha256sum * > SHA256SUMS.txt)
           ls -l out
           cat out/SHA256SUMS.txt

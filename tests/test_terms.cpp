@@ -1,7 +1,9 @@
 // The Terms tab's word list (P23, SPEC-UI-17).
 
 #include "minidaw/config.hpp"
+#include "minidaw/keys_text.hpp"
 #include "minidaw/terms.hpp"
+#include "minidaw/tutorial.hpp"
 #include "test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -125,4 +127,25 @@ TEST_CASE("T-UI-33: the Terms tab is pinned at the right end", "[ui][config][T-U
     REQUIRE(saveConfigFile(dir.path() / "config.ini", c).empty());
     const auto back = loadConfigFile(dir.path() / "config.ini");
     CHECK(back.config.tabs.order == std::vector<std::string>{"timeline", "recording", "audio", "terms"});
+}
+
+TEST_CASE("T-MAC-08: shortcut names on macOS: Cmd instead of Ctrl, Cmd+Q to quit", "[mac][T-MAC-08]")
+{
+    CHECK(minidaw::keysForMac("Record (Ctrl+R)") == "Record (Cmd+R)");
+    CHECK(minidaw::keysForMac("Ctrl+= / Ctrl+-") == "Cmd+= / Cmd+-");
+    CHECK(minidaw::keysForMac("Ctrl+Shift+Up") == "Cmd+Shift+Up");
+    CHECK(minidaw::keysForMac("Alt+F4") == "Cmd+Q");
+    CHECK(minidaw::keysForMac("Home, then Ctrl+click") == "Home, then Cmd+click");
+    CHECK(minidaw::keysForMac("no keys here") == "no keys here");
+    // Every Ctrl in the Terms and Getting started texts becomes Cmd.
+    for (const auto& t : minidaw::terms()) CHECK(minidaw::keysForMac(t.text + t.where).find("Ctrl") == std::string::npos);
+    for (const auto& l : minidaw::tutorialLessons()) {
+        for (const auto& s : l.steps) CHECK(minidaw::keysForMac(s.text + s.where).find("Ctrl") == std::string::npos);
+        CHECK(minidaw::keysForMac(l.intro + l.tip).find("Ctrl") == std::string::npos);
+    }
+#if defined(__APPLE__)
+    CHECK(minidaw::keysHere("View > Log (Ctrl+L)") == "View > Log (Cmd+L)");
+#else
+    CHECK(minidaw::keysHere("View > Log (Ctrl+L)") == "View > Log (Ctrl+L)");
+#endif
 }

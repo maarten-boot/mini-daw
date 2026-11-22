@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Release checks and notes for mini-daw (P33).
 
-Usage: release_notes.py <tag>      e.g. v1.0.0 or v1.0.0-rc1
+Usage: release_notes.py [--macos] <tag>      e.g. v1.0.0 or v1.0.0-rc1
+
+--macos: the release has the macOS .dmg (P34d; only when the macOS job
+built it), so its line is in the downloads.
 
 - The tag must be v<major>.<minor>.<patch>, optionally -rc<n>, and its
   version must equal the VERSION in the top-level CMakeLists.txt.
@@ -57,18 +60,27 @@ DOWNLOADS = """\
 | `mini-daw-{v}-windows-x64-setup.exe` | Windows 10 / 11, 64-bit: the installer (Start menu entry, uninstaller) |
 | `mini-daw-{v}-windows-x64.zip` | Windows, without installing: `mini-daw.exe` (window) and `mini-daw.com` (console) |
 | `mini-daw-{v}-linux-x64.tar.gz` | Linux x86-64, built on Ubuntu 24.04 (glibc 2.39 or newer); needs ALSA, PulseAudio or PipeWire-Pulse, X11 and OpenGL |
-| `SHA256SUMS.txt` | the checksums of the files above |
+{macos}| `SHA256SUMS.txt` | the checksums of the files above |
 
-The program is not signed: Windows SmartScreen may ask before it runs.
+The program is not signed: Windows SmartScreen may ask before it runs{macos_note}.
 Licence: MIT; the libraries it contains are listed in `THIRD_PARTY.md`.
 """
 
+MACOS_ROW = ("| `mini-daw-{v}-macos.dmg` | macOS 12 or newer, Apple silicon and Intel in one program: a preview, "
+             "built and tested automatically but not yet tried on a real Mac. Open it and drag mini-daw to "
+             "Applications |\n")
+MACOS_NOTE = ("; macOS asks too: the first time, open it from System Settings > Privacy & Security > Open Anyway "
+              "(see Installing in the README)")
+
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    args = argv[1:]
+    macos = "--macos" in args
+    args = [a for a in args if a != "--macos"]
+    if len(args) != 1:
         print(__doc__, file=sys.stderr)
         return 1
-    tag = argv[1]
+    tag = args[0]
     m = re.fullmatch(r"v(\d+\.\d+\.\d+)(-rc\d+)?", tag)
     if not m:
         print(f"tag {tag!r} is not v<major>.<minor>.<patch>[-rc<n>]", file=sys.stderr)
@@ -88,7 +100,8 @@ def main(argv: list[str]) -> int:
     full = version + (rc or "")
     print(notes)
     print()
-    print(DOWNLOADS.format(v=full))
+    print(DOWNLOADS.format(v=full, macos=MACOS_ROW.format(v=full) if macos else "",
+                           macos_note=MACOS_NOTE if macos else ""))
     return 0
 
 

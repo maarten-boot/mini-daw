@@ -451,3 +451,19 @@ User: "pushed it, check the CI run" (run 45018905401). All jobs green.
 
 - macOS: 269 / 269 tests; T-MAC-07 passed on the first try (the test synth's NSView in a Cocoa window: size, resize, a click reaching the sound, gone after close). No warnings left in our code.
 - P34c done as far as CI can check it; a real plugin's window is T-MAC-04 on a Mac.
+
+## 19. P34d: the .app, the .dmg, one program for both kinds of Mac (2026-11-22)
+
+User: "yes commit, then start P34d" (P34c done committed as 0b68c6d).
+
+- `mini-daw.app`: CMake's MACOSX_BUNDLE with the Info.plist of P34b (now also `CFBundleIconFile`); `mini-daw.icns` made at build time with `sips` and `iconutil` from `res/mini-daw-256.png` (16 to 256 px).
+- CI (job `macos`):
+  - configure with `CMAKE_OSX_ARCHITECTURES=arm64;x86_64`; Opus is then built without its SIMD code (its CMake picks it from the build machine's processor, which does not fit both slices);
+  - the tests run as arm64; `lipo -archs` must list arm64 and x86_64;
+  - both plists (built in, and the app's) and the icon are checked;
+  - the .app is signed ad hoc (`codesign --sign -`), so macOS sees one unchanged program and offers Open Anyway; no Apple signature (user's choice);
+  - `hdiutil` makes `mini-daw-<v>-macos.dmg` (the app, a link to Applications, LICENSE, THIRD_PARTY.md, README.md, CHANGELOG.md), verified, uploaded as `mini-daw-macos`.
+- Release job: `needs` includes `macos`, but its `if` only requires Windows, Linux and the licence check to have succeeded; the .dmg goes into the release when the macOS job made one, and `tools/release_notes.py --macos` adds its line and the note about Open Anyway. Tried locally with fake files, with and without a .dmg.
+- Cmd instead of Ctrl: ImGui already treats its Ctrl modifier as the Command key on macOS, so only the texts change: `minidaw::keysHere()` in the menus, the transport, tooltips, the status line, Terms and Getting started; `docs/Getting-started.md` (the same text on every system) says "On a Mac, the shortcuts are Cmd instead of Ctrl" once. Test T-MAC-08.
+- README: building on macOS; Installing → macOS 12 or newer (preview: drag to Applications, Open Anyway, the microphone question, Cmd shortcuts, folders); Known limits updated.
+- Linux 283/283 (Xvfb, XSD skipped), MinGW build fine. The macOS part is tried by the next CI run.

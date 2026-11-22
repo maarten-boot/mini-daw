@@ -148,7 +148,8 @@ std::string tutorialMarkdown()
     md += "<!-- Made from src/core/src/tutorial.cpp: change the text there; the test T-UI-35 fails while this file "
           "differs (it writes the new text to the build folder). -->\n\n";
     md += "A short tutorial for beginners in four lessons. The same lessons are in mini-daw under **Help > Getting "
-          "started**, where each step ticks itself off when you have done it.\n\n";
+          "started**, where each step ticks itself off when you have done it. On a Mac, the shortcuts are Cmd instead "
+          "of Ctrl (Cmd+R, Cmd+L, ...).\n\n";
     for (const auto& l : tutorialLessons()) {
         md += "## " + l.title + "\n\n";
         md += l.intro + "\n\n";

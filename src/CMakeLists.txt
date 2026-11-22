@@ -31,6 +31,7 @@ add_library(minidaw_core STATIC
     core/src/instance_lock.cpp
     core/src/instrument.cpp
     core/src/instrument_rack.cpp
+    core/src/keys_text.cpp
     core/src/render.cpp
     core/src/log.cpp
     core/src/meter.cpp
@@ -160,11 +161,37 @@ if(MINIDAW_BUILD_APP)
     if(APPLE)
         # Info.plist built into the program (P34b): the microphone usage text,
         # without which macOS ends a program that asks to record; the version.
-        # The .app of P34d uses the same file.
+        # The same file is the .app's (P34d), so the program has it either way.
         configure_file(${PROJECT_SOURCE_DIR}/res/macos/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
         target_link_options(minidaw PRIVATE
             "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
         set_property(TARGET minidaw APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Info.plist)
+
+        # mini-daw.app (P34d): Contents/MacOS/mini-daw, Contents/Info.plist,
+        # Contents/Resources/mini-daw.icns made from the 256 px icon.
+        set(iconset ${CMAKE_CURRENT_BINARY_DIR}/mini-daw.iconset)
+        set(icns ${CMAKE_CURRENT_BINARY_DIR}/mini-daw.icns)
+        set(icon_png ${PROJECT_SOURCE_DIR}/res/mini-daw-256.png)
+        set(icon_cmds)
+        foreach(entry "16;icon_16x16" "32;icon_16x16@2x" "32;icon_32x32" "64;icon_32x32@2x"
+                      "128;icon_128x128" "256;icon_128x128@2x" "256;icon_256x256")
+            list(GET entry 0 px)
+            list(GET entry 1 name)
+            list(APPEND icon_cmds COMMAND sips -z ${px} ${px} ${icon_png} --out ${iconset}/${name}.png)
+        endforeach()
+        add_custom_command(OUTPUT ${icns}
+            COMMAND ${CMAKE_COMMAND} -E rm -rf ${iconset}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${iconset}
+            ${icon_cmds}
+            COMMAND iconutil -c icns ${iconset} -o ${icns}
+            DEPENDS ${icon_png}
+            COMMENT "The macOS icon (mini-daw.icns)"
+            VERBATIM)
+        target_sources(minidaw PRIVATE ${icns})
+        set_source_files_properties(${icns} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(minidaw PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_BINARY_DIR}/Info.plist)
     endif()
     set_target_properties(minidaw PROPERTIES OUTPUT_NAME "mini-daw")
     target_link_libraries(minidaw PRIVATE minidaw_app)

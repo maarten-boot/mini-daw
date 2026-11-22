@@ -23,6 +23,7 @@
 #include "window_place.hpp"
 
 #include "minidaw/audio_stream.hpp"
+#include "minidaw/keys_text.hpp"
 #include "minidaw/config.hpp"
 #include "minidaw/audio_export.hpp"
 #include "minidaw/compact.hpp"
@@ -955,7 +956,7 @@ void drawMenuBar(AppState& app, bool& quit)
             app.takeBrowserError.clear();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit", "Alt+F4")) quit = true;
+        if (ImGui::MenuItem("Quit", minidaw::keysHere("Alt+F4").c_str())) quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Settings")) {
@@ -983,20 +984,20 @@ void drawMenuBar(AppState& app, bool& quit)
                 app.showCustomContrast = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Raise contrast", "Ctrl+Shift+Up")) stepContrast(app, +1);
-            if (ImGui::MenuItem("Lower contrast", "Ctrl+Shift+Down")) stepContrast(app, -1);
+            if (ImGui::MenuItem("Raise contrast", minidaw::keysHere("Ctrl+Shift+Up").c_str())) stepContrast(app, +1);
+            if (ImGui::MenuItem("Lower contrast", minidaw::keysHere("Ctrl+Shift+Down").c_str())) stepContrast(app, -1);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Text size")) {
             ImGui::Text("Current: %d px", static_cast<int>(app.config.fontSize));
-            if (ImGui::MenuItem("Larger", "Ctrl+=")) setFontSize(app, app.config.fontSize + 2, true);
-            if (ImGui::MenuItem("Smaller", "Ctrl+-")) setFontSize(app, app.config.fontSize - 2, true);
-            if (ImGui::MenuItem("Default (16 px)", "Ctrl+0")) setFontSize(app, minidaw::kDefaultFontSize, true);
+            if (ImGui::MenuItem("Larger", minidaw::keysHere("Ctrl+=").c_str())) setFontSize(app, app.config.fontSize + 2, true);
+            if (ImGui::MenuItem("Smaller", minidaw::keysHere("Ctrl+-").c_str())) setFontSize(app, app.config.fontSize - 2, true);
+            if (ImGui::MenuItem("Default (16 px)", minidaw::keysHere("Ctrl+0").c_str())) setFontSize(app, minidaw::kDefaultFontSize, true);
             ImGui::EndMenu();
         }
         ImGui::MenuItem("Contrast report", nullptr, &app.showContrastReport);
         ImGui::Separator();
-        ImGui::MenuItem("Log", "Ctrl+L", &app.showLog);
+        ImGui::MenuItem("Log", minidaw::keysHere("Ctrl+L").c_str(), &app.showLog);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {  // P28a
@@ -1038,8 +1039,8 @@ void drawTerm(AppState& app, std::size_t index, bool showGroup)
         ImGui::TextDisabled("(%s)", t.group.c_str());
     }
     ImGui::Indent();
-    ImGui::TextWrapped("%s", t.text.c_str());
-    if (!t.where.empty()) ImGui::TextWrapped("Where: %s", t.where.c_str());
+    ImGui::TextWrapped("%s", minidaw::keysHere(t.text).c_str());
+    if (!t.where.empty()) ImGui::TextWrapped("Where: %s", minidaw::keysHere(t.where).c_str());
     if (!t.seeAlso.empty()) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("See also:");
@@ -1306,7 +1307,7 @@ void drawTutorialWindow(AppState& app)
             }
             if (ImGui::CollapsingHeader(head.c_str())) {
                 ImGui::Indent(0.5f * em);
-                ImGui::TextWrapped("%s", l.intro.c_str());
+                ImGui::TextWrapped("%s", minidaw::keysHere(l.intro).c_str());
                 for (const auto& st : l.steps) {
                     ImGui::PushID(static_cast<int>(i));
                     bool d = app.tutorialDone[i];
@@ -1316,13 +1317,13 @@ void drawTutorialWindow(AppState& app)
                                               : "Ticks itself when mini-daw sees it done; you can tick it too");
                     ImGui::SameLine();
                     ImGui::BeginGroup();
-                    ImGui::TextWrapped("%s", st.text.c_str());
-                    ImGui::TextDisabled("Where: %s", st.where.c_str());
+                    ImGui::TextWrapped("%s", minidaw::keysHere(st.text).c_str());
+                    ImGui::TextDisabled("Where: %s", minidaw::keysHere(st.where).c_str());
                     ImGui::EndGroup();
                     ImGui::PopID();
                     ++i;
                 }
-                if (!l.tip.empty()) ImGui::TextWrapped("Tip: %s", l.tip.c_str());
+                if (!l.tip.empty()) ImGui::TextWrapped("Tip: %s", minidaw::keysHere(l.tip).c_str());
                 ImGui::Unindent(0.5f * em);
                 ImGui::Spacing();
             } else {
@@ -3868,7 +3869,9 @@ void drawTransport(AppState& app)
     // Record needs an armed track, like Auto record (P30c); Ctrl+R and the script command
     // still say why nothing was recorded.
     minidaw::app::beginDisabled(autoOn || (!rec && (!running || app.renderTrack != 0 || !anyArmed)));  // R5
-    if (ImGui::Button(recNormal ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)")) toggleRecording(app);
+    if (ImGui::Button(minidaw::keysHere(recNormal ? "Stop recording (Ctrl+R)" : "Record (Ctrl+R)").c_str())) {
+        toggleRecording(app);
+    }
     if (!rec && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         if (app.renderTrack != 0) {
             ImGui::SetTooltip("Recording waits until the render has finished (or is cancelled).");
@@ -4392,7 +4395,8 @@ void drawTimeline(AppState& app)
                        "with their real length.",
                        minidaw::pathToUtf8(activeTakesFolder(app)).c_str());
     if (recs.empty()) {
-        ImGui::TextWrapped("No recordings yet. Record (Ctrl+R) or switch on Auto record and play: they appear here.");
+        ImGui::TextWrapped("%s", minidaw::keysHere("No recordings yet. Record (Ctrl+R) or switch on Auto record and play: "
+                                                     "they appear here.").c_str());
         return;
     }
     const float scale = em / 16.0f;
@@ -5043,8 +5047,9 @@ void drawTracksPanel(AppState& app)
     }
     if (app.tracks.empty()) ImGui::TextUnformatted("No tracks. Add an audio or MIDI track.");
     if (!app.tracks.empty()) {  // always shown, so arming the first track does not move the table
-        ImGui::TextWrapped("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI track's port "
-                           "opens when it is armed. Tracks that are not armed play along (overdub).");
+        ImGui::TextWrapped("%s", minidaw::keysHere("Tick Arm on each track to record, then press Record (Ctrl+R). A MIDI "
+                                                   "track's port opens when it is armed. Tracks that are not armed play "
+                                                   "along (overdub).").c_str());
     }
 
     const float em = ImGui::GetFontSize();
@@ -5104,9 +5109,9 @@ void drawTracksPanel(AppState& app)
                 logRefusedClick(app, rec, "Track " + std::to_string(t.number) + ": Arm not changed",
                                 "not while recording");
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("Armed tracks record when you press Record (Ctrl+R).\n"
-                                      "Tracks that are not armed play their takes meanwhile, so you can record "
-                                      "along with them (overdub).");
+                    ImGui::SetTooltip("%s", minidaw::keysHere("Armed tracks record when you press Record (Ctrl+R).\n"
+                                                              "Tracks that are not armed play their takes meanwhile, "
+                                                              "so you can record along with them (overdub).").c_str());
                 }
                 ImGui::SameLine();
                 ImGui::TextUnformatted(t.armed ? "armed" : "-");  // not by colour alone (SPEC-UI-07)
@@ -5209,7 +5214,7 @@ void drawTracksPanel(AppState& app)
                                    t.volumeDb <= minidaw::kMinVolumeDb ? "silent" : "%+.1f dB")) {
                 app.tutorialFacts.mixChanged = true;  // P32
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback volume. Ctrl+click to type a value.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", minidaw::keysHere("Playback volume. Ctrl+click to type a value.").c_str());
             ImGui::SameLine();
             if (ImGui::Checkbox("M##mute", &t.mute)) app.tutorialFacts.mixChanged = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mute: this track is not played.");
@@ -5645,8 +5650,10 @@ void drawStatusLine(const AppState& app)
 {
     ImGui::Separator();
     const auto lowest = minidaw::lowestContrast(app.palette);
-    ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. Ctrl+Shift+Up/Down to change. Text: %d px (Ctrl+= / Ctrl+-).",
-                describeContrast(app.config.contrast).c_str(), lowest.ratio, static_cast<int>(app.config.fontSize));
+    ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. %s to change. Text: %d px (%s).",
+                describeContrast(app.config.contrast).c_str(), lowest.ratio,
+                minidaw::keysHere("Ctrl+Shift+Up/Down").c_str(), static_cast<int>(app.config.fontSize),
+                minidaw::keysHere("Ctrl+= / Ctrl+-").c_str());
     if (app.projectFolder.empty()) {
         ImGui::TextUnformatted("Project: none (File > New project / Save project as to keep this session)");
     } else {
@@ -5656,9 +5663,9 @@ void drawStatusLine(const AppState& app)
     for (const auto& n : app.projectWarnings) ImGui::TextWrapped("Project warning: %s", n.c_str());
     ImGui::Text("Config: %s", minidaw::pathToUtf8(app.configPath).c_str());
     if (app.remote) ImGui::TextWrapped("%s", app.remote->status.c_str());  // P25b: always said when it listens
-    ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (Ctrl+L)", app.rendererName.c_str(),
+    ImGui::Text("Graphics: %s.   Log: %llu warning(s), %llu error(s) - View > Log (%s)", app.rendererName.c_str(),
                 static_cast<unsigned long long>(app.log.warningCount()),
-                static_cast<unsigned long long>(app.log.errorCount()));
+                static_cast<unsigned long long>(app.log.errorCount()), minidaw::keysHere("Ctrl+L").c_str());
     for (const auto& w : app.configWarnings) ImGui::TextWrapped("Config warning: %s", w.c_str());
     if (!app.saveError.empty()) ImGui::TextWrapped("Could not save config: %s", app.saveError.c_str());
     if (!app.unresolved.empty()) {
