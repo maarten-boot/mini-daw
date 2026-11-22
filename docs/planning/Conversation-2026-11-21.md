@@ -394,3 +394,14 @@ User: "pushed" (run 44962018436). Linux, Windows and the licence check passed. O
 - T-UI-21b: the test makes a folder named in Latin-1 (not UTF-8) on purpose; APFS refuses such a name ("Illegal byte sequence"). On macOS the test now allows that refusal; elsewhere the folder must be made, as before.
 - T-VST-37: two readers on one pipe. macOS's `poll()` (built on kqueue) marks a descriptor listed twice as ready on one entry only, so the first reader was never called. Fix in `RunLoop::poll`: each descriptor once in the poll list, every reader of it called. A new check: two readers of one descriptor are both called.
 - Linux 281/281 with Xvfb (XSD skipped as before); MinGW build fine.
+
+### 16.4 The fourth macOS run: green
+
+User: "pushed it, check the CI run" (run 45012825655). All jobs green, `macos` included:
+
+- Build, 267 / 267 tests, then the smoke run:
+  - `mini-daw 1.0.0 (commit 7a1b2e2 of 2026-11-22, CI run 45012825655)`
+  - Audio API CoreAudio, the runner's three virtual devices (Apple Virtual Sound Device in / out, Null Audio Device), no MIDI ports.
+- `mini-daw-macos` uploaded (2.5 MB, the program for Apple silicon, not yet an `.app`).
+- So P34a is done by its rule (builds and passes its automatic tests on the CI runner), for arm64; the universal build is part of P34d.
+- Clang's `-Wconversion` also warns on sign changes, which GCC's does not: about 30 in our code (int → size_t, int16 → size_t), all harmless; one `__int128` → int64 for a file time in `plugin_scan.cpp` (libc++'s file clock; only compared for equality, fits). To be cleaned up with P34b. The OpenGL deprecation warnings are expected (SPEC-TECH-07).
