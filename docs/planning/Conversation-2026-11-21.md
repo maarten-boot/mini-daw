@@ -444,3 +444,10 @@ User: "yes commit, then start P34c" (P34b done committed as 428f861).
 - New test T-MAC-07 (macOS only, Objective-C++): the editor in a Cocoa window that is never shown; size, resize, a click that reaches the sound, the view gone after close.
 - `GL_SILENCE_DEPRECATION` for our OpenGL code on macOS (the warnings were expected).
 - None of the Objective-C++ could be compiled here; Linux 282/282 (Xvfb, XSD skipped) and the MinGW build are unchanged.
+
+### 18.1 The P34c run: green
+
+User: "pushed it, check the CI run" (run 45018905401). All jobs green.
+
+- macOS: 269 / 269 tests; T-MAC-07 passed on the first try (the test synth's NSView in a Cocoa window: size, resize, a click reaching the sound, gone after close). No warnings left in our code.
+- P34c done as far as CI can check it; a real plugin's window is T-MAC-04 on a Mac.
