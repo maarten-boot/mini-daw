@@ -421,3 +421,11 @@ User: "yes commit, then start P34b" (P34a done committed as ff3c523).
 - The clang warnings from P34a: about 25 sign changes fixed with explicit casts; `ComponentHandlerImpl` made `final` (clang: deleted through a `unique_ptr` without a virtual destructor); the 128-bit file time cast on purpose; an unused parameter on macOS marked. A local clang 21 build now has no warnings in our code.
 - New test T-MAC-06. Linux 282/282 (Xvfb; XSD skipped as before), MinGW build fine.
 - Version stays 1.0.0: the macOS work is released as 1.1.0 at the end of P34 (P34e).
+
+### 17.1 The P34b run: green
+
+User: "pushed it, check the CI run" (run 45016560178). All jobs green.
+
+- macOS: 268 / 268 tests (T-MAC-06 included), the smoke run as before, and the new step read the built-in Info.plist: `org.minidaw.mini-daw 1.0.0` with the microphone usage text.
+- No warnings in our code on macOS any more, except the expected OpenGL deprecation ones.
+- P34b done as far as CI can check it; asking for the microphone and recording after it are for T-MAC-02 / -03 on a Mac.
