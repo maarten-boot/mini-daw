@@ -261,7 +261,12 @@ std::vector<Term> makeTerms()
         {"Contrast", kSound,
          "How far text stands out from its background. mini-daw keeps every colour pair at least at the chosen "
          "minimum (AA 4.5:1 by default; AAA, Max or your own).",
-         "View > Contrast; Ctrl+Shift+Up / Down", {}},
+         "View > Contrast; Ctrl+Shift+Up / Down", {"Theme"}},
+        {"Theme", kSound,
+         "Your own background colour for each tab, the transport and the status line, so you see at a glance where "
+         "you are. Text and buttons in that area get colours that keep the contrast you chose; a colour on which no "
+         "text could reach it is made a little lighter or darker.",
+         "Settings > Theme...", {"Contrast"}},
     };
 }
 

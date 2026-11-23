@@ -512,3 +512,14 @@ User: "pushed it, check the CI run" (run 45044604946, 6219305): all green, every
 
 User: "pushed the v1.1.0 tag, check the release run" (run 45048508723): all jobs green, `release` included. The draft release holds `mini-daw-1.1.0-windows-x64-setup.exe`, `-windows-x64.zip`, `-linux-x64.tar.gz`, `-macos.dmg` (5.6 MB) and `SHA256SUMS.txt`; the notes have the macOS line. The draft is not visible to the read-only token; the user publishes it on GitHub.
 - The user published the draft as release v1.1.0 ("published it").
+
+## 22. P35: colours per area (2026-11-23)
+
+User: "add a theme setting menu where the user can set the background color for each of the tabs and the transport area, best build a temp local linux first so i can see what makes sense before we build someting that is not practical (possibly a new branch we can undo if it does not work)."
+
+- Branch `theme-prototype`. Settings → Theme…: a colour per area (the tabs and the transport), with suggestions, Default, All default and "Tab headers in their page's colour"; saved in `[theme]` (colours quoted: `#` starts a comment in config.ini).
+- Contrast: `areaPalette()` tints the controls from the colour (dark text on a light colour, light text on a dark one) and enforces every pair; a mid colour (mid grey, pure red) is moved towards white / black until all pairs reach the minimum, also trying stricter enforcement first (at AA the plain enforcement sometimes fixed one pair at the cost of another). State cues take the area's Accent / Border.
+- The local build needed glibc 2.43; the user's machine has older, so the prototype was built in an Ubuntu 24.04 container (`localhost/minidaw-u2404:1`), offline from the already fetched sources (the container could not verify GitHub's certificate). `./tmp/try-theme.sh` runs it on a copy of the user's config.
+- User: a crash after setting each colour. Cause: the Theme window kept a pointer into the colour list, which setting or clearing a colour moved. Reproduced under Xvfb (exit 139), fixed, checked with several clicks.
+- User: "works now, tab headers look good". Choices (user: "yes, go ahead with those defaults"): the status line gets its own colour too, dark colours stay among the suggestions, tab headers coloured by default, one set for all projects.
+- Done as P35 (SPEC-UI-20, T-UI-36): the status line as sixth area, its "lowest pair" over every area; Terms "Theme"; Getting started tip (`docs/Getting-started.md` again); README "Colours per tab"; Spec v0.82; version 1.2.0.

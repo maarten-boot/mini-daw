@@ -19,6 +19,8 @@ struct Cue {
     bool disabled = false;   // disabled (by beginDisabled or by ImGui itself): dashed frame
     bool flatBlock = false;  // inside a beginDisabled(true) block
     bool checkable = false;  // a checkbox: the dashed frame goes round its box only
+    ImU32 accent = 0;        // the Accent / Border colours where it was drawn (an area
+    ImU32 border = 0;        //   with its own background, P35); 0 = the palette's
 };
 
 std::vector<Cue> g_cues;            // every item with an ID this frame (crosscheck #15, W3)
@@ -97,12 +99,12 @@ void drawStateCues(const Palette& palette)
             // A checkbox: its box, not its label. Only for ours: ImGui reports every
             // menu item as checkable too (W1).
             if (c.checkable && c.flatBlock) r.Max.x = r.Min.x + r.GetHeight();
-            dashedRect(dl, r, border, std::max(4.0f, th * 2.0f));
+            dashedRect(dl, r, c.border != 0 ? c.border : border, std::max(4.0f, th * 2.0f));
             g_drawn.push_back({DrawnCue::Kind::Disabled, r.Min, r.Max});
         } else {
             // Inside the control, so a frame in a narrow table cell is not cut off.
             r.Expand(-th * 0.5f);
-            dl->AddRect(r.Min, r.Max, accent, 0.0f, 0, th);
+            dl->AddRect(r.Min, r.Max, c.accent != 0 ? c.accent : accent, 0.0f, 0, th);
             g_drawn.push_back({c.id == g.ActiveId ? DrawnCue::Kind::Pressed : DrawnCue::Kind::Hovered, r.Min, r.Max});
         }
         dl->PopClipRect();
@@ -193,6 +195,12 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb
     cue.clip = window->ClipRect;
     cue.disabled = (data->ItemFlags & ImGuiItemFlags_Disabled) != 0;  // also ImGui's own (W1)
     cue.flatBlock = cue.disabled && minidaw::app::g_flatDepth > 0;
+    // NavCursor and Border are the Accent and Border roles (imgui_theme.cpp).
+    ImVec4 a = ImGui::GetStyleColorVec4(ImGuiCol_NavCursor);
+    ImVec4 b = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+    a.w = b.w = 1.0f;
+    cue.accent = ImGui::ColorConvertFloat4ToU32(a);
+    cue.border = ImGui::ColorConvertFloat4ToU32(b);
     minidaw::app::g_cues.push_back(cue);
 }
 

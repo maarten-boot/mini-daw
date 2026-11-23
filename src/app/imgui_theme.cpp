@@ -101,4 +101,23 @@ void applyPalette(const Palette& palette, double disabledOpacity)
     style.DisabledAlpha = static_cast<float>(disabledOpacity);
 }
 
+void pushPalette(const Palette& palette, double disabledOpacity)
+{
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        if (i == ImGuiCol_BorderShadow || i == ImGuiCol_NavWindowingDimBg || i == ImGuiCol_ModalWindowDimBg) {
+            ImGui::PushStyleColor(i, ImGui::GetStyle().Colors[i]);
+            continue;
+        }
+        const Rgb& c = palette[roleForImGuiColor(i)];
+        ImGui::PushStyleColor(i, ImVec4(static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f));
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, static_cast<float>(disabledOpacity));
+}
+
+void popPalette()
+{
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(ImGuiCol_COUNT);
+}
+
 } // namespace minidaw::app

@@ -149,10 +149,37 @@ std::string getEnv(const char* name)
 
 } // namespace
 
+const std::vector<std::string>& themeAreaIds()
+{
+    static const std::vector<std::string> ids = {"transport", "recording", "timeline", "audio", "terms", "status"};
+    return ids;
+}
+
+const Rgb* ThemeSettings::colour(std::string_view area) const
+{
+    for (const auto& [id, c] : areas) {
+        if (id == area) return &c;
+    }
+    return nullptr;
+}
+
+void ThemeSettings::set(std::string_view area, std::optional<Rgb> c)
+{
+    for (auto it = areas.begin(); it != areas.end(); ++it) {
+        if (it->first == area) {
+            if (c) it->second = *c;
+            else areas.erase(it);
+            return;
+        }
+    }
+    if (c) areas.emplace_back(std::string(area), *c);
+}
+
 const std::vector<std::string>& stateWindowIds()
 {
     static const std::vector<std::string> ids = {"log",  "audio_settings", "recording_settings", "instruments",
-                                                 "tabs", "project_note",   "take_browser",       "custom_contrast"};
+                                                 "tabs", "project_note",   "take_browser",       "custom_contrast",
+                                                 "theme"};
     return ids;
 }
 
@@ -323,7 +350,18 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
         }
         AppConfig& cfg = result.config;
 
-        if (section == "ui" && key == "min_contrast") {
+        if (section == "theme" && key == "tab_headers") {
+            if (!parseBool(value, cfg.theme.tabHeaders)) warn("tab_headers must be true or false");
+        } else if (section == "theme" &&
+                   std::find(themeAreaIds().begin(), themeAreaIds().end(), key) != themeAreaIds().end()) {
+            if (lower(value) == "default") {
+                cfg.theme.set(key, std::nullopt);
+            } else if (auto c = parseHex(value); c && !value.empty()) {
+                cfg.theme.set(key, *c);
+            } else {
+                warn("'" + key + "' must be a colour in quotes like \"#FFF4D6\" (# alone starts a comment), or default");
+            }
+        } else if (section == "ui" && key == "min_contrast") {
             ContrastParseResult parsed = parseContrastSetting(value);
             if (parsed.setting) {
                 cfg.contrast = *parsed.setting;
@@ -750,6 +788,11 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     };
     text = setConfigValue(text, "ui", "min_contrast", config.contrast.toString());
     text = setConfigValue(text, "ui", "font_size", std::to_string(static_cast<int>(config.fontSize)));
+    for (const auto& id : themeAreaIds()) {
+        const Rgb* c = config.theme.colour(id);
+        text = setConfigValue(text, "theme", id, c ? quoteConfigString(toHex(*c)) : "default");  // quoted: # starts a comment
+    }
+    text = setConfigValue(text, "theme", "tab_headers", config.theme.tabHeaders ? "true" : "false");
     text = setConfigValue(text, "window", "remember", config.window.remember ? "true" : "false");
     {
         std::string order;

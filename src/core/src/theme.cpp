@@ -251,4 +251,75 @@ EnforceResult enforceMinimumContrast(const Palette& input, double minimum)
     return result;
 }
 
+namespace {
+
+// The palette of an area before enforcement: tints of `background`, dark or
+// light text.
+Palette areaRoles(const Rgb& background, bool dark)
+{
+    Palette p = defaultPalette();
+    p[Role::Background] = background;
+    if (!dark) {
+        p[Role::Control]          = mix(background, kBlack, 0.09);
+        p[Role::ControlHovered]   = mix(background, kBlack, 0.20);
+        p[Role::ControlActive]    = mix(background, kBlack, 0.35);
+        p[Role::TableHeader]      = mix(background, kBlack, 0.13);
+        p[Role::TableRowAlt]      = mix(background, kBlack, 0.05);
+        p[Role::ScrollbarTrack]   = mix(background, kBlack, 0.06);
+        p[Role::Selection]        = mix(background, hex("#2F6FD0"), 0.25);
+        p[Role::SelectionHovered] = mix(background, hex("#2F6FD0"), 0.32);
+        p[Role::SelectionActive]  = mix(background, hex("#2F6FD0"), 0.40);
+    } else {
+        p[Role::Control]          = mix(background, kWhite, 0.12);
+        p[Role::ControlHovered]   = mix(background, kWhite, 0.24);
+        p[Role::ControlActive]    = mix(background, kWhite, 0.36);
+        p[Role::TableHeader]      = mix(background, kWhite, 0.16);
+        p[Role::TableRowAlt]      = mix(background, kWhite, 0.06);
+        p[Role::ScrollbarTrack]   = mix(background, kWhite, 0.05);
+        p[Role::Selection]        = mix(background, hex("#5B9BF0"), 0.35);
+        p[Role::SelectionHovered] = mix(background, hex("#5B9BF0"), 0.45);
+        p[Role::SelectionActive]  = mix(background, hex("#5B9BF0"), 0.55);
+        p[Role::Text]             = kWhite;
+        p[Role::TextDisabled]     = hex("#B5B5B5");
+        p[Role::Border]           = hex("#B5B5B5");
+        p[Role::Accent]           = hex("#A8CCFF");
+        p[Role::ScrollbarThumb]   = hex("#B5B5B5");
+    }
+    return p;
+}
+
+bool allPairsMeet(const EnforceResult& r, double minimum)
+{
+    if (!r.unresolved.empty()) return false;
+    for (const auto& pair : colorPairs()) {
+        if (!meetsContrast(contrastRatio(r.palette[pair.foreground], r.palette[pair.background]), minimum)) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+EnforceResult areaPalette(const Rgb& background, double minimum)
+{
+    // Dark or light: whichever text colour has more contrast on it.
+    const bool dark = contrastRatio(kWhite, background) > contrastRatio(kBlack, background);
+    // A middle colour leaves no room for the tinted controls: it moves towards
+    // white (dark text) or black (light text) until every pair reaches the
+    // minimum. At white / black this is the main palette's case, which does.
+    const Rgb end = dark ? kBlack : kWhite;
+    EnforceResult r;
+    // Enforcing at a stricter level sometimes succeeds where the level itself
+    // does not (fixing one pair can undo another), so those are tried first,
+    // before the background moves further.
+    for (int step = 0; step <= 20; ++step) {
+        const Palette roles = areaRoles(mix(background, end, step / 20.0), dark);
+        for (const double target : {minimum, kMinContrastAAA, 10.0, 14.0}) {
+            if (target < minimum) continue;
+            r = enforceMinimumContrast(roles, target);
+            if (allPairsMeet(r, minimum)) return r;
+        }
+    }
+    return r;
+}
+
 } // namespace minidaw

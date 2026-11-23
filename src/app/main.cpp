@@ -51,6 +51,7 @@
 #include "minidaw/track.hpp"
 #include "minidaw/theme.hpp"
 #include "minidaw/build_info.hpp"
+#include "minidaw/number_text.hpp"
 #include "minidaw/remote.hpp"
 #include "minidaw/version.hpp"
 
@@ -287,6 +288,15 @@ struct AppState {
     bool showTabsWindow = false;
     std::string tabsFocus;      // Tabs window: the tab moved to the top / bottom, its other button gets the focus (U4)
     bool tabsFocusUp = false;
+    // Own background per area (P35, SPEC-UI-20; Settings > Theme...)
+    bool showThemeWindow = false;
+    struct AreaLook {
+        minidaw::Rgb asked;
+        double minimum = 0.0;
+        minidaw::EnforceResult result;
+    };
+    std::map<std::string, AreaLook> areaLooks;     // per area id, rebuilt when its colour or the contrast changes
+    const minidaw::Palette* drawPalette = nullptr;  // the area being drawn; nullptr = the main palette
     // Terms tab (P23, SPEC-UI-17)
     std::size_t runLoopDropped = 0;  // editorRunLoop().droppedCount() already logged (Z1)
     // macOS microphone permission (P34b): the permission when the stream was
@@ -1002,6 +1012,7 @@ void drawMenuBar(AppState& app, bool& quit)
         }
         if (ImGui::MenuItem("Instruments (VST\xc2\xae" "3)...")) app.showInstruments = true;
         if (ImGui::MenuItem("Tabs...")) app.showTabsWindow = true;
+        if (ImGui::MenuItem("Theme...")) app.showThemeWindow = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -1165,6 +1176,162 @@ void setTabOrder(AppState& app, std::vector<std::string> order)
     if (order == app.config.tabs.order) return;
     app.config.tabs.order = std::move(order);
     saveConfig(app);
+}
+
+// --- Own background per area (P35, SPEC-UI-20) -----------------------------------
+
+// The enforced palette of an area with its own colour; nullptr without one.
+const minidaw::EnforceResult* areaLook(AppState& app, const std::string& id)
+{
+    const minidaw::Rgb* c = app.config.theme.colour(id);
+    if (c == nullptr) return nullptr;
+    const double minimum = app.config.contrast.minimum();
+    auto& look = app.areaLooks[id];
+    if (look.minimum != minimum || !(look.asked == *c)) {
+        look.asked = *c;
+        look.minimum = minimum;
+        look.result = minidaw::areaPalette(*c, minimum);
+    }
+    return &look.result;
+}
+
+// Draws the area's content in its own colours (a child window), if it has one.
+// endArea() only when beginArea() returned true.
+bool beginArea(AppState& app, const std::string& id, bool autoHeight)
+{
+    const minidaw::EnforceResult* look = areaLook(app, id);
+    if (look == nullptr) return false;
+    minidaw::app::pushPalette(look->palette, look->disabledOpacity);
+    app.drawPalette = &look->palette;
+    ImGuiChildFlags flags = ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened;
+    if (autoHeight) flags |= ImGuiChildFlags_AutoResizeY;
+    ImGui::BeginChild(("area-" + id).c_str(), ImVec2(0, 0), flags);
+    return true;
+}
+
+void endArea(AppState& app)
+{
+    ImGui::EndChild();
+    minidaw::app::popPalette();
+    app.drawPalette = nullptr;
+}
+
+// The tab header in its page's colours (pushed before BeginTabItem); returns how many to pop.
+int pushTabHeaderColours(AppState& app, const std::string& id)
+{
+    if (!app.config.theme.tabHeaders) return 0;
+    const minidaw::EnforceResult* look = areaLook(app, id);
+    if (look == nullptr) return 0;
+    const auto& p = look->palette;
+    auto push = [](ImGuiCol col, const minidaw::Rgb& c) {
+        ImGui::PushStyleColor(col, ImVec4(static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f));
+    };
+    push(ImGuiCol_Tab, p[minidaw::Role::Control]);
+    push(ImGuiCol_TabHovered, p[minidaw::Role::ControlHovered]);
+    push(ImGuiCol_TabSelected, p[minidaw::Role::Background]);
+    push(ImGuiCol_TabDimmed, p[minidaw::Role::Control]);
+    push(ImGuiCol_TabDimmedSelected, p[minidaw::Role::Background]);
+    push(ImGuiCol_TabSelectedOverline, p[minidaw::Role::Accent]);
+    push(ImGuiCol_Text, p[minidaw::Role::Text]);
+    push(ImGuiCol_Border, p[minidaw::Role::Border]);
+    return 8;
+}
+
+const char* areaTitle(const std::string& id)
+{
+    if (id == "transport") return "Transport";
+    if (id == "status") return "Status line";
+    return tabTitle(id);
+}
+
+void setAreaColour(AppState& app, const std::string& id, std::optional<minidaw::Rgb> c, bool save)
+{
+    app.config.theme.set(id, c);
+    if (save) saveConfig(app);
+}
+
+void drawThemeWindow(AppState& app)
+{
+    if (!app.showThemeWindow) return;
+    ImGui::SetNextWindowSize(ImVec2(46 * ImGui::GetFontSize(), 0), ImGuiCond_Appearing);
+    minidaw::app::placeNewWindow("Theme");
+    if (ImGui::Begin("Theme", &app.showThemeWindow, ImGuiWindowFlags_NoCollapse)) {
+        const double minimum = app.config.contrast.minimum();
+        ImGui::TextWrapped("A background colour for each tab, the transport and the status line. Text, buttons and "
+                           "lines in an area get colours that reach the contrast setting (now %s, %s:1); a colour on "
+                           "which no text can reach it is made lighter or darker, as shown on the right.",
+                           app.config.contrast.toString().c_str(), minidaw::formatDouble(minimum).c_str());
+        static const char* kSwatches[] = {"#FFF4D6", "#FFE8CC", "#E3F5E1", "#DDEEFF", "#ECE4FA",
+                                          "#FFE0E6", "#EDEDED", "#808080", "#1E2A44", "#2B2B2B"};
+        if (ImGui::BeginTable("theme-areas", 3, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("Area");
+            ImGui::TableSetupColumn("Colour");
+            ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const std::string& id : minidaw::themeAreaIds()) {
+                ImGui::PushID(id.c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(areaTitle(id));
+                ImGui::TableNextColumn();
+                // A copy: an edit below adds or removes entries in the list it points into.
+                const minidaw::Rgb* own = app.config.theme.colour(id);
+                const bool hasOwn = own != nullptr;
+                const minidaw::Rgb shown = hasOwn ? *own : app.palette[minidaw::Role::Background];
+                float rgb[3] = {static_cast<float>(shown.r), static_cast<float>(shown.g), static_cast<float>(shown.b)};
+                ImGui::SetNextItemWidth(14 * ImGui::GetFontSize());
+                if (ImGui::ColorEdit3("##colour", rgb, ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_InputRGB)) {
+                    setAreaColour(app, id, minidaw::Rgb{rgb[0], rgb[1], rgb[2]}, false);
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) saveConfig(app);
+                ImGui::SameLine();
+                minidaw::app::beginDisabled(!hasOwn);
+                if (ImGui::Button("Default")) setAreaColour(app, id, std::nullopt, true);
+                minidaw::app::endDisabled();
+                for (std::size_t i = 0; i < std::size(kSwatches); ++i) {
+                    const minidaw::Rgb s = *minidaw::parseHex(kSwatches[i]);
+                    if (i > 0) ImGui::SameLine();
+                    ImGui::PushID(static_cast<int>(i));
+                    if (ImGui::ColorButton(kSwatches[i], ImVec4(static_cast<float>(s.r), static_cast<float>(s.g),
+                                                                static_cast<float>(s.b), 1.0f))) {
+                        setAreaColour(app, id, s, true);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TableNextColumn();
+                if (const minidaw::EnforceResult* look = areaLook(app, id)) {
+                    const minidaw::Rgb asked = *app.config.theme.colour(id);  // read again after the edits above
+                    const minidaw::Rgb* c = &asked;
+                    const auto& p = look->palette;
+                    const minidaw::Rgb used = p[minidaw::Role::Background];
+                    const double ratio = minidaw::contrastRatio(p[minidaw::Role::Text], used);
+                    const char* text = minidaw::relativeLuminance(p[minidaw::Role::Text]) > 0.5 ? "light" : "dark";
+                    if (minidaw::toHex(used) != minidaw::toHex(*c)) {
+                        ImGui::TextWrapped("Made %s: %s, %s text %s:1",
+                                           minidaw::relativeLuminance(used) > minidaw::relativeLuminance(*c) ? "lighter" : "darker",
+                                           minidaw::toHex(used).c_str(), text, minidaw::formatDouble(std::round(ratio * 10) / 10).c_str());
+                    } else {
+                        ImGui::TextWrapped("%s, %s text %s:1", minidaw::toHex(used).c_str(), text,
+                                           minidaw::formatDouble(std::round(ratio * 10) / 10).c_str());
+                    }
+                    if (!look->unresolved.empty()) ImGui::TextWrapped("%zu colour pairs below the minimum", look->unresolved.size());
+                } else {
+                    ImGui::TextUnformatted("the normal background");
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (ImGui::Checkbox("Tab headers in their page's colour", &app.config.theme.tabHeaders)) saveConfig(app);
+        if (ImGui::Button("All default")) {
+            app.config.theme.areas.clear();
+            saveConfig(app);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) app.showThemeWindow = false;
+    }
+    ImGui::End();
 }
 
 void drawTabsWindow(AppState& app)
@@ -1512,7 +1679,7 @@ void drawAudioSettingsWindow(AppState& app)
 
 ImU32 roleColor(const AppState& app, minidaw::Role role)
 {
-    const auto& c = app.palette[role];
+    const auto& c = (app.drawPalette != nullptr ? *app.drawPalette : app.palette)[role];
     return ImGui::ColorConvertFloat4ToU32(
         ImVec4(static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f));
 }
@@ -5681,12 +5848,19 @@ void updateFolderChooser(AppState& app)
     app.browseFor = AppState::BrowseFor::None;
 }
 
-void drawStatusLine(const AppState& app)
+void drawStatusLine(AppState& app)
 {
     ImGui::Separator();
-    const auto lowest = minidaw::lowestContrast(app.palette);
+    const bool area = beginArea(app, "status", false);
+    // The lowest pair on screen: the main colours and every area's own (P35).
+    double lowestRatio = minidaw::lowestContrast(app.palette).ratio;
+    for (const std::string& id : minidaw::themeAreaIds()) {
+        if (const minidaw::EnforceResult* look = areaLook(app, id)) {
+            lowestRatio = std::min(lowestRatio, minidaw::lowestContrast(look->palette).ratio);
+        }
+    }
     ImGui::TextWrapped("Contrast: %s, lowest pair %.2f:1. %s to change. Text: %d px (%s).",
-                describeContrast(app.config.contrast).c_str(), lowest.ratio,
+                describeContrast(app.config.contrast).c_str(), lowestRatio,
                 minidaw::keysHere("Ctrl+Shift+Up/Down").c_str(), static_cast<int>(app.config.fontSize),
                 minidaw::keysHere("Ctrl+= / Ctrl+-").c_str());
     if (app.projectFolder.empty()) {
@@ -5706,6 +5880,7 @@ void drawStatusLine(const AppState& app)
     if (!app.unresolved.empty()) {
         ImGui::Text("Warning: %zu colour pair(s) could not reach the minimum.", app.unresolved.size());
     }
+    if (area) endArea(app);
 }
 
 std::string g_lastGlfwError;
@@ -6384,6 +6559,7 @@ bool* stateWindowFlag(AppState& app, const std::string& id)
     if (id == "recording_settings") return &app.showRecordingSettings;
     if (id == "instruments") return &app.showInstruments;
     if (id == "tabs") return &app.showTabsWindow;
+    if (id == "theme") return &app.showThemeWindow;
     if (id == "project_note") return &app.showProjectNote;
     if (id == "take_browser") return &app.showTakeBrowser;
     if (id == "custom_contrast") return &app.showCustomContrast;
@@ -6811,7 +6987,11 @@ int runGui(AppState& app)
             // Tabs (SPEC-UI-11, SPEC-UI-12): in the user's order, draggable; the last one used comes back.
             pollAudioMessages(app);
             // The transport (P30): once, above the tabs, the same on every tab.
-            drawTransport(app);
+            {
+                const bool area = beginArea(app, "transport", true);
+                drawTransport(app);
+                if (area) endArea(app);
+            }
             if (!app.tabsStarted) {
                 app.selectTab = app.config.tabs.last;
                 app.tabsStarted = true;
@@ -6831,7 +7011,10 @@ int runGui(AppState& app)
                     if (minidaw::isPinnedTab(id) && spacer >= 1.0f) ImGui::TabItemSpacing("##tab-spacer", 0, spacer);
                     ImGuiTabItemFlags flags = requested == id ? ImGuiTabItemFlags_SetSelected : 0;
                     if (minidaw::isPinnedTab(id)) flags |= ImGuiTabItemFlags_Trailing;  // Terms at the right end (P30)
-                    if (!ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags)) continue;
+                    const int headerColours = pushTabHeaderColours(app, id);
+                    const bool open = ImGui::BeginTabItem(tabLabel(id).c_str(), nullptr, flags);
+                    ImGui::PopStyleColor(headerColours);
+                    if (!open) continue;
                     // A tab being selected shows at the next frame; on a new tab bar's first
                     // frame ImGui shows the first tab meanwhile: not drawn, not saved as the
                     // last one (crosscheck #13, U2).
@@ -6843,6 +7026,7 @@ int runGui(AppState& app)
                         app.config.tabs.last = id;
                         saveConfig(app);
                     }
+                    const bool area = beginArea(app, id, false);
                     if (id == "recording") {
                         drawAudioStatusLine(app);
                         drawTracksPanel(app);
@@ -6857,6 +7041,7 @@ int runGui(AppState& app)
                     } else if (id == "terms") {
                         drawTermsTab(app);
                     }
+                    if (area) endArea(app);
                     ImGui::EndTabItem();
                 }
                 // A tab dragged to another place: keep that order (ImGui keeps it in its tab bar).
@@ -6883,6 +7068,7 @@ int runGui(AppState& app)
         drawRecordingSettingsWindow(app);
         drawCustomContrastWindow(app);
         drawTabsWindow(app);
+        drawThemeWindow(app);
         drawContrastReportWindow(app);
         drawAboutWindow(app);
         drawTutorialWindow(app);  // P32

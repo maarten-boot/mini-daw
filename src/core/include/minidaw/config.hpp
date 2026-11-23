@@ -53,6 +53,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -230,8 +231,25 @@ struct RestorePlan {
 };
 RestorePlan planRestore(const SessionState& state, const std::string& project, bool streamRunning);
 
+// Own background colours (P35, SPEC-UI-20): per area, nothing = the normal
+// background. In config.ini:
+//   [theme]
+//   transport = "#FFF4D6"     ; in quotes (# starts a comment), or default
+//   recording = "#E3F5E1"     ; one per tab: recording, timeline, audio, terms;
+//   status = default          ;   and the status line at the bottom
+//   tab_headers = true        ; the tab headers in their page's colour
+struct ThemeSettings {
+    std::vector<std::pair<std::string, Rgb>> areas;  // area id -> colour, only those with a colour
+    bool tabHeaders = true;
+    const Rgb* colour(std::string_view area) const;
+    void set(std::string_view area, std::optional<Rgb> colour);
+};
+// "transport", the tab ids and "status", in the order the Theme window shows them.
+const std::vector<std::string>& themeAreaIds();
+
 struct AppConfig {
     ContrastSetting contrast;
+    ThemeSettings theme;
     float fontSize = kDefaultFontSize;
     WindowSettings window;
     TabSettings tabs;

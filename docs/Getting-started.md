@@ -72,5 +72,5 @@ Your project saves itself. To give your music to others, export it.
 5. Words you do not know are explained in the Terms tab, with a field to find them.  
    *Where:* Terms tab
 
-**Tip:** Larger text: Ctrl+= (smaller Ctrl+-). Higher contrast: Ctrl+Shift+Up, or View > Contrast.
+**Tip:** Larger text: Ctrl+= (smaller Ctrl+-). Higher contrast: Ctrl+Shift+Up, or View > Contrast. Settings > Theme... gives each tab its own background colour.
 

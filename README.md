@@ -121,6 +121,17 @@ The default theme is black text on a white background, and every colour combinat
 
 A control under the mouse gets a frame, a pressed one also a darker fill, the chosen entry in a list a "> " mark, and a control that cannot be used now is flat with a dashed frame, so you can see what a click will do at every contrast setting, also at Max. View → Contrast report shows every colour pair and its ratio.
 
+## Colours per tab
+
+Settings → Theme… gives each tab (Recording, Timeline, Audio setup, Terms), the transport and the status line its own background colour, so you see at a glance where you are; the tab headers take their page's colour too (a tick box turns that off). Pick a colour, type one (`#RRGGBB`) or click one of the suggestions; **Default** gives the area the normal white back. Text, buttons and lines in a coloured area keep your contrast setting: on a dark colour the text turns white, and a colour on which no text could reach the minimum is made a little lighter or darker (the window shows what is used and its ratio). In the config file:
+
+```
+[theme]
+transport = "#FFF4D6"   ; in quotes: # alone starts a comment; or default
+recording = "#E3F5E1"   ; also timeline, audio, terms, status
+tab_headers = true
+```
+
 ## Text size
 
 View → Text size, or Ctrl+= / Ctrl+- / Ctrl+0, or `font_size = 20` under `[ui]` in the config file (12 to 32 px, default 16).

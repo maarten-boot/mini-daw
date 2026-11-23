@@ -15,4 +15,9 @@ Role roleForImGuiColor(int imguiCol);
 // so they still meet the contrast minimum; SPEC-UI-02a).
 void applyPalette(const Palette& palette, double disabledOpacity);
 
+// The same colours, pushed for one area with its own background (a tab page,
+// the transport, the status line; P35) and popped after it. Every pushPalette needs one popPalette.
+void pushPalette(const Palette& palette, double disabledOpacity);
+void popPalette();
+
 } // namespace minidaw::app

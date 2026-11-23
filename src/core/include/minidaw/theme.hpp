@@ -120,4 +120,14 @@ struct EnforceResult {
 // cannot get there. At 21:1 this yields pure black on pure white.
 EnforceResult enforceMinimumContrast(const Palette& palette, double minimum);
 
+// --- Own background per area (P35, SPEC-UI-20) -----------------------------
+
+// A palette for an area (a tab page, the transport) with `background` as its
+// window colour: controls, rows and the scrollbar track are tinted from it
+// (darker on a light colour, lighter on a dark one; on a dark colour the text
+// becomes light), then every pair is enforced at `minimum` as for the main
+// palette. The background itself moves only when no text colour can reach
+// the minimum on it; the result's palette[Role::Background] is what is used.
+EnforceResult areaPalette(const Rgb& background, double minimum);
+
 } // namespace minidaw

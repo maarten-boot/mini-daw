@@ -640,3 +640,16 @@ TEST_CASE("T-UI-29: a symlinked config stays a link, its permissions kept (CC4)"
           (fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read));
 }
 #endif
+
+TEST_CASE("T-UI-36: area colours are read and written back", "[config][T-UI-36]")
+{
+    const auto r = minidaw::parseConfig("[theme]\ntransport = \"#FFF4D6\"\nterms = E3F5E1\naudio = default\ntab_headers = false\n");
+    CHECK(r.warnings.empty());
+    REQUIRE(r.config.theme.colour("transport") != nullptr);
+    CHECK(minidaw::toHex(*r.config.theme.colour("transport")) == "#FFF4D6");
+    REQUIRE(r.config.theme.colour("terms") != nullptr);
+    CHECK(r.config.theme.colour("audio") == nullptr);
+    CHECK_FALSE(r.config.theme.tabHeaders);
+    const auto bad = minidaw::parseConfig("[theme]\ntimeline = #FFF4D6\nrecording = blue\n");
+    CHECK(bad.warnings.size() == 2);  // the unquoted # is a comment: empty, and "blue" is no colour
+}

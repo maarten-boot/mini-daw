@@ -123,7 +123,8 @@ std::vector<TutorialLesson> makeLessons()
              {"Words you do not know are explained in the Terms tab, with a field to find them.",
               "Terms tab", C::None},
          },
-         "Larger text: Ctrl+= (smaller Ctrl+-). Higher contrast: Ctrl+Shift+Up, or View > Contrast."},
+         "Larger text: Ctrl+= (smaller Ctrl+-). Higher contrast: Ctrl+Shift+Up, or View > Contrast. "
+         "Settings > Theme... gives each tab its own background colour."},
     };
 }
 

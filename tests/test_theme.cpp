@@ -160,3 +160,27 @@ TEST_CASE("Every disabled pair is also a normal pair", "[theme][T-UI-24]")
         }));
     }
 }
+
+TEST_CASE("T-UI-36: an area's own background keeps every pair at the minimum", "[theme][T-UI-36]")
+{
+    const char* colours = GENERATE("#FFF4D6", "#DDEEFF", "#E3F5E1", "#FFE0E6", "#808080", "#1E2A44", "#000000",
+                                   "#FF0000", "#00FF00", "#2B5F2B", "#FFFF00");
+    const double minimum = GENERATE(4.5, 7.0, 10.0, 21.0);
+    CAPTURE(colours, minimum);
+    const auto r = areaPalette(*parseHex(colours), minimum);
+    CHECK(r.unresolved.empty());
+    for (const auto& pair : colorPairs()) {
+        CAPTURE(roleName(pair.foreground), roleName(pair.background));
+        CHECK(meetsContrast(contrastRatio(r.palette[pair.foreground], r.palette[pair.background]), minimum));
+    }
+}
+
+TEST_CASE("T-UI-36: a light area colour is kept at AA, a dark one gets light text", "[theme][T-UI-36]")
+{
+    const auto light = areaPalette(*parseHex("#FFF4D6"), kMinContrastAA);
+    CHECK(toHex(light.palette[Role::Background]) == "#FFF4D6");
+    CHECK(toHex(light.palette[Role::Text]) == "#000000");
+    const auto dark = areaPalette(*parseHex("#1E2A44"), kMinContrastAA);
+    CHECK(toHex(dark.palette[Role::Background]) == "#1E2A44");
+    CHECK(relativeLuminance(dark.palette[Role::Text]) > 0.8);
+}
