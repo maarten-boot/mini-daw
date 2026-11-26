@@ -573,3 +573,12 @@ Three independent reviews (P35 code, P36 code, docs against code). Fixed:
 - CC11 Docs: tab list and fallback in config warnings and code comments (from `defaultTabOrder()`); a config without `last` starts on Connections, like the default file; Connections says "Monitor" (not "Listen"), Terms Arm / Monitor / Track / MIDI track name the Connections tab; lesson 1 says In 1+2 has a track already at the first start; Spec SPEC-UI-11, -12, -09a (Theme window), SPEC-REC-01a (channel), status v0.83; misplaced comment.
 Checked and not taken over: "the Connections table cannot scroll" and "the jump back does not scroll" (both wrong: checked under Xvfb with 32 inputs, Show all, a track on In 30 and "<" from Recording: scrolled and marked); old configs get Connections before Terms, not first (kept: their users know the program); the swatches being colour only (they are suggestions with the hex as tooltip, not a state); All default without confirmation (kept). README status 1.1.0 → at the release.
 ctest 288/288.
+
+User: "pushed, check the CI run" (run 45873727653, c1981d8): all green.
+
+## 25. Release 1.2.0 (2026-11-26)
+
+User: "yes, prepare 1.2.0".
+- Crosscheck before the release: #29 done (section 24).
+- CHANGELOG `## 1.2.0 — 2026-11-26` (Connections, Look); `tools/release_notes.py v1.2.0` reads it. README status 1.2.0 (steps P2–P36). Plan P35, P36 done. CMake already 1.2.0.
+- To do: commit, merge `cables-prototype` (with `theme-prototype`) into `main` (fast-forward), push; CI; tag `v1.2.0`; `dist/` from the green main run.

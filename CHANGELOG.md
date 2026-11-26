@@ -2,6 +2,24 @@
 
 Every release of mini-daw, newest first. A release's section here becomes its notes on GitHub (`tools/release_notes.py`; the release job refuses a tag without one), so links in it are full URLs. Before 1.0.0 there were no releases: the builds were numbered `0.<step>.<round>` after the steps in `docs/planning/Plan.md`. From 1.0.0 on: `1.<minor>.<patch>`, the minor number raised by a step that adds something, the patch number by fixes.
 
+## 1.2.0 — 2026-11-26
+
+**A Connections tab for beginners, and colours per tab.**
+
+### Connections
+- A new first tab shows every input of your audio device (In 1, In 2 …) and every MIDI keyboard as a *socket*, with a cable to where it goes. Type the name of what is plugged in (a guitar, a microphone, a keyboard) and press Enter: that makes an armed track for it. **Unplug** removes it again (its recordings stay on disk).
+- Audio goes straight to the recording (tick *stereo with In …* for a stereo pair); MIDI goes through an instrument you choose right there, with its channel next to the socket and **Edit** for the instrument's window.
+- A socket whose device is not plugged in stays, greyed, with its name. With more than 8 inputs only In 1–8 and those in use show, until **Show all**.
+- **Track details >** jumps to the track on the Recording tab (volume, mute, solo, presets, Render, its take), and **<** in front of a track there jumps back; the row you land on is marked, and so is the row under the mouse (a MIDI track together with its sound track).
+- A stereo pair keeps its two inputs to itself, on both tabs; *Add audio track* takes an input nobody uses yet.
+- See [Connections](https://github.com/maarten-boot/mini-daw#connections) in the README; Getting started now begins there.
+
+### Look
+- **Settings → Theme…**: your own background colour for each tab, the transport and the status line, so you see where you are. Text and buttons keep your contrast setting: on a dark colour the text turns white, and a colour no text could reach the minimum on is made a little lighter or darker. See [Colours per tab](https://github.com/maarten-boot/mini-daw#colours-per-tab).
+- **Space between rows** (same window, or `space_unit` under `[ui]`): the Connections and Recording tables have room between their rows instead of lines; a MIDI track and its sound track stand closer together than other tracks.
+- The MIDI channel of a track is now chosen on the Connections tab (the Recording tab shows it).
+- New words in Terms: Connections, Socket, Stereo pair, Theme.
+
 ## 1.1.0 — 2026-11-22
 
 **macOS, as a preview.** mini-daw now also comes as `mini-daw-1.1.0-macos.dmg`: one program for Apple silicon and Intel Macs, macOS 12 or newer. It is built and tested automatically on every change, but has not yet been tried on a real Mac, so tell us what you find. It is not signed by Apple: the first time, open it from System Settings → Privacy & Security → Open Anyway (see [Installing](https://github.com/maarten-boot/mini-daw#installing) in the README).
