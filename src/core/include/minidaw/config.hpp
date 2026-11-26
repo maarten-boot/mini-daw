@@ -166,8 +166,10 @@ struct ScreenRect {
 std::optional<ScreenRect> restoredWindowRect(const WindowSettings& saved, const std::vector<ScreenRect>& workAreas);
 
 // Main window tabs (SPEC-UI-12): their order and the one shown at start.
-// Ids: "recording", "timeline", "audio" (Audio setup), "terms" (P23).
+// Ids: "connections" (P36), "recording", "timeline", "audio" (Audio setup), "terms" (P23).
 std::vector<std::string> defaultTabOrder();
+// The known ids as a list for messages: "connections, recording, ...".
+std::string knownTabs();
 // Every known id once, in the order given; unknown ids and repeats left out,
 // missing ones added at the end in the default order. A pinned tab (Terms,
 // P30) is always last, wherever it was given.
@@ -178,7 +180,7 @@ bool isPinnedTab(std::string_view id);
 
 struct TabSettings {
     std::vector<std::string> order = defaultTabOrder();
-    std::string last = "recording";  // shown at start: the tab used last
+    std::string last = "connections";  // shown at start: the tab used last (a new user: Connections, P36)
 };
 
 // What was going on when mini-daw closed, restored at the next start

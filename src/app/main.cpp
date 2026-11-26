@@ -290,6 +290,7 @@ struct AppState {
     bool tabsFocusUp = false;
     // Own background per area (P35, SPEC-UI-20; Settings > Theme...)
     bool showThemeWindow = false;
+    bool themeUnsaved = false;  // a colour changed in the picker; saved once the mouse is released
     struct AreaLook {
         minidaw::Rgb asked;
         double minimum = 0.0;
@@ -299,12 +300,12 @@ struct AppState {
     const minidaw::Palette* drawPalette = nullptr;  // the area being drawn; nullptr = the main palette
     // Connections tab (P36 prototype): the name typed in front of a free socket, per socket.
     std::map<std::string, std::string> socketNames;
-    bool showAllSockets = false;
+    bool showAllSockets = false;  // free audio sockets beyond the first kFreeSocketsShown too
     // A jump from the Connections tab to a track on the Recording tab: scrolled to once, marked for a while.
     int jumpTrack = 0;
     std::string jumpTab;  // the tab it jumped to: "recording" or "connections"
     bool jumpScrolled = false;
-    double jumpUntil = 0.0;  // free audio sockets beyond the first kFreeSocketsShown too
+    double jumpUntil = 0.0;
     // Terms tab (P23, SPEC-UI-17)
     std::size_t runLoopDropped = 0;  // editorRunLoop().droppedCount() already logged (Z1)
     // macOS microphone permission (P34b): the permission when the stream was
@@ -1243,7 +1244,11 @@ int pushTabHeaderColours(AppState& app, const std::string& id)
     push(ImGuiCol_TabSelectedOverline, p[minidaw::Role::Accent]);
     push(ImGuiCol_Text, p[minidaw::Role::Text]);
     push(ImGuiCol_Border, p[minidaw::Role::Border]);
-    return 8;
+    // The hover / press frame (state cues read NavCursor) and the unfocused overline: the area's
+    // own Accent, enforced against its colours, not the main one (crosscheck #29).
+    push(ImGuiCol_NavCursor, p[minidaw::Role::Accent]);
+    push(ImGuiCol_TabDimmedSelectedOverline, p[minidaw::Role::Accent]);
+    return 10;
 }
 
 const char* areaTitle(const std::string& id)
@@ -1292,8 +1297,8 @@ void drawThemeWindow(AppState& app)
                 ImGui::SetNextItemWidth(14 * ImGui::GetFontSize());
                 if (ImGui::ColorEdit3("##colour", rgb, ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_InputRGB)) {
                     setAreaColour(app, id, minidaw::Rgb{rgb[0], rgb[1], rgb[2]}, false);
+                    app.themeUnsaved = true;
                 }
-                if (ImGui::IsItemDeactivatedAfterEdit()) saveConfig(app);
                 ImGui::SameLine();
                 minidaw::app::beginDisabled(!hasOwn);
                 if (ImGui::Button("Default")) setAreaColour(app, id, std::nullopt, true);
@@ -1348,6 +1353,12 @@ void drawThemeWindow(AppState& app)
         if (ImGui::Button("Close")) app.showThemeWindow = false;
     }
     ImGui::End();
+    // Saved when a change is done: also changes in the picker's own popup, which does not
+    // deactivate the colour field (crosscheck #29).
+    if (app.themeUnsaved && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        app.themeUnsaved = false;
+        saveConfig(app);
+    }
 }
 
 void drawTabsWindow(AppState& app)
@@ -3932,7 +3943,8 @@ void audioInputCombo(const std::vector<minidaw::Track>& tracks, minidaw::Track& 
 {
     if (!ImGui::BeginCombo("##in", audioInputLabel(t.channels).c_str())) return;
     const auto item = [&](const std::vector<unsigned int>& ch) {
-        const std::string why = whyNotInputs(tracks, t, ch);
+        // The current entry stays choosable (an older project may already overlap).
+        const std::string why = t.channels == ch ? std::string() : whyNotInputs(tracks, t, ch);
         minidaw::app::beginDisabled(!why.empty());
         if (minidaw::app::choice(audioInputLabel(ch).c_str(), t.channels == ch)) t.channels = ch;
         minidaw::app::endDisabled();
@@ -5164,8 +5176,13 @@ int addTrack(AppState& app, minidaw::TrackKind kind, std::string& why)
         t.name = "Audio " + std::to_string(t.number);
         // The first input not in a stereo pair (P36: a pair keeps its inputs to itself).
         const unsigned int inputs = app.audio.info().inputChannels;
+        // An input no track uses yet if there is one; else one a mono track has.
         unsigned int c = 0;
-        while (c < inputs && minidaw::inputConflict(app.tracks, {c}, 0) != 0) ++c;
+        while (c < inputs && minidaw::channelUser(app.tracks, c, 0) != 0) ++c;
+        if (c == inputs) {
+            c = 0;
+            while (c < inputs && minidaw::inputConflict(app.tracks, {c}, 0) != 0) ++c;
+        }
         if (c == inputs) {
             why = "every input is in a stereo pair: make one mono first";
             return 0;
@@ -5425,6 +5442,9 @@ void drawTracksPanel(AppState& app)
             if (i > 0) tableGap(app, group(t) == group(app.tracks[i - 1]) ? 1 : 2);
             ImGui::PushID(t.number);
             ImGui::TableNextRow();
+            // Stripes by track, not by table row: the gap rows would give every track the same one.
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                   ImGui::GetColorU32(i % 2 ? ImGuiCol_TableRowBgAlt : ImGuiCol_TableRowBg));
             ImGui::TableNextColumn();
             // The track a Connections link jumped to: marked by the selection colour and by "> " (not by colour alone).
             const bool jumped = app.jumpTab == "recording" && app.jumpTrack != 0 && ImGui::GetTime() < app.jumpUntil &&
@@ -5803,7 +5823,7 @@ void drawConnectionsTab(AppState& app)
     }
 
     const float cableW = 3.0f * em;
-    const ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
+    const ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
                                   ImGuiTableFlags_BordersOuterH;
     int removeNumber = 0;
     int unlinkRequest = 0;
@@ -5824,6 +5844,8 @@ void drawConnectionsTab(AppState& app)
     minidaw::TrackKind lastKind = minidaw::TrackKind::Audio;
     bool first = true;
     const int hoveredRow = ImGui::TableGetHoveredRow();  // last frame's; row 0 is the header
+    std::map<std::string, int> keysSeen;
+    int socketIndex = 0;
     int rowIndex = 0;
     for (const auto& r : rows) {
         if (!app.showAllSockets && hiddenSocket(r)) continue;
@@ -5840,7 +5862,9 @@ void drawConnectionsTab(AppState& app)
             first = false;
             lastKind = r.kind;
         }
-        const std::string key = socketKey(r);
+        // Two devices of one name give two sockets of one name: told apart by their place.
+        std::string key = socketKey(r);
+        if (const int n = keysSeen[key]++; n > 0) key += "#" + std::to_string(n);
         ImGui::PushID(r.track != 0 ? ("t" + std::to_string(r.track)).c_str() : key.c_str());
         if (app.config.spaceUnit > 0) {
             tableGap(app, 1);
@@ -5852,6 +5876,9 @@ void drawConnectionsTab(AppState& app)
         // Marked: the track a "<" on the Recording tab jumped to ("> " too), and the one under the mouse.
         const bool jumped = t != nullptr && app.jumpTab == "connections" && t->number == app.jumpTrack &&
                             ImGui::GetTime() < app.jumpUntil;
+        // Stripes by socket, not by table row: the gap rows would make every socket the same.
+        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                               ImGui::GetColorU32(socketIndex++ % 2 ? ImGuiCol_TableRowBgAlt : ImGuiCol_TableRowBg));
         if (jumped || (t != nullptr && rowIndex == hoveredRow)) {
             ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_Header));
         }
@@ -5871,7 +5898,16 @@ void drawConnectionsTab(AppState& app)
                                    : minidaw::socketLabel(r, app.tracks).c_str());
         if (!r.present) {
             ImGui::SameLine();
-            ImGui::TextUnformatted(r.kind == minidaw::TrackKind::Midi ? "(not plugged in)" : "(not on this device)");
+            ImGui::TextUnformatted(r.kind == minidaw::TrackKind::Midi ? "(not plugged in)"
+                                   : r.channels.empty()                ? "(no input chosen)"
+                                                                       : "(not on this device)");
+        }
+        // A track from an older project that shares an input with a stereo pair: said, not hidden.
+        if (t != nullptr && t->kind == minidaw::TrackKind::Audio) {
+            if (const int other = minidaw::inputConflict(app.tracks, t->channels, t->number); other != 0) {
+                ImGui::SameLine();
+                ImGui::Text("(shares an input with track %d)", other);
+            }
         }
         minidaw::app::endDisabled();
         if (t != nullptr && t->kind == minidaw::TrackKind::Midi) {
@@ -5953,13 +5989,17 @@ void drawConnectionsTab(AppState& app)
                 const std::string why = stereo ? std::string() : whyNotInputs(app.tracks, *t, {c0, c0 + 1});
                 const bool blocked = !why.empty();
                 minidaw::app::beginDisabled(rec || blocked);
-                const std::string label = "stereo with In " + std::to_string(c0 + 2);
+                const unsigned int c1 = stereo ? t->channels[1] : c0 + 1;  // a pair from an older project may not be side by side
+                const std::string label = "stereo with In " + std::to_string(c1 + 1);
                 if (ImGui::Checkbox(label.c_str(), &stereo)) {
                     t->channels = stereo ? std::vector<unsigned int>{c0, c0 + 1} : std::vector<unsigned int>{c0};
                 }
+                logRefusedClick(app, rec || blocked, "Track " + std::to_string(t->number) + ": stereo not changed",
+                                rec ? std::string("not while recording") : why);
                 minidaw::app::endDisabled();
-                if (blocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("Not free: %s. Unplug it (or make it mono) first.", why.c_str());
+                if ((rec || blocked) && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", rec ? "Not while recording."
+                                                : ("Not free: " + why + ". Unplug it (or make it mono) first.").c_str());
                 }
             }
         } else {
@@ -5995,9 +6035,10 @@ void drawConnectionsTab(AppState& app)
         if (t->kind == minidaw::TrackKind::Audio) {
             const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
             minidaw::app::beginDisabled(!hasOutput);
-            ImGui::Checkbox("Listen", &t->monitor);
+            ImGui::Checkbox("Monitor", &t->monitor);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Hear this input while it is armed (Monitor). Use headphones.");
+                ImGui::SetTooltip("Hear this input while it is armed. Use headphones: with speakers a microphone "
+                                  "can feed back.");
             }
             minidaw::app::endDisabled();
             ImGui::SameLine();
@@ -6353,8 +6394,13 @@ void drawStatusLine(AppState& app)
                 static_cast<unsigned long long>(app.log.errorCount()), minidaw::keysHere("Ctrl+L").c_str());
     for (const auto& w : app.configWarnings) ImGui::TextWrapped("Config warning: %s", w.c_str());
     if (!app.saveError.empty()) ImGui::TextWrapped("Could not save config: %s", app.saveError.c_str());
-    if (!app.unresolved.empty()) {
-        ImGui::Text("Warning: %zu colour pair(s) could not reach the minimum.", app.unresolved.size());
+    std::size_t unresolved = app.unresolved.size();  // and every coloured area's (crosscheck #29)
+    for (const std::string& id : minidaw::themeAreaIds()) {
+        if (const minidaw::EnforceResult* look = areaLook(app, id)) unresolved += look->unresolved.size();
+    }
+    if (unresolved > 0) {
+        ImGui::Text("Warning: %zu colour pair(s) could not reach the minimum (Settings > Theme... shows where).",
+                    unresolved);
     }
     if (area) endArea(app);
 }

@@ -12,9 +12,9 @@ Choose where the sound goes in and out, make a project, and record yourself on o
    *Where:* Settings > Audio devices...
 2. Make a project: give it a name, mini-daw makes a folder for it. Everything you record goes there, and it is saved by itself.  
    *Where:* File > New project...
-3. Find the socket your microphone or instrument is plugged into (In 1, In 2 ...), type its name ("Voice", "Guitar") and press Enter: a track for it is made. Two inputs for one stereo instrument: tick "stereo with In ...".  
+3. At the first start In 1+2 has a track already: give it a name, or Unplug it. For another socket (In 3, In 4 ...): type the name of what is plugged in ("Voice", "Guitar") and press Enter, and a track for it is made. Two inputs for one stereo instrument: tick "stereo with In ...".  
    *Where:* Connections tab > a socket's name, Enter
-4. Arm is ticked on the new track: it will be recorded. Sing or play: its meter moves. Keep it out of the red (CLIP).  
+4. Tick Arm on the track (a track made by Enter has it already): it will be recorded. Sing or play: its meter moves. Keep it out of the red (CLIP).  
    *Where:* Connections tab > the track's Arm
 5. Press Record, play or sing a few seconds, then press Stop recording. The take is saved in the project's folder; the track's Take column names it.  
    *Where:* Record (Ctrl+R), then Stop recording (Ctrl+R)

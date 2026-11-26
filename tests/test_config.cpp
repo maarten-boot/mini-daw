@@ -398,7 +398,7 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     const auto bad = parseConfig("[tabs]\norder = timeline, mixer, timeline, recording\nlast = mixer\n");
     CHECK(bad.warnings.size() == 2);
     CHECK(bad.config.tabs.order == std::vector<std::string>{"timeline", "recording", "connections", "audio", "terms"});
-    CHECK(bad.config.tabs.last == "recording");
+    CHECK(bad.config.tabs.last == "connections");
     CHECK(normalizeTabOrder({}) == defaultTabOrder());
 
     // Crosscheck #13, U6: an empty order and one of only unknown names give the

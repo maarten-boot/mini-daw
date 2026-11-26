@@ -290,6 +290,14 @@ std::vector<std::string> splitCommaList(std::string_view text)
 }
 } // namespace
 
+// "connections, recording, timeline, audio, terms" (for warnings).
+std::string knownTabs()
+{
+    std::string out;
+    for (const auto& id : defaultTabOrder()) out += (out.empty() ? "" : ", ") + id;
+    return out;
+}
+
 std::vector<std::string> defaultTabOrder() { return {"connections", "recording", "timeline", "audio", "terms"}; }
 
 bool isTabId(std::string_view id)
@@ -399,14 +407,15 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 }
                 at = comma + 1;
             }
-            if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: recording, timeline, audio, terms); left out.");
+            if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: " + knownTabs() + "); left out.");
             cfg.tabs.order = normalizeTabOrder(ids);
         } else if (section == "tabs" && key == "last") {
             const std::string id = lower(trim(value));
             if (isTabId(id)) {
                 cfg.tabs.last = id;
             } else {
-                warn("unknown tab '" + value + "' for last (known: recording, timeline, audio, terms). Using recording.");
+                warn("unknown tab '" + value + "' for last (known: " + knownTabs() + "). Using " + TabSettings{}.last +
+                     ".");
             }
         } else if (section == "window" && key == "remember") {
             if (!parseBool(value, cfg.window.remember)) {
@@ -810,7 +819,7 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
         std::string order;
         for (const auto& id : normalizeTabOrder(config.tabs.order)) order += (order.empty() ? "" : ", ") + id;
         text = setConfigValue(text, "tabs", "order", order);
-        text = setConfigValue(text, "tabs", "last", isTabId(config.tabs.last) ? config.tabs.last : "recording");
+        text = setConfigValue(text, "tabs", "last", isTabId(config.tabs.last) ? config.tabs.last : TabSettings{}.last);
     }
     if (config.window.hasGeometry) {
         text = setConfigValue(text, "window", "x", std::to_string(config.window.x));

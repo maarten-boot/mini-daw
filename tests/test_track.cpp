@@ -334,5 +334,9 @@ TEST_CASE("T-UI-37: socket rows of the Connections tab", "[track][T-UI-37]")
     second.channels = {0};
     tracks.push_back(second);
     const auto again = socketRows(tracks, 2, {});
+    CHECK(std::count_if(again.begin(), again.end(), [](const SocketRow& r) { return r.track == 1 || r.track == 6; }) == 2);
+    // Two devices of one name: two free sockets.
+    const auto pads = socketRows({}, 0, {"Pad", "Pad"});
+    CHECK(std::count_if(pads.begin(), pads.end(), [](const SocketRow& r) { return r.port == "Pad"; }) == 2);
     CHECK(std::count_if(again.begin(), again.end(), [](const SocketRow& r) { return r.track == 0; }) == 0);
 }

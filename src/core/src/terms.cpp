@@ -37,7 +37,7 @@ std::vector<Term> makeTerms()
          "show, until Show all.",
          "Connections tab", {"Connections", "Stereo pair", "Audio device"}},
         {"Track", kBasics,
-         "One line in the track table on the Recording tab. A track records one input: an audio track records one or "
+         "One line in the track table on the Recording tab (and a row on the Connections tab). A track records one input: an audio track records one or "
          "two audio input channels, a MIDI track the notes from one MIDI input. Each track holds at most one take, "
          "which it plays back. Tracks have a volume, Mute (M) and Solo (S).",
          "Recording tab, the track table; Add audio track, Add MIDI track", {"Audio track", "MIDI track", "Take"}},
@@ -48,7 +48,8 @@ std::vector<Term> makeTerms()
          {"Track", "Stereo pair", "Audio device", "WAV file"}},
         {"MIDI track", kBasics,
          "A track that records MIDI: the notes and controls (keys, pedal, wheels) played on a MIDI keyboard, not the "
-         "sound itself. Its take is a MIDI file. To hear it, choose an instrument or a MIDI output in its Output column.",
+         "sound itself. Its take is a MIDI file. To hear it, choose an instrument or a MIDI output (Connections tab: \"Goes "
+         "through\"; Recording tab: its Output column).",
          "Connections tab: a MIDI socket and its channel; Recording tab: Add MIDI track, the Input and Output "
          "columns",
          {"Track", "MIDI", "Instrument", "MIDI output"}},
@@ -68,7 +69,7 @@ std::vector<Term> makeTerms()
          "record stay greyed out until a track is armed). An armed track "
          "shows its input level and can be monitored; a MIDI track's input port is opened only while it is armed. "
          "Tracks that are not armed play their takes during a recording (overdub).",
-         "Recording tab: the Arm column", {"Record", "Monitor", "Overdub"}},
+         "Connections tab: a track's Arm; Recording tab: the Arm column", {"Record", "Monitor", "Overdub"}},
         {"Record", kRecording,
          "Starts recording all armed tracks (Ctrl+R starts and stops it). Stop ends it; each armed track then has a new "
          "take. The line under the transport shows the time and how much was written.",
@@ -104,7 +105,7 @@ std::vector<Term> makeTerms()
         {"Monitor", kRecording,
          "Hearing an audio track's input on the output while it is armed, for example to hear yourself through "
          "headphones. Switch it off when the input is already heard another way (or it sounds twice).",
-         "Recording tab: the Monitor column", {"Arm", "Latency"}},
+         "Connections tab: a track's Monitor; Recording tab: the Monitor column", {"Arm", "Latency"}},
         {"Overdub", kRecording,
          "Recording while other tracks play: Record plays the takes of the tracks that are not armed, from the song "
          "position, and the armed tracks record along. The new takes are put in time with what you heard (moved "

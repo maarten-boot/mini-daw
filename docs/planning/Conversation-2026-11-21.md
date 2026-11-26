@@ -554,3 +554,22 @@ User: "yes, add the terms, tutorial and readme; did we do a crosscheck before ?"
 - Terms: "Connections", "Socket", "Stereo pair" (new); Theme mentions Space between rows; Audio / MIDI track point to the Connections tab.
 - Getting started: lesson 1 makes the audio track by naming a socket on Connections; lesson 2 the MIDI track by a MIDI socket and its instrument; Edit there too. `docs/Getting-started.md` regenerated.
 - README: section "Connections", the tab in the summary and in "Colours per tab", Space between rows, the MIDI channel on Connections.
+
+## 24. Crosscheck #29: P35 and P36 (2026-11-26)
+
+User: "yes commit, then do the crosscheck" (5dd7650); meanwhile "ok add in memory, before release always crosschek" (kept as a rule: a crosscheck of every step since the last one before any release).
+
+Three independent reviews (P35 code, P36 code, docs against code). Fixed:
+- CC1 Tab headers in an area colour: the hover / press frame and the unfocused overline used the main Accent on the area's tab colours (about 1.2:1 on a dark area); now the area's own Accent.
+- CC2 A colour picked in the Theme window's picker popup was saved only at exit; now saved when the mouse is released.
+- CC3 The status line's "could not reach the minimum" warning counted only the main colours; now every area's too.
+- CC4 Two MIDI devices of one name: their free sockets shared one ID and one name field; now told apart by their place (T-UI-37).
+- CC5 Add audio track took In 1 even when a mono track had it; now the first input no track uses, else one a mono track has.
+- CC6 A track from an older project overlapping a stereo pair: its own Input entry was greyed; now the current entry stays choosable, and Connections says "(shares an input with track N)".
+- CC7 A track without input said "(not on this device)"; now "(no input chosen)". A pair that is not side by side names its real second input.
+- CC8 The stereo tick: a refused click is logged, the tooltip also says "Not while recording".
+- CC9 The gap rows made every row the same stripe; stripes now per track / socket.
+- CC10 The Connections header row scrolled away; the table has its own vertical scroll now, header frozen.
+- CC11 Docs: tab list and fallback in config warnings and code comments (from `defaultTabOrder()`); a config without `last` starts on Connections, like the default file; Connections says "Monitor" (not "Listen"), Terms Arm / Monitor / Track / MIDI track name the Connections tab; lesson 1 says In 1+2 has a track already at the first start; Spec SPEC-UI-11, -12, -09a (Theme window), SPEC-REC-01a (channel), status v0.83; misplaced comment.
+Checked and not taken over: "the Connections table cannot scroll" and "the jump back does not scroll" (both wrong: checked under Xvfb with 32 inputs, Show all, a track on In 30 and "<" from Recording: scrolled and marked); old configs get Connections before Terms, not first (kept: their users know the program); the swatches being colour only (they are suggestions with the hex as tooltip, not a state); All default without confirmation (kept). README status 1.1.0 → at the release.
+ctest 288/288.
