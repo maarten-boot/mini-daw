@@ -7,6 +7,7 @@
 //   [ui]
 //   min_contrast = AAA        ; AA (4.5), AAA (7), Max (21) or 4.5 .. 21
 //   font_size = 18            ; text size in pixels, 12 .. 32
+//   space_unit = 4            ; room between table rows in pixels, 0 .. 16 (P36)
 //
 //   [audio]
 //   input_device = "Line In (High Definition Audio Device)"   ; or (default) / (none)
@@ -61,6 +62,11 @@
 namespace minidaw {
 
 inline constexpr float kDefaultFontSize = 16.0f;
+// The room between rows of the track tables (P36): one unit between rows that
+// belong together (a MIDI track and its sound track, the sockets of a list),
+// two units between the others.
+inline constexpr int kDefaultSpaceUnit = 4;
+inline constexpr int kMaxSpaceUnit = 16;
 inline constexpr float kMinFontSize = 12.0f;
 inline constexpr float kMaxFontSize = 32.0f;
 
@@ -251,6 +257,7 @@ struct AppConfig {
     ContrastSetting contrast;
     ThemeSettings theme;
     float fontSize = kDefaultFontSize;
+    int spaceUnit = kDefaultSpaceUnit;  // pixels, 0 .. kMaxSpaceUnit
     WindowSettings window;
     TabSettings tabs;
     AudioSettings audio;

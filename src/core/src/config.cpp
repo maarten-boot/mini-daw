@@ -151,7 +151,7 @@ std::string getEnv(const char* name)
 
 const std::vector<std::string>& themeAreaIds()
 {
-    static const std::vector<std::string> ids = {"transport", "recording", "timeline", "audio", "terms", "status"};
+    static const std::vector<std::string> ids = {"transport", "connections", "recording", "timeline", "audio", "terms", "status"};
     return ids;
 }
 
@@ -290,11 +290,11 @@ std::vector<std::string> splitCommaList(std::string_view text)
 }
 } // namespace
 
-std::vector<std::string> defaultTabOrder() { return {"recording", "timeline", "audio", "terms"}; }
+std::vector<std::string> defaultTabOrder() { return {"connections", "recording", "timeline", "audio", "terms"}; }
 
 bool isTabId(std::string_view id)
 {
-    return id == "recording" || id == "timeline" || id == "audio" || id == "terms";
+    return id == "connections" || id == "recording" || id == "timeline" || id == "audio" || id == "terms";
 }
 
 std::vector<std::string> normalizeTabOrder(const std::vector<std::string>& order)
@@ -374,6 +374,13 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 cfg.fontSize = static_cast<float>(px);
             } else {
                 warn("font_size '" + value + "' must be a whole number from 12 to 32. Using 16.");
+            }
+        } else if (section == "ui" && key == "space_unit") {
+            unsigned int px = 0;
+            if (parseUnsigned(value, px) && px <= static_cast<unsigned int>(kMaxSpaceUnit)) {
+                cfg.spaceUnit = static_cast<int>(px);
+            } else {
+                warn("space_unit '" + value + "' must be a whole number from 0 to 16. Using 4.");
             }
         } else if (section == "tabs" && key == "order") {
             // "recording, timeline, audio, terms"
@@ -635,6 +642,9 @@ std::string defaultConfigText()
            "min_contrast = AA\n"
            "; Text size in pixels, 12 to 32.\n"
            "font_size = 16\n"
+           "; Room between the rows of the track tables, in pixels, 0 to 16: one unit\n"
+           "; between rows that belong together, two between the others.\n"
+           "space_unit = 4\n"
            "\n"
            "[window]\n"
            "; Open the window at the size and place it had when mini-daw closed\n"
@@ -643,10 +653,11 @@ std::string defaultConfigText()
            "\n"
            "[tabs]\n"
            "; The order of the main window's tabs (also set by dragging a tab, or in\n"
-           "; Settings > Tabs...): recording, timeline, audio (Audio setup), terms.\n"
-           "order = recording, timeline, audio, terms\n"
+           "; Settings > Tabs...): connections, recording, timeline, audio (Audio\n"
+           "; setup), terms.\n"
+           "order = connections, recording, timeline, audio, terms\n"
            "; The tab shown at start: the one used last (written by mini-daw).\n"
-           "last = recording\n"
+           "last = connections\n"
            "\n"
            "[audio]\n"
            "; Device names as shown in the program, in quotes,\n"
@@ -788,6 +799,7 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
     };
     text = setConfigValue(text, "ui", "min_contrast", config.contrast.toString());
     text = setConfigValue(text, "ui", "font_size", std::to_string(static_cast<int>(config.fontSize)));
+    text = setConfigValue(text, "ui", "space_unit", std::to_string(config.spaceUnit));
     for (const auto& id : themeAreaIds()) {
         const Rgb* c = config.theme.colour(id);
         text = setConfigValue(text, "theme", id, c ? quoteConfigString(toHex(*c)) : "default");  // quoted: # starts a comment

@@ -297,6 +297,14 @@ struct AppState {
     };
     std::map<std::string, AreaLook> areaLooks;     // per area id, rebuilt when its colour or the contrast changes
     const minidaw::Palette* drawPalette = nullptr;  // the area being drawn; nullptr = the main palette
+    // Connections tab (P36 prototype): the name typed in front of a free socket, per socket.
+    std::map<std::string, std::string> socketNames;
+    bool showAllSockets = false;
+    // A jump from the Connections tab to a track on the Recording tab: scrolled to once, marked for a while.
+    int jumpTrack = 0;
+    std::string jumpTab;  // the tab it jumped to: "recording" or "connections"
+    bool jumpScrolled = false;
+    double jumpUntil = 0.0;  // free audio sockets beyond the first kFreeSocketsShown too
     // Terms tab (P23, SPEC-UI-17)
     std::size_t runLoopDropped = 0;  // editorRunLoop().droppedCount() already logged (Z1)
     // macOS microphone permission (P34b): the permission when the stream was
@@ -1161,6 +1169,7 @@ void drawTermsTab(AppState& app)
 // --- Tabs (P18, SPEC-UI-12) ------------------------------------------------
 const char* tabTitle(const std::string& id)
 {
+    if (id == "connections") return "Connections";
     if (id == "timeline") return "Timeline";
     if (id == "audio") return "Audio setup";
     if (id == "terms") return "Terms";
@@ -1324,6 +1333,13 @@ void drawThemeWindow(AppState& app)
             ImGui::EndTable();
         }
         if (ImGui::Checkbox("Tab headers in their page's colour", &app.config.theme.tabHeaders)) saveConfig(app);
+        ImGui::SetNextItemWidth(10 * ImGui::GetFontSize());
+        ImGui::SliderInt("Space between rows (pixels)", &app.config.spaceUnit, 0, minidaw::kMaxSpaceUnit);
+        if (ImGui::IsItemDeactivatedAfterEdit()) saveConfig(app);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Connections and Recording: one unit between rows that belong together (a MIDI track "
+                              "and its sound track), two between the others.");
+        }
         if (ImGui::Button("All default")) {
             app.config.theme.areas.clear();
             saveConfig(app);
@@ -3897,17 +3913,35 @@ std::string audioInputLabel(const std::vector<unsigned int>& ch)
     return "(no input)";
 }
 
-void audioInputCombo(minidaw::Track& t, unsigned int inputs)
+// Why `channels` cannot be chosen for track `t` (a stereo pair keeps its inputs, P36), or empty.
+std::string whyNotInputs(const std::vector<minidaw::Track>& tracks, const minidaw::Track& t,
+                         const std::vector<unsigned int>& channels)
+{
+    const int other = minidaw::inputConflict(tracks, channels, t.number);
+    if (other == 0) return {};
+    for (const auto& o : tracks) {
+        if (o.number != other) continue;
+        return o.channels.size() == 2 ? "part of track " + std::to_string(other) + "'s stereo pair In " +
+                                            std::to_string(o.channels[0] + 1) + "+" + std::to_string(o.channels[1] + 1)
+                                      : "used by track " + std::to_string(other) + " (" + o.name + ")";
+    }
+    return "used by track " + std::to_string(other);
+}
+
+void audioInputCombo(const std::vector<minidaw::Track>& tracks, minidaw::Track& t, unsigned int inputs)
 {
     if (!ImGui::BeginCombo("##in", audioInputLabel(t.channels).c_str())) return;
-    for (unsigned int c = 0; c < inputs; ++c) {
-        const std::vector<unsigned int> mono{c};
-        if (minidaw::app::choice(audioInputLabel(mono).c_str(), t.channels == mono)) t.channels = mono;
-    }
-    for (unsigned int c = 0; c + 1 < inputs; ++c) {
-        const std::vector<unsigned int> pair{c, c + 1};
-        if (minidaw::app::choice(audioInputLabel(pair).c_str(), t.channels == pair)) t.channels = pair;
-    }
+    const auto item = [&](const std::vector<unsigned int>& ch) {
+        const std::string why = whyNotInputs(tracks, t, ch);
+        minidaw::app::beginDisabled(!why.empty());
+        if (minidaw::app::choice(audioInputLabel(ch).c_str(), t.channels == ch)) t.channels = ch;
+        minidaw::app::endDisabled();
+        if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Not free: %s.", why.c_str());
+        }
+    };
+    for (unsigned int c = 0; c < inputs; ++c) item({c});
+    for (unsigned int c = 0; c + 1 < inputs; ++c) item({c, c + 1});
     ImGui::EndCombo();
 }
 
@@ -3933,11 +3967,18 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
     } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !t.midiPort.empty()) {
         ImGui::SetTooltip("%s", preview.c_str());  // the full name when the box is too narrow
     }
-    ImGui::SameLine();
+    return changed;
+}
+
+// The MIDI channel a track records (P36: on the Connections tab, with its socket).
+void midiChannelCombo(minidaw::Track& t)
+{
     const std::string chText = t.midiChannel == 0 ? std::string("All ch") : "Ch " + std::to_string(t.midiChannel);
     ImGui::SetNextItemWidth(kMidiChannelBoxEm * ImGui::GetFontSize());
     const bool open = ImGui::BeginCombo("##ch", chText.c_str());
-    if (!open && ImGui::IsItemHovered()) ImGui::SetTooltip("MIDI channel to record");
+    if (!open && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("The MIDI channel to record: all, or the one your keyboard sends on");
+    }
     if (open) {
         if (minidaw::app::choice("All channels", t.midiChannel == 0)) t.midiChannel = 0;
         for (int c = 1; c <= 16; ++c) {
@@ -3945,7 +3986,6 @@ bool midiPortCombo(minidaw::Track& t, const minidaw::DeviceScan& scan)
         }
         ImGui::EndCombo();
     }
-    return changed;
 }
 
 std::string clockText(double seconds)
@@ -5122,7 +5162,15 @@ int addTrack(AppState& app, minidaw::TrackKind kind, std::string& why)
             return 0;
         }
         t.name = "Audio " + std::to_string(t.number);
-        t.channels = {0};
+        // The first input not in a stereo pair (P36: a pair keeps its inputs to itself).
+        const unsigned int inputs = app.audio.info().inputChannels;
+        unsigned int c = 0;
+        while (c < inputs && minidaw::inputConflict(app.tracks, {c}, 0) != 0) ++c;
+        if (c == inputs) {
+            why = "every input is in a stereo pair: make one mono first";
+            return 0;
+        }
+        t.channels = {c};
     } else {
         t.kind = minidaw::TrackKind::Midi;
         t.name = "MIDI " + std::to_string(t.number);
@@ -5227,6 +5275,70 @@ void setArm(AppState& app, minidaw::Track& t, bool armed)
     if (t.kind == minidaw::TrackKind::Midi) app.midiPortsDirty = true;  // its port opens when armed
 }
 
+// An empty table row `units` space units high (P36): room between rows, in
+// the window's background (no row colour), so rows that belong together
+// stand closer than the others.
+void tableGap(const AppState& app, int units)
+{
+    const float h = static_cast<float>(units * app.config.spaceUnit);
+    if (h <= 0.0f) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, 0.0f));
+    ImGui::TableNextRow(ImGuiTableRowFlags_None, h);
+    ImGui::PopStyleVar();
+    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_WindowBg));
+}
+
+// The "> " that marks the track a link jumped to: its room is always kept, so
+// nothing moves when it comes or goes. Not by colour alone (SPEC-UI-07).
+void jumpMarker(bool on)
+{
+    ImGui::AlignTextToFramePadding();
+    const float w = ImGui::CalcTextSize("> ").x;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(w, ImGui::GetFrameHeight()));
+    if (on) {
+        ImGui::GetWindowDrawList()->AddText(ImVec2(at.x, at.y + ImGui::GetStyle().FramePadding.y),
+                                            ImGui::GetColorU32(ImGuiCol_Text), ">");
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+}
+
+// Where a MIDI track's MIDI goes: no output, a MIDI output, or a VST3 instrument
+// (P10). `unlinkRequest` is set to the track's number when its instrument was
+// taken away (call dropEmptyLinkedTrack once app.tracks may change).
+void midiOutputCombo(AppState& app, minidaw::Track& t, int& unlinkRequest, const char* none = "(no MIDI output)")
+{
+    const bool hasInst = !t.instrumentClass.empty();
+    const bool instLoaded = app.instruments.count(t.number) != 0;
+    const std::string out = hasInst ? "Instrument: " + t.instrumentName + (instLoaded ? "" : " (not loaded)")
+                            : t.midiOut.empty() ? std::string(none)
+                                                : t.midiOut;
+    if (ImGui::BeginCombo("##out", out.c_str())) {
+        if (minidaw::app::choice(none, !hasInst && t.midiOut.empty())) {
+            if (setMidiOutput(app, t, std::string())) unlinkRequest = t.number;
+        }
+        for (const auto& name : app.midiPlayer.outputPorts()) {
+            if (minidaw::app::choice(name.c_str(), !hasInst && t.midiOut == name)) {
+                if (setMidiOutput(app, t, name)) unlinkRequest = t.number;
+            }
+        }
+        ImGui::SeparatorText("Instruments (VST3)");
+        const auto list = app.pluginCache.instruments();
+        if (list.empty()) ImGui::TextUnformatted("None found yet: Settings > Instruments > Scan");
+        for (const auto& c : list) {
+            ImGui::PushID(c.classId.c_str());
+            if (minidaw::app::choice(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
+                requestInstrument(app, t.number, c);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    } else if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Where this track's MIDI goes (live when armed, and its take when playing): %s",
+                          out.c_str());
+    }
+}
+
 void drawTracksPanel(AppState& app)
 {
     ImGui::SeparatorText("Tracks");
@@ -5257,9 +5369,11 @@ void drawTracksPanel(AppState& app)
     const float em = ImGui::GetFontSize();
     // Every column fits its content (fixed widths, nothing sized from the space left),
     // and a narrow window gets a horizontal scrollbar instead of cut-off controls (PL1).
-    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit |
-                                  ImGuiTableFlags_ScrollX;
+    // No lines between the rows: room instead (space units, P36), as on Connections.
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersV | ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollX;
     int removeIndex = -1;
+    float jumpRowY = -1.0f;  // screen y of the row a Connections link jumped to (this frame)
     int renderRequest = 0;  // a MIDI track whose Render was clicked (handled after the table)
     // An empty linked sound track removed when the output changes (after the table: it changes app.tracks).
     int unlinkRequest = 0;
@@ -5269,11 +5383,29 @@ void drawTracksPanel(AppState& app)
     const float rowH = ImGui::GetFrameHeight() + 2.0f * style.CellPadding.y;
     // With ScrollX the table has a fixed height: counted here (every cell is at most one
     // frame high), plus what the last frame measured beyond that if a cell is taller (W8).
+    // One unit between a MIDI track and its sound track, two between the others.
+    const auto group = [](const minidaw::Track& t) { return t.instrumentOf > 0 ? t.instrumentOf : t.number; };
+    int gapUnits = 0;
+    for (std::size_t i = 1; i < app.tracks.size(); ++i) {
+        gapUnits += group(app.tracks[i]) == group(app.tracks[i - 1]) ? 1 : 2;
+    }
     const float tableH = ImGui::GetTextLineHeight() + 2.0f * style.CellPadding.y +
-                         rowH * static_cast<float>(app.tracks.size()) + style.ScrollbarSize + 4.0f + app.trackTableExtra;
+                         rowH * static_cast<float>(app.tracks.size()) +
+                         static_cast<float>(gapUnits * app.config.spaceUnit) + style.ScrollbarSize + 4.0f +
+                         app.trackTableExtra;
     const ImGuiID tableId = ImGui::GetID("tracks");
     if (!app.tracks.empty() && ImGui::BeginTable("tracks", 10, flags, ImVec2(0.0f, tableH))) {
         ImGui::TableSetupScrollFreeze(4, 0);  // #, Arm, Monitor and Name stay when scrolled sideways
+        // The row under the mouse last frame (row 0 is the header) and its group (a MIDI track with its sound track).
+        // Gap rows count too: the same walk as below finds the track of that row.
+        int hoveredGroup = 0;
+        if (const int row = ImGui::TableGetHoveredRow(); row >= 1) {
+            int index = 0;
+            for (std::size_t i = 0; i < app.tracks.size(); ++i) {
+                if (i > 0 && app.config.spaceUnit > 0) ++index;  // its gap row
+                if (++index == row) hoveredGroup = group(app.tracks[i]);
+            }
+        }
         // Fixed widths, so the columns do not jump when the state text changes.
         const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TableSetupColumn("#");
@@ -5290,9 +5422,30 @@ void drawTracksPanel(AppState& app)
         ImGui::TableHeadersRow();
         for (std::size_t i = 0; i < app.tracks.size(); ++i) {
             minidaw::Track& t = app.tracks[i];
+            if (i > 0) tableGap(app, group(t) == group(app.tracks[i - 1]) ? 1 : 2);
             ImGui::PushID(t.number);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            // The track a Connections link jumped to: marked by the selection colour and by "> " (not by colour alone).
+            const bool jumped = app.jumpTab == "recording" && app.jumpTrack != 0 && ImGui::GetTime() < app.jumpUntil &&
+                                (t.number == app.jumpTrack || t.instrumentOf == app.jumpTrack);
+            // The track under the mouse (with its MIDI or sound track): the same colour, to see which is which.
+            if (jumped || (hoveredGroup != 0 && group(t) == hoveredGroup)) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_Header));
+            }
+            if (jumped && t.number == app.jumpTrack && !app.jumpScrolled) jumpRowY = ImGui::GetCursorScreenPos().y;
+            // Back to its socket on the Connections tab (a sound track: its MIDI track's socket).
+            if (ImGui::SmallButton("<")) {
+                app.selectTab = "connections";
+                app.jumpTab = "connections";
+                app.jumpTrack = group(t);
+                app.jumpScrolled = false;
+                app.jumpUntil = ImGui::GetTime() + 4.0;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show its socket on the Connections tab.");
+            ImGui::SameLine();
+            jumpMarker(jumped);
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("%d", t.number);
             ImGui::TableNextColumn();
             // A linked sound track (P11) records with its MIDI track: no arm or monitor of its own.
@@ -5370,12 +5523,15 @@ void drawTracksPanel(AppState& app)
                 }
             } else if (t.kind == minidaw::TrackKind::Audio) {
                 ImGui::SetNextItemWidth(9.5f * em);
-                audioInputCombo(t, inputs);
+                audioInputCombo(app.tracks, t, inputs);
             } else {
                 // A fixed width (the full name is the tooltip): sized from the space left,
                 // the list would widen the column every frame (PL1).
                 ImGui::SetNextItemWidth(10.0f * em);
                 if (midiPortCombo(t, app.scan) && t.armed) app.midiPortsDirty = true;
+                ImGui::SameLine();
+                ImGui::TextUnformatted(t.midiChannel == 0 ? "all ch" : ("ch " + std::to_string(t.midiChannel)).c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The MIDI channel is chosen on the Connections tab.");
             }
             minidaw::app::endDisabled();
             ImGui::TableNextColumn();
@@ -5430,7 +5586,6 @@ void drawTracksPanel(AppState& app)
                 ImGui::TextUnformatted("-");
             } else {
                 // Where the track's MIDI goes: a MIDI output, or a VST3 instrument (P10).
-                const bool hasInst = !t.instrumentClass.empty();
                 const bool instLoaded = app.instruments.count(t.number) != 0;
                 const bool editorOpen = app.pluginWindows.isOpen(t.number);
                 const char* editLabel = editorOpen ? "Close##editor" : "Edit##editor";
@@ -5482,33 +5637,7 @@ void drawTracksPanel(AppState& app)
                     }
                 }
                 ImGui::SetNextItemWidth(14.0f * em);
-                const std::string out = hasInst ? "Instrument: " + t.instrumentName + (instLoaded ? "" : " (not loaded)")
-                                        : t.midiOut.empty() ? std::string("(no MIDI output)")
-                                                            : t.midiOut;
-                if (ImGui::BeginCombo("##out", out.c_str())) {
-                    if (minidaw::app::choice("(no MIDI output)", !hasInst && t.midiOut.empty())) {
-                        if (setMidiOutput(app, t, std::string())) unlinkRequest = t.number;
-                    }
-                    for (const auto& name : app.midiPlayer.outputPorts()) {
-                        if (minidaw::app::choice(name.c_str(), !hasInst && t.midiOut == name)) {
-                            if (setMidiOutput(app, t, name)) unlinkRequest = t.number;
-                        }
-                    }
-                    ImGui::SeparatorText("Instruments (VST3)");
-                    const auto list = app.pluginCache.instruments();
-                    if (list.empty()) ImGui::TextUnformatted("None found yet: Settings > Instruments > Scan");
-                    for (const auto& c : list) {
-                        ImGui::PushID(c.classId.c_str());
-                        if (minidaw::app::choice(instrumentLabel(c).c_str(), t.instrumentClass == c.classId)) {
-                            requestInstrument(app, t.number, c);
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                } else if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Where this track's MIDI goes (live when armed, and its take when playing): %s",
-                                      out.c_str());
-                }
+                midiOutputCombo(app, t, unlinkRequest);
             }
             // Take (SPEC-PLAY-01a): the file name; the full path as the tooltip.
             ImGui::TableNextColumn();
@@ -5549,6 +5678,10 @@ void drawTracksPanel(AppState& app)
             }
             app.trackTableExtra = extra > 0.5f ? extra : 0.0f;
         }
+        if (jumpRowY >= 0.0f) {  // the tab's own scroll: the row about a third down
+            ImGui::SetScrollFromPosY(jumpRowY - ImGui::GetWindowPos().y, 0.3f);
+            app.jumpScrolled = true;
+        }
     }
     if (monitoring) {
         const auto& info = app.audio.info();
@@ -5567,6 +5700,349 @@ void drawTracksPanel(AppState& app)
         app.log.warning(m);
         app.midiWarnings.push_back(m);
         if (app.midiWarnings.size() > 4) app.midiWarnings.erase(app.midiWarnings.begin());
+    }
+}
+
+// --- Connections tab (P36 prototype): the inputs as sockets, cables to the recording ---
+
+
+// A cable across `width`: a line with a dot at each end when connected, a short
+// stub with an open end when not. Drawn in the text colour (its contrast is
+// kept), so a greyed (disabled) row draws it greyed too; the state is also
+// written as text next to it, never by the line alone (SPEC-UI-07).
+void drawCable(bool connected, float width)
+{
+    const float h = ImGui::GetFrameHeight();
+    const ImVec2 a = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, h));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    const float y = a.y + h * 0.5f;
+    const float r = h * 0.16f;
+    const float thick = std::max(2.0f, h * 0.09f);
+    if (connected) {
+        dl->AddLine(ImVec2(a.x + r, y), ImVec2(a.x + width - r, y), col, thick);
+        dl->AddCircleFilled(ImVec2(a.x + r, y), r, col);
+        dl->AddCircleFilled(ImVec2(a.x + width - r, y), r, col);
+    } else {
+        dl->AddLine(ImVec2(a.x + r, y), ImVec2(a.x + width * 0.35f, y), col, thick);
+        dl->AddCircleFilled(ImVec2(a.x + r, y), r, col);
+        dl->AddCircle(ImVec2(a.x + width * 0.35f + r, y), r, col, 0, thick * 0.6f);
+    }
+}
+
+std::string socketKey(const minidaw::SocketRow& r)
+{
+    if (r.kind == minidaw::TrackKind::Midi) return "midi:" + r.port;
+    std::string k = "audio:";
+    for (unsigned int c : r.channels) k += std::to_string(c) + ",";
+    return k;
+}
+
+// A free socket gets a track: named as typed (or the default name), armed, so
+// pressing Record records it at once.
+void plugIn(AppState& app, const minidaw::SocketRow& r, const std::string& name)
+{
+    std::string why;
+    const int number = addTrack(app, r.kind, why);
+    if (number == 0) {
+        app.log.info("Not plugged in: " + why);
+        return;
+    }
+    minidaw::Track* t = findTrack(app, number);
+    if (t == nullptr) return;
+    if (r.kind == minidaw::TrackKind::Audio) {
+        t->channels = r.channels;
+    } else {
+        t->midiPort = r.port;
+    }
+    if (!name.empty()) t->name = name;
+    setArm(app, *t, true);
+    app.log.info("Connections: " + t->name + " plugged into " + socketLabel(r, app.tracks));
+}
+
+constexpr unsigned int kFreeSocketsShown = 8;  // free audio sockets In 1..8; the rest on "Show all"
+
+void drawConnectionsTab(AppState& app)
+{
+    const bool rec = app.session.recording();
+    const unsigned int inputs = app.audio.info().inputChannels;
+    const float em = ImGui::GetFontSize();
+    ImGui::TextWrapped("%s", minidaw::keysHere(
+                                 "Each socket is an input: a channel of your audio device or a MIDI port. Type the name "
+                                 "of what is plugged into it (a guitar, a microphone, a keyboard) and press Enter. "
+                                 "The cable shows where it goes: audio straight to the recording, MIDI through an "
+                                 "instrument that makes the sound. Then press Record (Ctrl+R).")
+                                 .c_str());
+    if (inputs == 0) {
+        ImGui::TextWrapped("No audio inputs: choose an input device in Settings > Audio devices.");
+    }
+
+    if (ImGui::Button("Look for new devices")) {
+        app.scan = minidaw::scanDevices();
+        app.log.info("Devices rescanned");
+        logScan(app);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plugged in a MIDI keyboard? This finds it.");
+    std::vector<std::string> ports;
+    for (const auto& p : app.scan.midiInputs) ports.push_back(p.name);
+    const auto rows = minidaw::socketRows(app.tracks, inputs, ports);
+    // A device with many inputs: its free sockets past In 8 only on "Show all".
+    const auto hiddenSocket = [](const minidaw::SocketRow& r) {
+        return r.track == 0 && r.kind == minidaw::TrackKind::Audio && !r.channels.empty() &&
+               r.channels[0] >= kFreeSocketsShown;
+    };
+    const auto hidden = std::count_if(rows.begin(), rows.end(), hiddenSocket);
+    if (hidden > 0) {
+        ImGui::SameLine();
+        const std::string label = app.showAllSockets
+                                      ? "Show only In 1-" + std::to_string(kFreeSocketsShown) + " (and those in use)"
+                                      : "Show all " + std::to_string(inputs) + " inputs (" + std::to_string(hidden) +
+                                            " more free)";
+        if (ImGui::Button(label.c_str())) app.showAllSockets = !app.showAllSockets;
+    }
+
+    const float cableW = 3.0f * em;
+    const ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
+                                  ImGuiTableFlags_BordersOuterH;
+    int removeNumber = 0;
+    int unlinkRequest = 0;
+    std::optional<minidaw::SocketRow> plug;
+    std::string plugName;
+    if (!ImGui::BeginTable("connections", 8, flags)) return;
+    ImGui::TableSetupScrollFreeze(1, 1);  // the socket and the header stay in view
+    ImGui::TableSetupColumn("Socket");
+    ImGui::TableSetupColumn("##c1", ImGuiTableColumnFlags_WidthFixed, cableW);
+    ImGui::TableSetupColumn("Plugged in (its name)");
+    ImGui::TableSetupColumn("##c2", ImGuiTableColumnFlags_WidthFixed, cableW);
+    ImGui::TableSetupColumn("Goes through");
+    ImGui::TableSetupColumn("##c3", ImGuiTableColumnFlags_WidthFixed, cableW);
+    ImGui::TableSetupColumn("Recorded");
+    ImGui::TableSetupColumn("");
+    ImGui::TableHeadersRow();
+
+    minidaw::TrackKind lastKind = minidaw::TrackKind::Audio;
+    bool first = true;
+    const int hoveredRow = ImGui::TableGetHoveredRow();  // last frame's; row 0 is the header
+    int rowIndex = 0;
+    for (const auto& r : rows) {
+        if (!app.showAllSockets && hiddenSocket(r)) continue;
+        if (first || r.kind != lastKind) {
+            if (!first && app.config.spaceUnit > 0) {
+                tableGap(app, 2);
+                ++rowIndex;
+            }
+            ImGui::TableNextRow();
+            ++rowIndex;
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(r.kind == minidaw::TrackKind::Audio ? "AUDIO INPUTS" : "MIDI INPUTS");
+            first = false;
+            lastKind = r.kind;
+        }
+        const std::string key = socketKey(r);
+        ImGui::PushID(r.track != 0 ? ("t" + std::to_string(r.track)).c_str() : key.c_str());
+        if (app.config.spaceUnit > 0) {
+            tableGap(app, 1);
+            ++rowIndex;
+        }
+        ImGui::TableNextRow();
+        ++rowIndex;
+        minidaw::Track* t = r.track != 0 ? findTrack(app, r.track) : nullptr;
+        // Marked: the track a "<" on the Recording tab jumped to ("> " too), and the one under the mouse.
+        const bool jumped = t != nullptr && app.jumpTab == "connections" && t->number == app.jumpTrack &&
+                            ImGui::GetTime() < app.jumpUntil;
+        if (jumped || (t != nullptr && rowIndex == hoveredRow)) {
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_Header));
+        }
+        if (jumped && !app.jumpScrolled) {
+            ImGui::SetScrollHereY(0.3f);
+            app.jumpScrolled = true;
+        }
+
+        // Socket: greyed while its device is not there; the name stays. A MIDI socket has its channel.
+        ImGui::TableNextColumn();
+        minidaw::app::beginDisabled(!r.present);
+        ImGui::AlignTextToFramePadding();
+        jumpMarker(jumped);
+        // A MIDI socket's channel is its own list (next to it), not in the label.
+        ImGui::TextUnformatted(r.kind == minidaw::TrackKind::Midi && !r.port.empty()
+                                   ? r.port.c_str()
+                                   : minidaw::socketLabel(r, app.tracks).c_str());
+        if (!r.present) {
+            ImGui::SameLine();
+            ImGui::TextUnformatted(r.kind == minidaw::TrackKind::Midi ? "(not plugged in)" : "(not on this device)");
+        }
+        minidaw::app::endDisabled();
+        if (t != nullptr && t->kind == minidaw::TrackKind::Midi) {
+            ImGui::SameLine();
+            minidaw::app::beginDisabled(rec);
+            midiChannelCombo(*t);
+            minidaw::app::endDisabled();
+        }
+        minidaw::app::beginDisabled(!r.present);
+        ImGui::TableNextColumn();
+        drawCable(t != nullptr && r.present, cableW);
+        minidaw::app::endDisabled();
+
+        ImGui::TableNextColumn();
+        if (t == nullptr) {
+            // A free socket: name it, Enter or Plug in makes its track.
+            minidaw::app::beginDisabled(rec);
+            std::string& name = app.socketNames[key];
+            ImGui::SetNextItemWidth(12 * em);
+            const bool enter = ImGui::InputTextWithHint("##name", "name it here", &name,
+                                                        ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            const bool pressed = ImGui::SmallButton("Plug in");
+            logRefusedClick(app, rec, "Not plugged in", "not while recording");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Make a track for this input, armed for recording.");
+            }
+            if (enter || pressed) {
+                plug = r;
+                plugName = name;
+                name.clear();
+            }
+            minidaw::app::endDisabled();
+            for (int k = 0; k < 4; ++k) ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("not connected");
+            ImGui::TableNextColumn();
+            ImGui::PopID();
+            continue;
+        }
+
+        minidaw::app::beginDisabled(rec);
+        const std::string oldName = t->name;
+        ImGui::SetNextItemWidth(12 * em);
+        if (ImGui::InputText("##name", &t->name) && t->kind == minidaw::TrackKind::Midi) {
+            // Its sound track follows the name while it still has the default one.
+            if (minidaw::Track* l = minidaw::linkedSoundTrack(app.tracks, t->number);
+                l != nullptr && l->name == oldName + " sound") {
+                l->name = t->name + " sound";
+            }
+        }
+        minidaw::app::endDisabled();
+        // Unplug where Plug in was, so the button stays in its place.
+        ImGui::SameLine();
+        const std::string noRemove = whyNoTrackRemove(app);
+        minidaw::app::beginDisabled(!noRemove.empty());
+        if (ImGui::SmallButton("Unplug")) removeNumber = t->number;
+        logRefusedClick(app, !noRemove.empty(), "Track " + std::to_string(t->number) + " not unplugged", noRemove);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", noRemove.empty() ? "Remove this track. Its recordings stay on disk."
+                                                     : ("Not now: " + noRemove).c_str());
+        }
+        minidaw::app::endDisabled();
+        ImGui::TableNextColumn();
+        drawCable(true, cableW);
+
+        // Goes through: audio straight on; MIDI to an instrument (or a MIDI output).
+        ImGui::TableNextColumn();
+        bool producesSound = true;
+        if (t->kind == minidaw::TrackKind::Audio) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("straight on");
+            const unsigned int c0 = t->channels.empty() ? 0 : t->channels[0];
+            if (c0 + 1 < inputs || t->channels.size() == 2) {
+                ImGui::SameLine();
+                bool stereo = t->channels.size() == 2;
+                // A pair keeps its two inputs to itself (the same rule as the Input list on the
+                // Recording tab): back to mono, or unplugging the other track, frees them again.
+                const std::string why = stereo ? std::string() : whyNotInputs(app.tracks, *t, {c0, c0 + 1});
+                const bool blocked = !why.empty();
+                minidaw::app::beginDisabled(rec || blocked);
+                const std::string label = "stereo with In " + std::to_string(c0 + 2);
+                if (ImGui::Checkbox(label.c_str(), &stereo)) {
+                    t->channels = stereo ? std::vector<unsigned int>{c0, c0 + 1} : std::vector<unsigned int>{c0};
+                }
+                minidaw::app::endDisabled();
+                if (blocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Not free: %s. Unplug it (or make it mono) first.", why.c_str());
+                }
+            }
+        } else {
+            minidaw::app::beginDisabled(rec || app.renderTrack == t->number);
+            ImGui::SetNextItemWidth(14 * em);
+            midiOutputCombo(app, *t, unlinkRequest, "(no instrument: MIDI only)");
+            minidaw::app::endDisabled();
+            const bool loaded = app.instruments.count(t->number) != 0;
+            producesSound = !t->instrumentClass.empty();
+            if (loaded && minidaw::app::PluginWindows::supported()) {
+                ImGui::SameLine();
+                const bool open = app.pluginWindows.isOpen(t->number);
+                if (ImGui::SmallButton(open ? "Close##editor" : "Edit##editor")) {
+                    if (open) {
+                        app.pluginWindows.close(t->number);
+                    } else {
+                        openPluginWindow(app, *t);
+                    }
+                }
+            }
+        }
+        ImGui::TableNextColumn();
+        drawCable(true, cableW);
+
+        // Recorded: arm, and what the take holds.
+        ImGui::TableNextColumn();
+        minidaw::app::beginDisabled(rec);
+        bool armed = t->armed;
+        if (ImGui::Checkbox("Arm", &armed)) setArm(app, *t, armed);
+        logRefusedClick(app, rec, "Track " + std::to_string(t->number) + ": Arm not changed", "not while recording");
+        minidaw::app::endDisabled();
+        ImGui::SameLine();
+        if (t->kind == minidaw::TrackKind::Audio) {
+            const bool hasOutput = app.audio.info().running && app.audio.info().outputChannels > 0;
+            minidaw::app::beginDisabled(!hasOutput);
+            ImGui::Checkbox("Listen", &t->monitor);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Hear this input while it is armed (Monitor). Use headphones.");
+            }
+            minidaw::app::endDisabled();
+            ImGui::SameLine();
+            std::vector<minidaw::LevelMeter*> meters;
+            for (unsigned int c : t->channels) {
+                if (c < inputs && c < app.inputMeters.size()) meters.push_back(&app.inputMeters[c]);
+            }
+            if (!meters.empty()) drawMeter(app, meters, 6 * em);
+            ImGui::SameLine();
+            ImGui::Text("audio, track %d", t->number);
+        } else if (producesSound) {
+            const minidaw::Track* l = minidaw::linkedSoundTrack(app.tracks, t->number);
+            if (l != nullptr) {
+                ImGui::Text("MIDI (track %d) + sound (track %d)", t->number, l->number);
+            } else {
+                ImGui::Text("MIDI (track %d), sound once loaded", t->number);
+            }
+        } else {
+            ImGui::Text("MIDI only (track %d)", t->number);
+        }
+
+        ImGui::TableNextColumn();
+        if (ImGui::SmallButton("Track details >")) {
+            app.selectTab = "recording";
+            app.jumpTab = "recording";
+            app.jumpTrack = t->number;
+            app.jumpScrolled = false;
+            app.jumpUntil = ImGui::GetTime() + 4.0;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Show track %d on the Recording tab: volume, mute, solo, presets, Render, its take.",
+                              t->number);
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+
+    if (removeNumber != 0) {
+        std::string why;
+        removeTrackNow(app, removeNumber, why);
+    }
+    if (unlinkRequest != 0) dropEmptyLinkedTrack(app, unlinkRequest);
+    if (plug) plugIn(app, *plug, plugName);
+    if (app.scan.midiInputs.empty()) {
+        ImGui::TextWrapped("No MIDI inputs found. Plug in a MIDI keyboard, then press Look for new devices.");
     }
 }
 
@@ -7027,7 +7503,10 @@ int runGui(AppState& app)
                         saveConfig(app);
                     }
                     const bool area = beginArea(app, id, false);
-                    if (id == "recording") {
+                    if (id == "connections") {
+                        drawAudioStatusLine(app);
+                        drawConnectionsTab(app);
+                    } else if (id == "recording") {
                         drawAudioStatusLine(app);
                         drawTracksPanel(app);
                     } else if (id == "timeline") {

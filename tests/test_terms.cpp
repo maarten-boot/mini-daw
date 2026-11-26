@@ -103,7 +103,7 @@ TEST_CASE("T-UI-28: the Terms tab is in the tab order; older configs get it at t
     CHECK(defaultTabOrder().back() == "terms");
     const auto old = parseConfig("[tabs]\norder = recording, timeline, audio\nlast = terms\n");
     CHECK(old.warnings.empty());
-    CHECK(old.config.tabs.order == std::vector<std::string>{"recording", "timeline", "audio", "terms"});
+    CHECK(old.config.tabs.order == std::vector<std::string>{"recording", "timeline", "audio", "connections", "terms"});
     CHECK(old.config.tabs.last == "terms");
 }
 
@@ -116,9 +116,9 @@ TEST_CASE("T-UI-33: the Terms tab is pinned at the right end", "[ui][config][T-U
     CHECK_FALSE(isPinnedTab("audio"));
     const auto moved = parseConfig("[tabs]\norder = terms, audio, recording, timeline\n");
     CHECK(moved.warnings.empty());
-    CHECK(moved.config.tabs.order == std::vector<std::string>{"audio", "recording", "timeline", "terms"});
+    CHECK(moved.config.tabs.order == std::vector<std::string>{"audio", "recording", "timeline", "connections", "terms"});
     CHECK(normalizeTabOrder({"timeline", "terms", "recording"}) ==
-          std::vector<std::string>{"timeline", "recording", "audio", "terms"});
+          std::vector<std::string>{"timeline", "recording", "connections", "audio", "terms"});
     CHECK(normalizeTabOrder({"terms"}) == defaultTabOrder());
     // Written back: Terms last.
     minidaw::test::TempDir dir;
@@ -126,7 +126,7 @@ TEST_CASE("T-UI-33: the Terms tab is pinned at the right end", "[ui][config][T-U
     c.tabs.order = {"terms", "timeline", "recording", "audio"};
     REQUIRE(saveConfigFile(dir.path() / "config.ini", c).empty());
     const auto back = loadConfigFile(dir.path() / "config.ini");
-    CHECK(back.config.tabs.order == std::vector<std::string>{"timeline", "recording", "audio", "terms"});
+    CHECK(back.config.tabs.order == std::vector<std::string>{"timeline", "recording", "audio", "connections", "terms"});
 }
 
 TEST_CASE("T-MAC-08: shortcut names on macOS: Cmd instead of Ctrl, Cmd+Q to quit", "[mac][T-MAC-08]")

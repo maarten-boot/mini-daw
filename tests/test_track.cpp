@@ -9,6 +9,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <fstream>
 
 using namespace minidaw;
@@ -269,4 +270,69 @@ TEST_CASE("T-VST-31: linked track made with the instrument; overdub count", "[tr
     CHECK(overdubTrackCount(tracks) == 0);
     tracks[0].armed = false;
     CHECK(overdubTrackCount(tracks) == 2);
+}
+
+TEST_CASE("T-UI-37: socket rows of the Connections tab", "[track][T-UI-37]")
+{
+    std::vector<Track> tracks;
+    Track guitar;
+    guitar.number = 1;
+    guitar.name = "Guitar";
+    guitar.channels = {0, 1};
+    tracks.push_back(guitar);
+    Track keys;
+    keys.number = 2;
+    keys.name = "Keys";
+    keys.kind = TrackKind::Midi;
+    keys.midiPort = "Keystep";
+    keys.midiChannel = 3;
+    tracks.push_back(keys);
+    Track sound;  // linked: no row
+    sound.number = 3;
+    sound.instrumentOf = 2;
+    tracks.push_back(sound);
+    Track gone;  // input 6 on a 4-input device: kept, not present
+    gone.number = 4;
+    gone.name = "Mic";
+    gone.channels = {5};
+    tracks.push_back(gone);
+    Track unplugged;
+    unplugged.number = 5;
+    unplugged.kind = TrackKind::Midi;
+    unplugged.midiPort = "Old synth";
+    tracks.push_back(unplugged);
+
+    const auto rows = socketRows(tracks, 4, {"Keystep", "Drum pad"});
+    REQUIRE(rows.size() == 7);
+    CHECK(rows[0].track == 1);  // In 1+2
+    CHECK(socketLabel(rows[0], tracks) == "In 1+2");
+    CHECK((rows[1].track == 0 && rows[1].channels == std::vector<unsigned int>{2}));  // free In 3
+    CHECK((rows[2].track == 0 && rows[2].channels == std::vector<unsigned int>{3}));  // free In 4
+    CHECK((rows[3].track == 4 && !rows[3].present));                                  // In 6, gone
+    CHECK((rows[4].kind == TrackKind::Midi && rows[4].track == 0 && rows[4].port == "Drum pad"));
+    CHECK((rows[5].track == 2 && rows[5].present));
+    CHECK(socketLabel(rows[5], tracks) == "Keystep ch 3");
+    CHECK((rows[6].track == 5 && !rows[6].present));
+
+    // Stereo pairs: In 1+2 is track 1's; In 6 is track 4's; In 3 is free.
+    CHECK(channelUser(tracks, 1, 0) == 1);
+    CHECK(channelUser(tracks, 1, 1) == 0);
+    CHECK(channelUser(tracks, 5, 0) == 4);
+    CHECK(channelUser(tracks, 2, 0) == 0);
+
+    // A pair keeps its inputs to itself; mono tracks may share one.
+    CHECK(inputConflict(tracks, {0}, 0) == 1);       // In 1 is in track 1's pair
+    CHECK(inputConflict(tracks, {1, 2}, 0) == 1);    // so is In 2
+    CHECK(inputConflict(tracks, {4, 5}, 0) == 4);    // In 6 is track 4's (mono)
+    CHECK(inputConflict(tracks, {5}, 0) == 0);       // mono with mono
+    CHECK(inputConflict(tracks, {2, 3}, 0) == 0);
+    CHECK(inputConflict(tracks, {0, 1}, 1) == 0);    // its own pair
+
+    // Two tracks on one socket: a row each, no free row for it.
+    Track second = guitar;
+    second.number = 6;
+    second.channels = {0};
+    tracks.push_back(second);
+    const auto again = socketRows(tracks, 2, {});
+    CHECK(std::count_if(again.begin(), again.end(), [](const SocketRow& r) { return r.track == 0; }) == 0);
 }

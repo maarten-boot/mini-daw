@@ -146,4 +146,30 @@ std::filesystem::path createTakeFolder(const std::filesystem::path& base, const 
 // Lowest track number not used yet.
 int nextTrackNumber(const std::vector<Track>& tracks);
 
+// One row of the Connections tab (cable view, P36 prototype): an input socket
+// and the track plugged into it, or a free socket. Audio rows first (by first
+// channel), then MIDI rows (by port name); a socket with several tracks has a
+// row for each. A track whose input is gone (channel beyond the device, MIDI
+// port not found) keeps its row with `present` false, so its name stays.
+// Linked sound tracks have no socket and no row.
+struct SocketRow {
+    TrackKind kind = TrackKind::Audio;
+    std::vector<unsigned int> channels;      // audio: 1 or 2 channels (0-based)
+    std::string port;                        // MIDI: port name
+    int track = 0;                           // the track's number; 0 = free socket
+    bool present = true;                     // the input exists now
+};
+std::vector<SocketRow> socketRows(const std::vector<Track>& tracks, unsigned int inputChannels,
+                                  const std::vector<std::string>& midiPorts);
+// The audio input track (not a linked sound track) other than track `except`
+// that records input channel `channel`; 0 if none.
+int channelUser(const std::vector<Track>& tracks, unsigned int channel, int except);
+// Whether track `except` may record `channels` (P36): a stereo pair takes its
+// two inputs for itself, so a pair may not share an input with any other
+// track, and no track may take an input of another track's pair; two mono
+// tracks may share one input. Returns the track in the way, or 0.
+int inputConflict(const std::vector<Track>& tracks, const std::vector<unsigned int>& channels, int except);
+// "In 1", "In 1+2", or the MIDI port name (with " ch N" for one channel).
+std::string socketLabel(const SocketRow& row, const std::vector<Track>& tracks);
+
 } // namespace minidaw

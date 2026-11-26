@@ -101,6 +101,94 @@ int nextTrackNumber(const std::vector<Track>& tracks)
     return n;
 }
 
+std::vector<SocketRow> socketRows(const std::vector<Track>& tracks, unsigned int inputChannels,
+                                  const std::vector<std::string>& midiPorts)
+{
+    std::vector<SocketRow> audio;
+    std::vector<SocketRow> midi;
+    std::vector<bool> used(inputChannels, false);
+    std::vector<bool> portUsed(midiPorts.size(), false);
+    for (const Track& t : tracks) {
+        SocketRow r;
+        r.kind = t.kind;
+        r.track = t.number;
+        if (t.kind == TrackKind::Audio) {
+            if (t.instrumentOf > 0) continue;  // a linked sound track: no socket
+            r.channels = t.channels;
+            r.present = !t.channels.empty();
+            for (unsigned int c : t.channels) {
+                if (c < inputChannels) {
+                    used[c] = true;
+                } else {
+                    r.present = false;
+                }
+            }
+            audio.push_back(r);
+        } else {
+            r.port = t.midiPort;
+            const auto it = std::find(midiPorts.begin(), midiPorts.end(), t.midiPort);
+            r.present = it != midiPorts.end();
+            if (r.present) portUsed[static_cast<std::size_t>(it - midiPorts.begin())] = true;
+            midi.push_back(r);
+        }
+    }
+    for (unsigned int c = 0; c < inputChannels; ++c) {
+        if (used[c]) continue;
+        SocketRow r;
+        r.channels = {c};
+        audio.push_back(r);
+    }
+    for (std::size_t i = 0; i < midiPorts.size(); ++i) {
+        if (portUsed[i]) continue;
+        SocketRow r;
+        r.kind = TrackKind::Midi;
+        r.port = midiPorts[i];
+        midi.push_back(r);
+    }
+    const auto firstChannel = [](const SocketRow& r) { return r.channels.empty() ? ~0u : r.channels.front(); };
+    std::stable_sort(audio.begin(), audio.end(),
+                     [&](const SocketRow& a, const SocketRow& b) { return firstChannel(a) < firstChannel(b); });
+    std::stable_sort(midi.begin(), midi.end(), [](const SocketRow& a, const SocketRow& b) { return a.port < b.port; });
+    audio.insert(audio.end(), midi.begin(), midi.end());
+    return audio;
+}
+
+int channelUser(const std::vector<Track>& tracks, unsigned int channel, int except)
+{
+    for (const Track& t : tracks) {
+        if (t.number == except || t.kind != TrackKind::Audio || t.instrumentOf > 0) continue;
+        if (std::find(t.channels.begin(), t.channels.end(), channel) != t.channels.end()) return t.number;
+    }
+    return 0;
+}
+
+int inputConflict(const std::vector<Track>& tracks, const std::vector<unsigned int>& channels, int except)
+{
+    for (const Track& o : tracks) {
+        if (o.number == except || o.kind != TrackKind::Audio || o.instrumentOf > 0) continue;
+        if (channels.size() < 2 && o.channels.size() < 2) continue;  // mono with mono: may share
+        for (unsigned int c : channels) {
+            if (std::find(o.channels.begin(), o.channels.end(), c) != o.channels.end()) return o.number;
+        }
+    }
+    return 0;
+}
+
+std::string socketLabel(const SocketRow& row, const std::vector<Track>& tracks)
+{
+    if (row.kind == TrackKind::Audio) {
+        if (row.channels.empty()) return "(no input)";
+        std::string s = "In " + std::to_string(row.channels[0] + 1);
+        if (row.channels.size() > 1) s += "+" + std::to_string(row.channels[1] + 1);
+        return s;
+    }
+    std::string s = row.port.empty() ? std::string("(no port)") : row.port;
+    for (const Track& t : tracks) {
+        if (t.number == row.track && t.midiChannel > 0) s += " ch " + std::to_string(t.midiChannel);
+    }
+    return s;
+}
+
 float trackGain(const Track& track, bool soloActive)
 {
     if (track.mute || (soloActive && !track.solo) || track.volumeDb <= kMinVolumeDb) return 0.0f;
