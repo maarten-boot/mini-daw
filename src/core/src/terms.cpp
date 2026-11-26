@@ -22,7 +22,20 @@ std::vector<Term> makeTerms()
          "This program: a small recorder for audio (a microphone, a guitar, any sound input) and MIDI (a keyboard). "
          "\"DAW\" means digital audio workstation, a program to record and play music. Only one mini-daw runs per "
          "user: starting it again brings the running one to the front.",
-         "", {"Track", "Take", "Project"}},
+         "", {"Connections", "Track", "Take", "Project"}},
+        {"Connections", kBasics,
+         "The tab to start with: every input of your audio device and every MIDI keyboard is a socket, and a cable "
+         "shows where it goes. Type the name of what is plugged into a socket (a guitar, a microphone, a keyboard) "
+         "and press Enter: that makes an armed track for it. Audio goes straight to the recording; MIDI goes "
+         "through an instrument that makes the sound. Track details > shows the track on the Recording tab, and its "
+         "< button comes back.",
+         "Connections tab", {"Socket", "Track", "Stereo pair", "Instrument"}},
+        {"Socket", kBasics,
+         "An input on the Connections tab: one channel of the audio device (In 1, In 2 ...) or one MIDI port. A "
+         "free socket has a name field and Plug in; a socket in use shows its track and Unplug. A socket whose "
+         "device is not there now stays greyed, with its name, until it is back. Past In 8 only the sockets in use "
+         "show, until Show all.",
+         "Connections tab", {"Connections", "Stereo pair", "Audio device"}},
         {"Track", kBasics,
          "One line in the track table on the Recording tab. A track records one input: an audio track records one or "
          "two audio input channels, a MIDI track the notes from one MIDI input. Each track holds at most one take, "
@@ -31,11 +44,14 @@ std::vector<Term> makeTerms()
         {"Audio track", kBasics,
          "A track that records sound from the audio input device: one channel (mono) or two (stereo). Its take is a "
          "WAV file.",
-         "Recording tab: Add audio track; the Input column", {"Track", "Audio device", "WAV file"}},
+         "Connections tab: a socket; Recording tab: Add audio track, the Input column",
+         {"Track", "Stereo pair", "Audio device", "WAV file"}},
         {"MIDI track", kBasics,
          "A track that records MIDI: the notes and controls (keys, pedal, wheels) played on a MIDI keyboard, not the "
          "sound itself. Its take is a MIDI file. To hear it, choose an instrument or a MIDI output in its Output column.",
-         "Recording tab: Add MIDI track; the Input and Output columns", {"Track", "MIDI", "Instrument", "MIDI output"}},
+         "Connections tab: a MIDI socket and its channel; Recording tab: Add MIDI track, the Input and Output "
+         "columns",
+         {"Track", "MIDI", "Instrument", "MIDI output"}},
         {"Take", kBasics,
          "One recording of one track: the file made between pressing Record and Stop. All armed tracks record at the "
          "same time, so one Record makes one take per armed track, all in the same take folder. The Take column shows "
@@ -262,10 +278,16 @@ std::vector<Term> makeTerms()
          "How far text stands out from its background. mini-daw keeps every colour pair at least at the chosen "
          "minimum (AA 4.5:1 by default; AAA, Max or your own).",
          "View > Contrast; Ctrl+Shift+Up / Down", {"Theme"}},
+        {"Stereo pair", kSound,
+         "Two inputs side by side (In 1+2, In 3+4 ...) recorded by one track as left and right. A pair keeps its "
+         "two inputs to itself: no other track can use them until it is mono again. Two mono tracks may share one "
+         "input.",
+         "Connections tab: \"stereo with In ...\"; Recording tab: the Input column", {"Audio track", "Socket"}},
         {"Theme", kSound,
          "Your own background colour for each tab, the transport and the status line, so you see at a glance where "
          "you are. Text and buttons in that area get colours that keep the contrast you chose; a colour on which no "
-         "text could reach it is made a little lighter or darker.",
+         "text could reach it is made a little lighter or darker. \"Space between rows\" sets the room between the "
+         "rows of the track tables: one unit between rows that belong together, two between the others.",
          "Settings > Theme...", {"Contrast"}},
     };
 }

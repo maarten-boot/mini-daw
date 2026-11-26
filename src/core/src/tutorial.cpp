@@ -45,12 +45,13 @@ std::vector<TutorialLesson> makeLessons()
              {"Make a project: give it a name, mini-daw makes a folder for it. Everything you record goes there, "
               "and it is saved by itself.",
               "File > New project...", C::ProjectOpen},
-             {"You need an audio track: at the first start there is one already, or add one. Choose its input in "
-              "the Input column (the channel your microphone or instrument is on).",
-              "Recording tab > Add audio track, Input", C::AudioTrack},
-             {"Tick Arm on the track: it will be recorded. Sing or play: its Level meter moves. Keep it out of "
+             {"Find the socket your microphone or instrument is plugged into (In 1, In 2 ...), type its name "
+              "(\"Voice\", \"Guitar\") and press Enter: a track for it is made. Two inputs for one stereo "
+              "instrument: tick \"stereo with In ...\".",
+              "Connections tab > a socket's name, Enter", C::AudioTrack},
+             {"Arm is ticked on the new track: it will be recorded. Sing or play: its meter moves. Keep it out of "
               "the red (CLIP).",
-              "Recording tab > the track's Arm", C::TrackArmed},
+              "Connections tab > the track's Arm", C::TrackArmed},
              {"Press Record, play or sing a few seconds, then press Stop recording. The take is saved in the "
               "project's folder; the track's Take column names it.",
               "Record (Ctrl+R), then Stop recording (Ctrl+R)", C::Recorded},
@@ -67,12 +68,12 @@ std::vector<TutorialLesson> makeLessons()
              {"Let mini-daw find your instruments: Scan. They are listed with their maker. (Instruments in "
               "another folder: Add folder, then Scan.)",
               "Settings > Instruments (VST\xc2\xae" "3)... > Scan", C::InstrumentsFound},
-             {"Add a MIDI track, choose your keyboard as its Input and an instrument in its Output column. A "
-              "track \"... sound\" appears below it: there the instrument's sound will be recorded.",
-              "Recording tab > Add MIDI track", C::InstrumentTrack},
+             {"Find your keyboard among the MIDI sockets, name it and press Enter, then choose an instrument in "
+              "its list. A track \"... sound\" is made with it: there the instrument's sound will be recorded.",
+              "Connections tab > a MIDI socket, then its instrument", C::InstrumentTrack},
              {"Press Edit: the instrument's own window opens. Choose a sound (preset) there and play: you hear "
               "it at once.",
-              "The MIDI track's Output column > Edit", C::EditorOpened},
+              "Connections tab > Edit (or the MIDI track's Output column)", C::EditorOpened},
              {"Arm the MIDI track (and disarm the audio track), Record, play a few bars, Stop recording. The MIDI "
               "track's take holds your notes, the \"... sound\" track the instrument's sound.",
               "Arm, then Record (Ctrl+R)", C::MidiTake},

@@ -546,3 +546,11 @@ User: "i am considering simplefying the initial setup for beginners by using a c
 - User: "probably we should leave the unplug button at the same place as the plug-in button". Unplug is now right of the name, where Plug in is on a free socket.
 - User: "if we select Stero with: e.g 7 stereo with 8 show 7+8 then i can still select stero with 9 on track 8, i guess when you combine a sterio that elliminates other combining untill the track is isolated again". The stereo tick is now off-limits (greyed, tooltip says why) when the next input is used by another track, or when this input is already the right half of another track's pair; making a pair mono (or unplugging) frees it. `channelUser()` in core, in T-UI-37. Checked under Xvfb: In 7 and In 8 plugged, In 7's stereo tick greyed.
 - User: "yes, same rule on the recording tab". One rule in core, `inputConflict()` (T-UI-37): a stereo pair shares no input with any other track; two mono tracks may share one. The Input list on Recording greys what is not free (tooltip: which track has it); the Connections stereo tick uses the same rule; Add audio track takes the first input not in a pair (none: refused, "every input is in a stereo pair"). Checked under Xvfb: with In 1+2 on track 1, Add audio track took In 3 and its list greys In 1 and In 2.
+
+User: "pushed, check the CI run; and going home" / "ok continue": run 45852261328 (ec847fc) green on all jobs.
+
+User: "yes, add the terms, tutorial and readme; did we do a crosscheck before ?"
+- No crosscheck since #28 (P34e, before 1.1.0): P35 and P36 are not crosschecked yet; #29 proposed for both.
+- Terms: "Connections", "Socket", "Stereo pair" (new); Theme mentions Space between rows; Audio / MIDI track point to the Connections tab.
+- Getting started: lesson 1 makes the audio track by naming a socket on Connections; lesson 2 the MIDI track by a MIDI socket and its instrument; Edit there too. `docs/Getting-started.md` regenerated.
+- README: section "Connections", the tab in the summary and in "Colours per tab", Space between rows, the MIDI channel on Connections.

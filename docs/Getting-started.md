@@ -12,10 +12,10 @@ Choose where the sound goes in and out, make a project, and record yourself on o
    *Where:* Settings > Audio devices...
 2. Make a project: give it a name, mini-daw makes a folder for it. Everything you record goes there, and it is saved by itself.  
    *Where:* File > New project...
-3. You need an audio track: at the first start there is one already, or add one. Choose its input in the Input column (the channel your microphone or instrument is on).  
-   *Where:* Recording tab > Add audio track, Input
-4. Tick Arm on the track: it will be recorded. Sing or play: its Level meter moves. Keep it out of the red (CLIP).  
-   *Where:* Recording tab > the track's Arm
+3. Find the socket your microphone or instrument is plugged into (In 1, In 2 ...), type its name ("Voice", "Guitar") and press Enter: a track for it is made. Two inputs for one stereo instrument: tick "stereo with In ...".  
+   *Where:* Connections tab > a socket's name, Enter
+4. Arm is ticked on the new track: it will be recorded. Sing or play: its meter moves. Keep it out of the red (CLIP).  
+   *Where:* Connections tab > the track's Arm
 5. Press Record, play or sing a few seconds, then press Stop recording. The take is saved in the project's folder; the track's Take column names it.  
    *Where:* Record (Ctrl+R), then Stop recording (Ctrl+R)
 6. Go back to the start and press Play: you hear what you recorded.  
@@ -29,10 +29,10 @@ A MIDI keyboard plays a VST3 instrument (a software synth or piano). mini-daw re
 
 1. Let mini-daw find your instruments: Scan. They are listed with their maker. (Instruments in another folder: Add folder, then Scan.)  
    *Where:* Settings > Instruments (VST®3)... > Scan
-2. Add a MIDI track, choose your keyboard as its Input and an instrument in its Output column. A track "... sound" appears below it: there the instrument's sound will be recorded.  
-   *Where:* Recording tab > Add MIDI track
+2. Find your keyboard among the MIDI sockets, name it and press Enter, then choose an instrument in its list. A track "... sound" is made with it: there the instrument's sound will be recorded.  
+   *Where:* Connections tab > a MIDI socket, then its instrument
 3. Press Edit: the instrument's own window opens. Choose a sound (preset) there and play: you hear it at once.  
-   *Where:* The MIDI track's Output column > Edit
+   *Where:* Connections tab > Edit (or the MIDI track's Output column)
 4. Arm the MIDI track (and disarm the audio track), Record, play a few bars, Stop recording. The MIDI track's take holds your notes, the "... sound" track the instrument's sound.  
    *Where:* Arm, then Record (Ctrl+R)
 5. Render: the instrument plays the MIDI take again, faster than real time, and its sound becomes the "... sound" track's take. Use it after you chose another sound.  
