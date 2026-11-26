@@ -582,3 +582,6 @@ User: "yes, prepare 1.2.0".
 - Crosscheck before the release: #29 done (section 24).
 - CHANGELOG `## 1.2.0 — 2026-11-26` (Connections, Look); `tools/release_notes.py v1.2.0` reads it. README status 1.2.0 (steps P2–P36). Plan P35, P36 done. CMake already 1.2.0.
 - To do: commit, merge `cables-prototype` (with `theme-prototype`) into `main` (fast-forward), push; CI; tag `v1.2.0`; `dist/` from the green main run.
+- User: "yes commit" (0c3e9d4, main fast-forwarded to it), "pushed, check the CI run" (run 45876194764): all green; `dist/` replaced with its builds (`mini-daw-1.2.0-setup.exe`), `TESTS.txt` header and a new section for T-UI-37, T-UI-38, T-UI-36.
+- User: "pushed the v1.2.0 tag, check the release run" (run 45878488218): all jobs green, `release` included. The draft holds `mini-daw-1.2.0-windows-x64-setup.exe`, `-windows-x64.zip`, `-linux-x64.tar.gz`, `-macos.dmg` and `SHA256SUMS.txt`; the user publishes it.
+- The user published the draft as release v1.2.0 ("published it").
