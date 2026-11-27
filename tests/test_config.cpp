@@ -391,13 +391,29 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     // The user's order; case and spaces do not matter; a missing tab is added at the end.
     const auto r = parseConfig("[tabs]\norder = Audio,  timeline\nlast = timeline\n");
     CHECK(r.warnings.empty());
-    CHECK(r.config.tabs.order == std::vector<std::string>{"audio", "timeline", "connections", "recording", "terms"});
-    CHECK(r.config.tabs.last == "timeline");
+    // An order from before 1.2.0 (no Connections): Connections first, shown once (1.2.1).
+    CHECK(r.config.tabs.order == std::vector<std::string>{"connections", "audio", "timeline", "recording", "terms"});
+    CHECK(r.config.tabs.last == "connections");
+    // With Connections in the order, it and `last` are kept as written.
+    const auto now = parseConfig("[tabs]\norder = timeline, connections\nlast = timeline\n");
+    CHECK(now.config.tabs.order == std::vector<std::string>{"timeline", "connections", "recording", "audio", "terms"});
+    CHECK(now.config.tabs.last == "timeline");
+    {
+        // Only once: saved, the order has Connections, so `last` is kept from then on.
+        TempDir once;
+        AppConfig c = r.config;
+        REQUIRE(saveConfigFile(once.path / "c.ini", c).empty());
+        c.tabs.last = "timeline";
+        REQUIRE(saveConfigFile(once.path / "c.ini", c).empty());
+        const auto again = loadConfigFile(once.path / "c.ini");
+        CHECK(again.config.tabs.order.front() == "connections");
+        CHECK(again.config.tabs.last == "timeline");
+    }
 
     // Unknown and repeated names: left out, with a warning for the unknown ones.
     const auto bad = parseConfig("[tabs]\norder = timeline, mixer, timeline, recording\nlast = mixer\n");
     CHECK(bad.warnings.size() == 2);
-    CHECK(bad.config.tabs.order == std::vector<std::string>{"timeline", "recording", "connections", "audio", "terms"});
+    CHECK(bad.config.tabs.order == std::vector<std::string>{"connections", "timeline", "recording", "audio", "terms"});
     CHECK(bad.config.tabs.last == "connections");
     CHECK(normalizeTabOrder({}) == defaultTabOrder());
 
@@ -412,8 +428,10 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     CHECK(unknown.config.tabs.order == defaultTabOrder());
     const auto cased = parseConfig("[Tabs]\nORDER = timeline\nLast =  Timeline  \n");
     CHECK(cased.warnings.empty());
-    CHECK(cased.config.tabs.order == std::vector<std::string>{"timeline", "connections", "recording", "audio", "terms"});
-    CHECK(cased.config.tabs.last == "timeline");
+    CHECK(cased.config.tabs.order == std::vector<std::string>{"connections", "timeline", "recording", "audio", "terms"});
+    CHECK(cased.config.tabs.last == "connections");
+    const auto casedNow = parseConfig("[Tabs]\nORDER = timeline, Connections\nLast =  Timeline  \n");
+    CHECK(casedNow.config.tabs.last == "timeline");
     // Repeats alone give no warning.
     CHECK(parseConfig("[tabs]\norder = audio, audio\n").warnings.empty());
 

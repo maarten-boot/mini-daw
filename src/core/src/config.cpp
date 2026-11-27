@@ -328,6 +328,7 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
     ConfigLoadResult result;
     std::string section;
     int lineNo = 0;
+    bool connectionsAdded = false;  // an older [tabs] order got the Connections tab (1.2.1)
     int windowSeen = 0;      // bits: x, y, width, height read
     bool windowBad = false;  // one of them was wrong
     auto warn = [&](const std::string& msg) {
@@ -408,6 +409,12 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 at = comma + 1;
             }
             if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: " + knownTabs() + "); left out.");
+            // A config from before 1.2.0 has no Connections tab: it comes first, and is
+            // shown once at the next start (1.2.1, user 2026-11-27). Saved, the order has it.
+            if (!ids.empty() && std::find(ids.begin(), ids.end(), "connections") == ids.end()) {
+                ids.insert(ids.begin(), "connections");
+                connectionsAdded = true;
+            }
             cfg.tabs.order = normalizeTabOrder(ids);
         } else if (section == "tabs" && key == "last") {
             const std::string id = lower(trim(value));
@@ -562,6 +569,7 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
         }
     }
     result.config.window.hasGeometry = windowSeen == 15 && !windowBad;
+    if (connectionsAdded) result.config.tabs.last = "connections";  // whatever `last` said (1.2.1)
     return result;
 }
 

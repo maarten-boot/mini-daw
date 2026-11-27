@@ -585,3 +585,11 @@ User: "yes, prepare 1.2.0".
 - User: "yes commit" (0c3e9d4, main fast-forwarded to it), "pushed, check the CI run" (run 45876194764): all green; `dist/` replaced with its builds (`mini-daw-1.2.0-setup.exe`), `TESTS.txt` header and a new section for T-UI-37, T-UI-38, T-UI-36.
 - User: "pushed the v1.2.0 tag, check the release run" (run 45878488218): all jobs green, `release` included. The draft holds `mini-daw-1.2.0-windows-x64-setup.exe`, `-windows-x64.zip`, `-linux-x64.tar.gz`, `-macos.dmg` and `SHA256SUMS.txt`; the user publishes it.
 - The user published the draft as release v1.2.0 ("published it").
+
+## 26. Release 1.2.1: Connections first after an update (2026-11-27)
+
+User: "the downloaded version 1.2.0 dows not have the latest layout did we realease that already if not prepare v1.2.1".
+- Checked: the 1.2.0 release is commit 0c3e9d4, the newest code (after it only the conversation log); the Linux download has "Track details >", "Space between rows", "stereo with In". Cause: the user's own config from before 1.2.0: its `[tabs] order` put Connections at the right before Terms and `last = recording` opened Recording (the point kept in crosscheck #29); the prototype colours were only in the prototype's config copies.
+User: "yes, make 1.2.1 with connections first".
+- P36a: an order without `connections` gets it first, and `last = connections` once; saved, the order has it, so `last` is kept from then on. Tests T-UI-18 (also save and read back), T-UI-28, T-UI-33. Version 1.2.1, CHANGELOG, README status, Spec v0.84 (SPEC-UI-12, -21), Plan P36a.
+- Crosscheck #30 (before the release, as agreed): the diff only (config.cpp parse, tests, docs). An order of only unknown names gives the default order (Connections first, `last` untouched); a drag or Settings → Tabs never drops Connections (normalizeTabOrder adds it), so the move happens once; no other text said "before Terms" (Spec UI-12 and UI-21 updated). Nothing else found. ctest 288/288.

@@ -2,6 +2,10 @@
 
 Every release of mini-daw, newest first. A release's section here becomes its notes on GitHub (`tools/release_notes.py`; the release job refuses a tag without one), so links in it are full URLs. Before 1.0.0 there were no releases: the builds were numbered `0.<step>.<round>` after the steps in `docs/planning/Plan.md`. From 1.0.0 on: `1.<minor>.<patch>`, the minor number raised by a step that adds something, the patch number by fixes.
 
+## 1.2.1 — 2026-11-27
+
+- **Connections first after an update.** With settings from an earlier version, the Connections tab used to be added at the right, before Terms, and mini-daw opened on the tab you used last, so the new tab was easy to miss. It now comes first and is shown once at the next start; after that mini-daw opens on the tab you used last again, and you can still drag the tabs into any order.
+
 ## 1.2.0 — 2026-11-26
 
 **A Connections tab for beginners, and colours per tab.**
