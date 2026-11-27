@@ -394,10 +394,16 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     // An order from before 1.2.0 (no Connections): Connections first, shown once (1.2.1).
     CHECK(r.config.tabs.order == std::vector<std::string>{"connections", "audio", "timeline", "recording", "terms"});
     CHECK(r.config.tabs.last == "connections");
-    // With Connections in the order, it and `last` are kept as written.
-    const auto now = parseConfig("[tabs]\norder = timeline, connections\nlast = timeline\n");
+    // A 1.2.0 config: Connections before Terms, no marker: moved first, shown once.
+    const auto v120 = parseConfig("[tabs]\norder = recording, timeline, audio, connections, terms\nlast = timeline\n");
+    CHECK(v120.config.tabs.order == std::vector<std::string>{"connections", "recording", "timeline", "audio", "terms"});
+    CHECK(v120.config.tabs.last == "connections");
+    CHECK(v120.connectionsMovedFirst);
+    // With the marker (written by 1.2.1 on), the order and `last` are kept as written.
+    const auto now = parseConfig("[tabs]\norder = timeline, connections\nlast = timeline\nconnections_first = done\n");
     CHECK(now.config.tabs.order == std::vector<std::string>{"timeline", "connections", "recording", "audio", "terms"});
     CHECK(now.config.tabs.last == "timeline");
+    CHECK_FALSE(now.connectionsMovedFirst);
     {
         // Only once: saved, the order has Connections, so `last` is kept from then on.
         TempDir once;
@@ -430,7 +436,7 @@ TEST_CASE("T-UI-18: tab order and the last tab in the config", "[config][T-UI-18
     CHECK(cased.warnings.empty());
     CHECK(cased.config.tabs.order == std::vector<std::string>{"connections", "timeline", "recording", "audio", "terms"});
     CHECK(cased.config.tabs.last == "connections");
-    const auto casedNow = parseConfig("[Tabs]\nORDER = timeline, Connections\nLast =  Timeline  \n");
+    const auto casedNow = parseConfig("[Tabs]\nORDER = timeline, Connections\nLast =  Timeline  \nconnections_first = DONE\n");
     CHECK(casedNow.config.tabs.last == "timeline");
     // Repeats alone give no warning.
     CHECK(parseConfig("[tabs]\norder = audio, audio\n").warnings.empty());

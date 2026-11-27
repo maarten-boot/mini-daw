@@ -290,6 +290,7 @@ struct AppState {
     bool tabsFocusUp = false;
     // Own background per area (P35, SPEC-UI-20; Settings > Theme...)
     bool showThemeWindow = false;
+    bool saveTabsMoved = false;  // the config's tab order was changed on loading (1.2.2): save it at start
     bool themeUnsaved = false;  // a colour changed in the picker; saved once the mouse is released
     struct AreaLook {
         minidaw::Rgb asked;
@@ -7517,6 +7518,12 @@ int runGui(AppState& app)
             if (!app.tabsStarted) {
                 app.selectTab = app.config.tabs.last;
                 app.tabsStarted = true;
+                // Connections was put first for an older config: saved now with its marker, so
+                // it happens once even if mini-daw is not closed normally (1.2.2).
+                if (app.saveTabsMoved) {
+                    app.saveTabsMoved = false;
+                    saveConfig(app);
+                }
             }
             const std::string barId = "main-tabs-" + std::to_string(app.tabBarGeneration);
             const std::string requested = app.selectTab;
@@ -7834,6 +7841,7 @@ int main(int argc, char** argv)
     auto loaded = minidaw::loadConfigFile(app.configPath);
     app.config = loaded.config;
     app.configWarnings = loaded.warnings;
+    app.saveTabsMoved = loaded.connectionsMovedFirst;
     for (const auto& w : app.configWarnings) std::fprintf(stderr, "config warning: %s\n", w.c_str());
 
     switch (action) {

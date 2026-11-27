@@ -328,7 +328,8 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
     ConfigLoadResult result;
     std::string section;
     int lineNo = 0;
-    bool connectionsAdded = false;  // an older [tabs] order got the Connections tab (1.2.1)
+    bool orderGiven = false;           // [tabs] order was read
+    bool connectionsFirstDone = false;  // [tabs] connections_first = done: the move below was made once
     int windowSeen = 0;      // bits: x, y, width, height read
     bool windowBad = false;  // one of them was wrong
     auto warn = [&](const std::string& msg) {
@@ -409,13 +410,10 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
                 at = comma + 1;
             }
             if (!bad.empty()) warn("unknown tab '" + bad + "' in order (known: " + knownTabs() + "); left out.");
-            // A config from before 1.2.0 has no Connections tab: it comes first, and is
-            // shown once at the next start (1.2.1, user 2026-11-27). Saved, the order has it.
-            if (!ids.empty() && std::find(ids.begin(), ids.end(), "connections") == ids.end()) {
-                ids.insert(ids.begin(), "connections");
-                connectionsAdded = true;
-            }
             cfg.tabs.order = normalizeTabOrder(ids);
+            orderGiven = !ids.empty();
+        } else if (section == "tabs" && key == "connections_first") {
+            connectionsFirstDone = lower(trim(value)) == "done";
         } else if (section == "tabs" && key == "last") {
             const std::string id = lower(trim(value));
             if (isTabId(id)) {
@@ -569,7 +567,16 @@ ConfigLoadResult parseConfig(std::string_view text, std::string_view sourceName)
         }
     }
     result.config.window.hasGeometry = windowSeen == 15 && !windowBad;
-    if (connectionsAdded) result.config.tabs.last = "connections";  // whatever `last` said (1.2.1)
+    // An order written before 1.2.1 (by 1.1.0 without the Connections tab, or by 1.2.0 with
+    // it before Terms): Connections first and shown once (1.2.1/1.2.2, user 2026-11-27).
+    // Saved with connections_first = done, so a later drag is kept.
+    if (orderGiven && !connectionsFirstDone) {
+        auto& order = result.config.tabs.order;
+        order.erase(std::remove(order.begin(), order.end(), "connections"), order.end());
+        order.insert(order.begin(), "connections");
+        result.config.tabs.last = "connections";
+        result.connectionsMovedFirst = true;
+    }
     return result;
 }
 
@@ -675,6 +682,8 @@ std::string defaultConfigText()
            "order = connections, recording, timeline, audio, terms\n"
            "; The tab shown at start: the one used last (written by mini-daw).\n"
            "last = connections\n"
+           "; Connections was put first once after an update (written by mini-daw).\n"
+           "connections_first = done\n"
            "\n"
            "[audio]\n"
            "; Device names as shown in the program, in quotes,\n"
@@ -828,6 +837,7 @@ std::string saveConfigFile(const std::filesystem::path& path, const AppConfig& c
         for (const auto& id : normalizeTabOrder(config.tabs.order)) order += (order.empty() ? "" : ", ") + id;
         text = setConfigValue(text, "tabs", "order", order);
         text = setConfigValue(text, "tabs", "last", isTabId(config.tabs.last) ? config.tabs.last : TabSettings{}.last);
+        text = setConfigValue(text, "tabs", "connections_first", "done");
     }
     if (config.window.hasGeometry) {
         text = setConfigValue(text, "window", "x", std::to_string(config.window.x));

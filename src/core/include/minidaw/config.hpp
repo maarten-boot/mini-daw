@@ -273,6 +273,7 @@ struct AppConfig {
 struct ConfigLoadResult {
     AppConfig config;                  // defaults for anything missing or invalid
     std::vector<std::string> warnings; // e.g. "config.ini line 3: ..."
+    bool connectionsMovedFirst = false; // an older [tabs] order got Connections first: save once (1.2.2)
 };
 
 // Parse config text. Never fails: problems become warnings and defaults are kept.
